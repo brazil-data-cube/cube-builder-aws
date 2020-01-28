@@ -1,0 +1,243 @@
+openapi: 3.0.0
+
+info:
+  description: Cube generation - API Datastorm
+  version: "1.0.0"
+  title: API BDC Scripts (datastorm)
+  contact:
+    name: OBT-INPE
+    email: brazildatacube@dpi.inpe.br
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+    
+servers:
+  - url: 'https://localhost'
+    description: Dev Server
+
+tags:
+  - name: "status"
+    description: "Status services"
+  - name: "datastorm"
+    description: "Cube generation"
+
+paths:
+  /:
+    get:
+      tags:
+        - "status"
+      summary: "Status"
+      description: "return status of application"
+      responses:
+        200:
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+
+  /create-grs:
+    post:
+      tags:
+        - "datastorm"
+      summary: "Create GRS"
+      description: "Create base GRS (Geographic Reference System)"
+      requestBody:
+        description: "Initial informations to create GRS"
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/request/schemas/GRS"
+      responses:
+        201:
+          description: "Successfully"
+          content:
+            application/json:
+              schema:
+                type: string
+
+  /create-raster-size:
+    post:
+      tags:
+        - "datastorm"
+      summary: "Create Raster Size Schema"
+      description: "Create base Raster Size"
+      requestBody:
+        description: "Initial informations to create Raster Size"
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/request/schemas/raster_size"
+      responses:
+        201:
+          description: "Successfully"
+          content:
+            application/json:
+              schema:
+                type: string
+
+  /create:
+    post:
+      tags:
+        - "datastorm"
+      summary: "Create Cube"
+      description: "Create cube metadata"
+      requestBody:
+        description: "Initial informations to create Cube"
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/request/schemas/cube"
+      responses:
+        201:
+          description: "Successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cubes: 
+                    type: array
+                    description: list of cubes created
+
+  /start:
+    get:
+      tags:
+        - "datastorm"
+      summary: "Start Process"
+      description: "Start process to generate cube"
+      parameters:
+        - in: "query"
+          name: "datacube"
+          required: true
+          description: "Cube name"
+        - in: "query"
+          name: "tiles"
+          required: true
+          description: "list of tiles"
+        - in: "query"
+          name: "start_date"
+          required: true
+          description: "start date to generate cube (format => yyyy-mm-dd)"
+        - in: "query"
+          name: "end_date"
+          required: true
+          description: "end date to generate cube (format => yyyy-mm-dd)"
+        - in: "query"
+          name: "collections"
+          required: true
+          description: "list of base collections"
+      responses:
+        200:
+          description: "Successfully"
+          content:
+            application/json:
+              schema:
+                type: string
+
+request:
+  schemas:
+    GRS:
+      type: object
+      required:
+        - name
+        - description
+        - projection
+        - meridian
+        - degreesx
+        - degreesy
+        - bbox
+      properties:
+        name:
+          type: string
+          description: GRS name
+        description:
+          type: string
+          description: GRS description
+        projection:
+          type: string
+          description: GRS projection (allow => aea, longlat, sinu)
+        meridian:
+          type: number
+          description: central meridian of area
+        degreesx:
+          type: number
+          description: size (X) in degrees of each tile (in degrees)
+        degreesy:
+          type: number
+          description: size (Y) in degrees of each tile (in degrees)
+        bbox:
+          type: string
+          description: bounding box of area (in lnglat)
+
+    raster_size:
+      type: object
+      required:
+        - grs_schema
+        - resolution
+        - raster_size_x
+        - raster_size_y
+        - chunk_size_x
+        - chunk_size_y
+      properties:
+        grs_schema:
+          type: string
+          description: GRS name
+        resolution:
+          type: number
+          description: Spatial Resolution of cube
+        raster_size_x:
+          type: number
+          description: Raster size X (number of columns)
+        raster_size_y:
+          type: number
+          description: Raster size Y (number of lines)
+        chunk_size_x:
+          type: number
+          description: chunk size X
+        chunk_size_y:
+          type: number
+          description: chunk size Y
+
+    cube:
+      type: object
+      required:
+        - datacube
+        - grs
+        - resolution
+        - temporal_schema
+        - bands_quicklook
+        - composite_function_list
+        - description
+      properties:
+        datacube:
+          type: string
+          description: Cube name (without 'composite_function' in the name)
+        grs:
+          type: string
+          description: name of grs_schema
+        resolution:
+          type: number
+          description: Spatial Resolution of cube
+        temporal_schema:
+          type: string
+          description: name of temporal_schema (e.g. M1month)
+        bands_quicklook:
+          type: array
+          description: list of bands (common name) to composite quicklook (RGB)
+          items:
+            type: string
+        composite_function_list:
+          type: array
+          description: list of composite_functions (allow => MEDIAN, STACK)
+          items:
+            type: string
+        
+        description:
+          type: string
+          description: description of cube

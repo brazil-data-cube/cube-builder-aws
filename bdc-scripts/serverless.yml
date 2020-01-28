@@ -1,0 +1,127 @@
+# serverless.yml
+
+service: bdc-datastorm
+
+plugins:
+  - serverless-python-requirements
+  - serverless-wsgi
+
+custom:
+  wsgi:
+    app: app.app
+    packRequirements: false
+  pythonRequirements:
+    dockerizePip: non-linux
+
+provider:
+  name: aws
+  runtime: python3.6
+  stage: prod
+  region: us-east-1
+
+  environment:
+    KEY_ID: CHANGE_ME
+    SECRET_KEY: CHANGE_ME
+    RDS_HOST: CHANGE_ME
+    RDS_DBNAME: CHANGE_ME
+    RDS_USER: CHANGE_ME
+    RDS_PASSWORD: CHANGE_ME
+    URL_STAC: CHANGE_ME
+    BUCKET_NAME: CHANGE_ME
+    LAMBDA_FUNCTION_NAME: CHANGE_ME
+    QUEUE_NAME: bdcDSQueue
+    KINESIS_NAME: bdcDSKinesis
+    DYNAMO_TB_ACTIVITY: CHANGE_ME
+    DBNAME_TB_CONTROL: CHANGE_ME
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - sqs:SendMessage
+        - sqs:ReceiveMessage
+        - sqs:DeleteMessage
+        - sqs:GetQueueAttributes
+        - sqs:GetQueueUrl
+        - sqs:ListQueues
+      Resource:
+        - Fn::GetAtt:
+          - bdcDSQueue
+          - Arn
+
+    - Effect: "Allow"
+      Action:
+        - sqs:SendMessage
+        - sqs:ReceiveMessage
+        - sqs:DeleteMessage
+        - sqs:GetQueueAttributes
+        - sqs:GetQueueUrl
+        - sqs:ListQueues
+      Resource:
+        - Fn::GetAtt:
+          - bdcDSQueueDLQ
+          - Arn
+          
+    - Effect: "Allow"
+      Action:
+        - kinesis:GetRecords
+        - kinesis:GetShardIterator
+        - kinesis:DescribeStream
+        - kinesis:ListStreams
+      Resource:
+        - Fn::GetAtt:
+          - bdcDSKinesis
+          - Arn
+
+functions:
+  app:
+    handler: wsgi.handler
+    timeout: 720
+    memorySize: 512
+    events:
+      - http: ANY /
+      - http: 'ANY {proxy+}'
+
+  app_stream: 
+    handler: app.continue_process
+    timeout: 720
+    memorySize: 3008
+    events:
+      - sqs:
+          batchSize: 1
+          arn:
+            Fn::GetAtt:
+              - bdcDSQueue
+              - Arn
+      - stream:
+          type: kinesis
+          batchSize: 50
+          arn:
+            Fn::GetAtt:
+              - bdcDSKinesis
+              - Arn
+
+resources:
+  Resources:
+    bdcDSQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: bdcDSQueue
+        VisibilityTimeout: 720
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt:
+              - bdcDSQueueDLQ
+              - Arn
+          maxReceiveCount: 1
+
+    bdcDSQueueDLQ:
+      Type: AWS::SQS::Queue
+      Properties:
+        VisibilityTimeout: 500
+        QueueName: bdcDSQueueDLQ
+
+    bdcDSKinesis:
+      Type: AWS::Kinesis::Stream
+      Properties:
+        Name: bdcDSKinesis
+        ShardCount: 1   
