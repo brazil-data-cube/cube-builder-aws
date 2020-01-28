@@ -28,7 +28,7 @@ provider:
     RDS_PASSWORD: CHANGE_ME
     URL_STAC: CHANGE_ME
     BUCKET_NAME: CHANGE_ME
-    LAMBDA_FUNCTION_NAME: ${self:service}-${self:provider.stage}-app_stream
+    LAMBDA_FUNCTION_NAME: ${self:service}-${self:provider.stage}-app
     QUEUE_NAME: bdcDSQueue
     KINESIS_NAME: bdcDSKinesis
     DYNAMO_TB_ACTIVITY: CHANGE_ME
