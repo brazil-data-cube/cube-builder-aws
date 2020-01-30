@@ -1,4 +1,4 @@
-# AWS - Generate Cubes (BDC Datastorm)
+# AWS - Generate Cubes (Cube Builder - AWS)
 
 ### **CONFIGURE**:
 

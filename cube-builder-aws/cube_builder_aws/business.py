@@ -6,10 +6,10 @@ from bdc_db.models.base_sql import BaseModel, db
 from bdc_db.models import Collection, Band, CollectionTile, CollectionItem, Tile, \
     GrsSchema, RasterSizeSchema
 
-from datastorm.utils import Serializer
-from datastorm.maestro import orchestrate, check_merge, prepare_merge, \
+from .utils import Serializer
+from .maestro import orchestrate, check_merge, prepare_merge, \
     merge_warped, solo, blend, publish
-from datastorm.services import CubeServices
+from .services import CubeServices
 
 class CubeBusiness:
     

@@ -8,8 +8,8 @@ from flask import Flask, request, jsonify
 from bdc_db import BDCDatabase
 from config import USER, PASSWORD, HOST, DBNAME
 
-from datastorm.business import CubeBusiness
-from datastorm.validators import validate
+from cube_builder_aws.business import CubeBusiness
+from cube_builder_aws.validators import validate
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://{}:{}@{}:5432/{}'.format(

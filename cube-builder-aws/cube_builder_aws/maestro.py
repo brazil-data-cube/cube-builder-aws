@@ -15,7 +15,7 @@ from bdc_db.models.base_sql import BaseModel, db
 from bdc_db.models import CollectionTile, CollectionItem, Tile, \
     Collection, Asset, Band
 
-from datastorm.utils import decode_periods, encode_key, \
+from .utils import decode_periods, encode_key, \
     getMaskStats, getMask, generateQLook
 from config import BUCKET_NAME
 
@@ -344,17 +344,19 @@ def merge_warped(self, activity):
     # Quality band is resampled by nearest, other are bilinear
     band = activity['band']
     if band == 'quality':
-        resampling = Resampling.nearest 
+        resampling = Resampling.nearest
+        raster = numpy.zeros((numlin, numcol,), dtype=numpy.uint8)
+        raster_merge = numpy.zeros((numlin, numcol,), dtype=numpy.uint8)
+        raster_mask = numpy.ones((numlin, numcol,), dtype=numpy.uint8)
+        nodata = 0
     else: 
-        resampling = Resampling.bilinear 
+        resampling = Resampling.bilinear
+        raster = numpy.zeros((numlin, numcol,), dtype=numpy.int16)
+        raster_merge = numpy.full((numlin, numcol,), fill_value=nodata, dtype=numpy.int16)
 
     # For all files
-    raster = numpy.zeros((numlin, numcol,), dtype=numpy.int16)
-    rasterMerge = numpy.full((numlin, numcol,), fill_value=nodata, dtype=numpy.int16)
-    count = 0
     template = None
     for url in activity['links']:
-        count += 1
         with rasterio.Env(CPL_CURL_VERBOSE=False):
             with rasterio.open(url) as src: 
                 kwargs = src.meta.copy() 
@@ -364,12 +366,14 @@ def merge_warped(self, activity):
                     'width': numcol, 
                     'height': numlin
                 })
+
                 source_nodata = 0
                 if src.profile['nodata'] is not None:
                     source_nodata = src.profile['nodata']
                 kwargs.update({
                     'nodata': source_nodata
-                }) 
+                })
+
                 with MemoryFile() as memfile: 
                     with memfile.open(**kwargs) as dst: 
                         reproject(
@@ -381,20 +385,27 @@ def merge_warped(self, activity):
                             dst_crs=activity['srs'], 
                             src_nodata=source_nodata, 
                             dst_nodata=nodata, 
-                            resampling=resampling) 
+                            resampling=resampling)
 
-                        valid_data_scene = raster[raster != nodata]
-                        rasterMerge[raster != nodata] = valid_data_scene.reshape(numpy.size(valid_data_scene))
+                        if band != 'quality':
+                            valid_data_scene = raster[raster != nodata]
+                            raster_merge[raster != nodata] = valid_data_scene.reshape(numpy.size(valid_data_scene))
+                        else:
+                            raster_merge = raster_merge + raster * raster_mask
+                            raster_mask[raster != nodata] = 0
+
                         if template is None:
                             template = dst.profile
-                            template['dtype'] = 'int16'
+                            if band != 'quality':
+                                template['dtype'] = 'int16'
+                                template['nodata'] = nodata
 
 
     # Evaluate cloud cover and efficacy if band is quality
     efficacy = 0
     cloudratio = 100
     if activity['band'] == 'quality':
-        rasterMerge, efficacy, cloudratio = getMask(rasterMerge, activity['dataset'])
+        raster_merge, efficacy, cloudratio = getMask(raster_merge, activity['dataset'])
         template.update({'dtype': 'uint8'})
 
     # Save merged image on S3
@@ -407,7 +418,7 @@ def merge_warped(self, activity):
         })  
         with memfile.open(**template) as riodataset:
             riodataset.nodata = nodata
-            riodataset.write_band(1, rasterMerge)
+            riodataset.write_band(1, raster_merge)
             riodataset.build_overviews([2, 4, 8, 16, 32, 64], Resampling.nearest)
             riodataset.update_tags(ns='rio_overview', resampling='nearest')
         services.upload_fileobj_S3(memfile, key, {'ACL': 'public-read'})

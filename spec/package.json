@@ -1,7 +1,7 @@
 {
-  "name": "bdc-scripts-spec",
+  "name": "cube-builder-aws-spec",
   "version": "1.0.0",
-  "description": "generate spec BDC Scripts API",
+  "description": "generate spec Cube Builder API",
   "main": "index.js",
   "scripts": {
     "build": "redoc-cli bundle openapi/api.yml --output dist/index.html"
