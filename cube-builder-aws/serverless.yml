@@ -1,6 +1,6 @@
 # serverless.yml
 
-service: bdc-datastorm
+service: cube_builder
 
 plugins:
   - serverless-python-requirements
@@ -29,8 +29,8 @@ provider:
     URL_STAC: CHANGE_ME
     BUCKET_NAME: CHANGE_ME
     LAMBDA_FUNCTION_NAME: ${self:service}-${self:provider.stage}-app
-    QUEUE_NAME: bdcDSQueue
-    KINESIS_NAME: bdcDSKinesis
+    QUEUE_NAME: cubeBuilderQueue
+    KINESIS_NAME: cubeBuilderKinesis
     DYNAMO_TB_ACTIVITY: CHANGE_ME
     DBNAME_TB_CONTROL: CHANGE_ME
 
@@ -45,7 +45,7 @@ provider:
         - sqs:ListQueues
       Resource:
         - Fn::GetAtt:
-          - bdcDSQueue
+          - cubeBuilderQueue
           - Arn
 
     - Effect: "Allow"
@@ -58,7 +58,7 @@ provider:
         - sqs:ListQueues
       Resource:
         - Fn::GetAtt:
-          - bdcDSQueueDLQ
+          - cubeBuilderQueueDLQ
           - Arn
           
     - Effect: "Allow"
@@ -69,7 +69,7 @@ provider:
         - kinesis:ListStreams
       Resource:
         - Fn::GetAtt:
-          - bdcDSKinesis
+          - cubeBuilderKinesis
           - Arn
 
 functions:
@@ -90,38 +90,38 @@ functions:
           batchSize: 1
           arn:
             Fn::GetAtt:
-              - bdcDSQueue
+              - cubeBuilderQueue
               - Arn
       - stream:
           type: kinesis
           batchSize: 50
           arn:
             Fn::GetAtt:
-              - bdcDSKinesis
+              - cubeBuilderKinesis
               - Arn
 
 resources:
   Resources:
-    bdcDSQueue:
+    cubeBuilderQueue:
       Type: AWS::SQS::Queue
       Properties:
-        QueueName: bdcDSQueue
+        QueueName: cubeBuilderQueue
         VisibilityTimeout: 720
         RedrivePolicy:
           deadLetterTargetArn:
             Fn::GetAtt:
-              - bdcDSQueueDLQ
+              - cubeBuilderQueueDLQ
               - Arn
           maxReceiveCount: 1
 
-    bdcDSQueueDLQ:
+    cubeBuilderQueueDLQ:
       Type: AWS::SQS::Queue
       Properties:
         VisibilityTimeout: 500
-        QueueName: bdcDSQueueDLQ
+        QueueName: cubeBuilderQueueDLQ
 
-    bdcDSKinesis:
+    cubeBuilderKinesis:
       Type: AWS::Kinesis::Stream
       Properties:
-        Name: bdcDSKinesis
-        ShardCount: 1   
+        Name: cubeBuilderKinesis
+        ShardCount: 1
