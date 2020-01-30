@@ -48,7 +48,7 @@ class CubeServices:
     ## ----------------------
     # DYNAMO DB
     def get_dynamo_tables(self):
-        # Create the datastormActivities table in DynamoDB to store all activities
+        # Create the cubeBuilderActivities table in DynamoDB to store all activities
         self.activitiesTable = self.dynamoDBResource.Table(DYNAMO_TB_ACTIVITY)
         table_exists = False
         try:
@@ -73,7 +73,7 @@ class CubeServices:
             # Wait until the table exists.
         	self.dynamoDBResource.meta.client.get_waiter('table_exists').wait(TableName=DYNAMO_TB_ACTIVITY)
 
-        # Create the datastormActivitiesControl table in DynamoDB to manage activities completion
+        # Create the cubeBuilderActivitiesControl table in DynamoDB to manage activities completion
         self.activitiesControlTable = self.dynamoDBResource.Table(DBNAME_TB_CONTROL)
         table_exists = False
         try:

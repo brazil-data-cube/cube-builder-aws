@@ -1,9 +1,9 @@
 openapi: 3.0.0
 
 info:
-  description: Cube generation - API Datastorm
+  description: Cube generation - API Cube Builder
   version: "1.0.0"
-  title: API BDC Scripts (datastorm)
+  title: API Cube Builder (AWS)
   contact:
     name: OBT-INPE
     email: brazildatacube@dpi.inpe.br
@@ -17,9 +17,9 @@ servers:
 
 tags:
   - name: "status"
-    description: "Status services"
-  - name: "datastorm"
-    description: "Cube generation"
+    description: "Status service"
+  - name: "cube_builder"
+    description: "Cube Builder service"
 
 paths:
   /:
@@ -41,7 +41,7 @@ paths:
   /create-grs:
     post:
       tags:
-        - "datastorm"
+        - "cube_builder"
       summary: "Create GRS"
       description: "Create base GRS (Geographic Reference System)"
       requestBody:
@@ -62,7 +62,7 @@ paths:
   /create-raster-size:
     post:
       tags:
-        - "datastorm"
+        - "cube_builder"
       summary: "Create Raster Size Schema"
       description: "Create base Raster Size"
       requestBody:
@@ -83,7 +83,7 @@ paths:
   /create:
     post:
       tags:
-        - "datastorm"
+        - "cube_builder"
       summary: "Create Cube"
       description: "Create cube metadata"
       requestBody:
@@ -108,7 +108,7 @@ paths:
   /start:
     get:
       tags:
-        - "datastorm"
+        - "cube_builder"
       summary: "Start Process"
       description: "Start process to generate cube"
       parameters:
