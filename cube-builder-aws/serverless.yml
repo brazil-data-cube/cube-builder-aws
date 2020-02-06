@@ -1,6 +1,6 @@
 # serverless.yml
 
-service: cube_builder
+service: cube-builder
 
 plugins:
   - serverless-python-requirements
@@ -33,6 +33,9 @@ provider:
     KINESIS_NAME: cubeBuilderKinesis
     DYNAMO_TB_ACTIVITY: CHANGE_ME
     DBNAME_TB_CONTROL: CHANGE_ME
+    ENABLE_OBT_OAUTH: 0
+    AUTH_CLIENT_SECRET_KEY: CHANGE_ME
+    AUTH_CLIENT_AUDIENCE: CHANGE_ME
 
   iamRoleStatements:
     - Effect: "Allow"

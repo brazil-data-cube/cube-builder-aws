@@ -6,7 +6,7 @@ from bdc_db.models.base_sql import BaseModel, db
 from bdc_db.models import Collection, Band, CollectionTile, CollectionItem, Tile, \
     GrsSchema, RasterSizeSchema
 
-from .utils import Serializer
+from .utils.serializer import Serializer
 from .maestro import orchestrate, check_merge, prepare_merge, \
     merge_warped, solo, blend, publish
 from .services import CubeServices

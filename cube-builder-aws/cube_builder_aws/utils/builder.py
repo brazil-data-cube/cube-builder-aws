@@ -1,19 +1,8 @@
-from sqlalchemy.inspection import inspect
-
 import numpy
 import datetime
 import rasterio
 from datetime import timedelta
 from numpngw import write_png
-
-class Serializer(object):
-
-    def serialize(self):
-        return {c: getattr(self, c) for c in inspect(self).attrs.keys()}
-
-    @staticmethod
-    def serialize_list(l):
-        return [m.serialize() for m in l]
 
 
 #############################

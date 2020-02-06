@@ -16,3 +16,7 @@ QUEUE_NAME = os.environ.get('QUEUE_NAME', '')
 KINESIS_NAME = os.environ.get('KINESIS_NAME', '')
 DYNAMO_TB_ACTIVITY = os.environ.get('DYNAMO_TB_ACTIVITY', '')
 DBNAME_TB_CONTROL = os.environ.get('DBNAME_TB_CONTROL', '')
+
+ENABLE_OBT_OAUTH = os.environ.get('ENABLE_OBT_OAUTH', None)
+AUTH_CLIENT_SECRET_KEY = os.environ.get('AUTH_CLIENT_SECRET_KEY', '')
+AUTH_CLIENT_AUDIENCE = os.environ.get('AUTH_CLIENT_AUDIENCE', '')

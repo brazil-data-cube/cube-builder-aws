@@ -15,7 +15,7 @@ from bdc_db.models.base_sql import BaseModel, db
 from bdc_db.models import CollectionTile, CollectionItem, Tile, \
     Collection, Asset, Band
 
-from .utils import decode_periods, encode_key, \
+from .utils.builder import decode_periods, encode_key, \
     getMaskStats, getMask, generateQLook
 from config import BUCKET_NAME
 
