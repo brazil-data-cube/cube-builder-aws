@@ -260,7 +260,7 @@ class CubeServices:
                 bbox=bbox,
                 limit=10000
             )
-            items = self.stac.collection_items(dataset, filter=filter_opts)
+            items = self.stac.collections[dataset].get_items(filter=filter_opts)
 
             for f in items['features']:
                 if f['type'] == 'Feature':
