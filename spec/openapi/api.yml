@@ -2,7 +2,7 @@ openapi: 3.0.0
 
 info:
   description: Cube generation - API Cube Builder
-  version: "1.0.0"
+  version: "0.2.0"
   title: API Cube Builder (AWS)
   contact:
     name: OBT-INPE
