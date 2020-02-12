@@ -213,6 +213,7 @@ request:
         - temporal_schema
         - bands_quicklook
         - composite_function_list
+        - bands
         - description
       properties:
         datacube:
@@ -237,7 +238,11 @@ request:
           description: list of composite_functions (allow => MEDIAN, STACK)
           items:
             type: string
-        
+        bands:
+          type: array
+          description: list of bands (common name)
+          items:
+            type: string
         description:
           type: string
           description: description of cube
