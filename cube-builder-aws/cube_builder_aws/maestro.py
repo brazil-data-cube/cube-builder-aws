@@ -345,9 +345,10 @@ def merge_warped(self, activity):
     band = activity['band']
     if band == 'quality':
         resampling = Resampling.nearest
-        raster = numpy.zeros((numlin, numcol,), dtype=numpy.uint8)
-        raster_merge = numpy.zeros((numlin, numcol,), dtype=numpy.uint8)
-        raster_mask = numpy.ones((numlin, numcol,), dtype=numpy.uint8)
+
+        raster = numpy.zeros((numlin, numcol,), dtype=numpy.uint16)
+        raster_merge = numpy.zeros((numlin, numcol,), dtype=numpy.uint16)
+        raster_mask = numpy.ones((numlin, numcol,), dtype=numpy.uint16)
         nodata = 0
     else: 
         resampling = Resampling.bilinear
@@ -406,7 +407,7 @@ def merge_warped(self, activity):
     cloudratio = 100
     if activity['band'] == 'quality':
         raster_merge, efficacy, cloudratio = getMask(raster_merge, activity['dataset'])
-        template.update({'dtype': 'uint8'})
+        template.update({'dtype': 'uint16'})
 
     # Save merged image on S3
     with MemoryFile() as memfile:
