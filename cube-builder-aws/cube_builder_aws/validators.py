@@ -12,16 +12,6 @@ def to_bbox(s):
     if len(bbox) != 4: 
         return None
     return bbox
-    
-def bands():
-    return {
-        "names": {"type": "list", "empty": False, "required": True},
-        "min": {"type": "integer", "empty": False, "required": True},
-        "max": {"type": "integer", "empty": False, "required": True},
-        "fill": {"type": "integer", "empty": False, "required": True},
-        "scale": {"type": "float", "empty": False, "required": True},
-        "data_type": {"type": "string", "empty": False, "required": True}
-    }
 
 def create():
     item = {
@@ -31,13 +21,9 @@ def create():
         'temporal_schema': {"type": "string", "empty": False, "required": True},
         'bands_quicklook': {"type": "list", "empty": False, "required": True},
         'composite_function_list': {"type": "list", "empty": False, "required": True},
-        'bands': {
-            "type": "dict",
-            "schema": {
-                **bands()
-            }
-        },
+        'bands': {"type": "list", "empty": False, "required": True},
         'license': {"type": "string", "empty": False, "required": True},
+        'oauth_scope': {"type": "string", "empty": True, "required": False},
         'description': {"type": "string", "empty": False, "required": True}
     }
     return item

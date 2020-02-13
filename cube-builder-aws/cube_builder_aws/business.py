@@ -45,7 +45,7 @@ class CubeBusiness:
                     geometry_processing=None,
                     sensor=None,
                     is_cube=True,
-                    oauth_scope=None,
+                    oauth_scope=params.get('oauth_scope', None),
                     license=params['license'],
                     bands_quicklook=','.join(params['bands_quicklook'])
                 )
@@ -56,16 +56,16 @@ class CubeBusiness:
         bands = []
         for cube in cubes:
             # save bands
-            for band in params['bands']['names']:
+            for band in params['bands']:
                 band = band.strip()
                 bands.append(Band(
                     name=band,
                     collection_id=cube.id,
-                    min=params['bands']['min'] if band != 'quality' else 0,
-                    max=params['bands']['max'] if band != 'quality' else 255,
-                    fill=params['bands']['fill'] if band != 'quality' else 0,
-                    scale=params['bands']['scale'] if band != 'quality' else 1,
-                    data_type=params['bands']['data_type'] if band != 'quality' else 'Uint8',
+                    min=0 if band != 'quality' else 0,
+                    max=10000 if band != 'quality' else 255,
+                    fill=-9999 if band != 'quality' else 0,
+                    scale=0.0001 if band != 'quality' else 1,
+                    data_type= 'int16' if band != 'quality' else 'Uint8',
                     common_name=band,
                     resolution_x=params['resolution'],
                     resolution_y=params['resolution'],
