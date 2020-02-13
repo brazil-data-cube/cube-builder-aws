@@ -12,6 +12,8 @@ custom:
     packRequirements: false
   pythonRequirements:
     dockerizePip: non-linux
+    slim: true
+    zip: true
 
 provider:
   name: aws
@@ -74,6 +76,13 @@ provider:
         - Fn::GetAtt:
           - cubeBuilderKinesis
           - Arn
+
+package:
+  exclude:
+    - node_modules/**
+    - package-lock.json
+    - cube_builder_aws/__pycache__/**
+    - cube_builder_aws/utils/__pycache__/**
 
 functions:
   app:
