@@ -23,6 +23,7 @@ def create():
         'composite_function_list': {"type": "list", "empty": False, "required": True},
         'bands': {"type": "list", "empty": False, "required": True},
         'license': {"type": "string", "empty": False, "required": True},
+        'oauth_scope': {"type": "string", "empty": True, "required": False},
         'description': {"type": "string", "empty": False, "required": True}
     }
     return item

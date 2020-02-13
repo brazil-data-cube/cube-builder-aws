@@ -45,7 +45,7 @@ class CubeBusiness:
                     geometry_processing=None,
                     sensor=None,
                     is_cube=True,
-                    oauth_scope=None,
+                    oauth_scope=params.get('oauth_scope', None),
                     license=params['license'],
                     bands_quicklook=','.join(params['bands_quicklook'])
                 )

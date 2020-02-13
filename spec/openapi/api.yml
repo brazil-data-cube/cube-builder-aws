@@ -215,6 +215,7 @@ request:
         - composite_function_list
         - bands
         - description
+        - license
       properties:
         datacube:
           type: string
@@ -246,3 +247,9 @@ request:
         description:
           type: string
           description: description of cube
+        license:
+          type: string
+          description: license of cube
+        oauth_scope:
+          type: string
+          description: oauth scope (OBT) to cube access
