@@ -9,23 +9,42 @@
 Deploy
 ======
 
+Create infrastructure
+---------------------
+
 .. code-block:: shell
 
         $ cd deploy/step_1/
         $ sh start.sh
 
-** access https://console.aws.amazon.com/rds/home by browser
-** select region used to create RDS
-** select databases
-** Wait until the created database has a status of 'Available' (~10min)
-** click on database
+1. access https://console.aws.amazon.com/rds/home by browser
+
+2. select region used to create RDS
+
+3. select databases
+
+4. Wait until the created database has a status of 'Available' (~10min)
+
+5. click on database
+
+
+Create database structure
+-------------------------
+
+Create initial database structure to catalog the cubes to be generated
 
 .. code-block:: shell
 
         $ cd ../../deploy/step_2/
         $ sh start.sh
 
+
+Deploy Lambda service
+---------------------
+
 ** set environment with your information in *../../bdc-scripts/serverless.yml*
+
+then:
 
 .. code-block:: shell
 
