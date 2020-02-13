@@ -697,46 +697,48 @@ def blend(self, activity):
     stackRaster = numpy.zeros((height,width), dtype=profile['dtype'])
     maskRaster = numpy.ones((height,width), dtype=profile['dtype'])
 
-    # MEDIAN will be generated in local disk
-    medianfile = '/tmp/{0}'.format(os.path.basename(activity['MEDIANfile']))
-    mediandataset = rasterio.open(medianfile, 'w', **profile)
+    with MemoryFile() as medianfile:
+        with medianfile.open(**profile) as mediandataset:
+            for _, window in tilelist:
+                # Build the stack to store all images as a masked array. At this stage the array will contain the masked data	
+                stackMA = numpy.ma.zeros((numscenes, window.height, window.width), dtype=numpy.int16)
 
-    mediandataset = rasterio.open(medianfile, 'w', **profile)
+                notdonemask = numpy.ones(shape=(window.height,window.width),dtype=numpy.bool_)
 
-    for _, window in tilelist:
-        # Build the stack to store all images as a masked array. At this stage the array will contain the masked data	
-        stackMA = numpy.ma.zeros((numscenes, window.height, window.width), dtype=numpy.int16)
+                # For all pair (quality,band) scenes 
+                for order in range(numscenes):
+                    ssrc = bandlist[order]
+                    msrc = masklist[order]
+                    raster = ssrc.read(1, window=window)
+                    mask = msrc.read(1, window=window)
+                    mask[mask != 1] = 0
 
-        notdonemask = numpy.ones(shape=(window.height,window.width),dtype=numpy.bool_)
+                    # True => nodata
+                    bmask = numpy.invert(mask.astype(numpy.bool_))
 
-        # For all pair (quality,band) scenes 
-        for order in range(numscenes):
-            ssrc = bandlist[order]
-            msrc = masklist[order]
-            raster = ssrc.read(1, window=window)
-            mask = msrc.read(1, window=window)
-            mask[mask != 1] = 0
+                    # Use the mask to mark the fill (0) and cloudy (2) pixels
+                    stackMA[order] = numpy.ma.masked_where(bmask, raster)
 
-            # True => nodata
-            bmask = numpy.invert(mask.astype(numpy.bool_))
+                    # Evaluate the STACK image
+                    # Pixels that have been already been filled by previous rasters will be masked in the current raster
+                    maskRaster[window.row_off : window.row_off+window.height, window.col_off : window.col_off+window.width] *= bmask.astype(profile['dtype'])
+                    
+                    raster[raster == -9999] = 0
+                    todomask = notdonemask * numpy.invert(bmask)
+                    notdonemask = notdonemask * bmask
+                    stackRaster[window.row_off : window.row_off+window.height, window.col_off : window.col_off+window.width] += (todomask * raster.astype(profile['dtype']))
 
-            # Use the mask to mark the fill (0) and cloudy (2) pixels
-            stackMA[order] = numpy.ma.masked_where(bmask, raster)
+                medianRaster = numpy.ma.median(stackMA, axis=0).data
+                medianRaster[notdonemask.astype(numpy.bool_)] = -9999
+                mediandataset.write(medianRaster.astype(profile['dtype']), window=window, indexes=1)
 
-            # Evaluate the STACK image
-            # Pixels that have been already been filled by previous rasters will be masked in the current raster
-            maskRaster[window.row_off : window.row_off+window.height, window.col_off : window.col_off+window.width] *= bmask.astype(profile['dtype'])
-            
-            raster[raster == -9999] = 0
-            todomask = notdonemask * numpy.invert(bmask)
-            notdonemask = notdonemask * bmask
-            stackRaster[window.row_off : window.row_off+window.height, window.col_off : window.col_off+window.width] += (todomask * raster.astype(profile['dtype']))
+            stackRaster[maskRaster.astype(numpy.bool_)] = -9999
 
-        medianRaster = numpy.ma.median(stackMA, axis=0).data
-        medianRaster[notdonemask.astype(numpy.bool_)] = -9999
-        mediandataset.write(medianRaster.astype(profile['dtype']), window=window, indexes=1)
-
-    stackRaster[maskRaster.astype(numpy.bool_)] = -9999
+            if band != 'quality':
+                mediandataset.nodata = -9999
+            mediandataset.build_overviews([2, 4, 8, 16, 32, 64], Resampling.nearest)
+            mediandataset.update_tags(ns='rio_overview', resampling='nearest')
+        services.upload_fileobj_S3(medianfile, activity['MEDIANfile'], {'ACL': 'public-read'})
 
     # Close all input dataset
     for order in range(numscenes):
@@ -748,24 +750,6 @@ def blend(self, activity):
     activity['cloudratio'] = int(cloudcover)
     activity['raster_size_y'] = height
     activity['raster_size_x'] = width
-
-    if band != 'quality':
-        mediandataset.nodata = -9999
-
-    # Close dataset and save without overview
-    mediandataset.close()
-    mediandataset = None
-
-    # Add overviews to MEDIAN dataset
-    ds_median = rasterio.open(medianfile, 'r+', **profile)
-    if band != 'quality':
-        ds_median.nodata = -9999
-    ds_median.build_overviews([2, 4, 8, 16, 32, 64], Resampling.nearest)
-    ds_median.update_tags(ns='rio_overview', resampling='nearest')
-    ds_median.close()
-    ds_median = None
-    services.upload_file_S3(medianfile, activity['MEDIANfile'], {'ACL': 'public-read'})
-    os.remove(medianfile)
 
     # Create and upload the STACK dataset
     with MemoryFile() as memfile:
