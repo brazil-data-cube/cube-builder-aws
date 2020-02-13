@@ -1,5 +1,10 @@
 # app.py
 
+try:
+    import unzip_requirements
+except ImportError:
+    pass
+
 import os
 import json
 import base64
