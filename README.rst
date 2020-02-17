@@ -12,8 +12,24 @@ Cube Builder AWS
 
 .. image:: https://img.shields.io/badge/license-MIT-green
         :target: https://github.com//brazil-data-cube/cube-builder-aws/blob/master/LICENSE
-        :alt: Software License
+        :alt: Documentation Status
 
+.. image:: https://img.shields.io/badge/lifecycle-experimental-orange.svg
+        :target: https://www.tidyverse.org/lifecycle/#experimental
+        :alt: Package Lifecycle Status: Experimental
+
+.. image:: https://img.shields.io/github/tag/brazil-data-cube/cube-builder-aws.svg
+        :target: https://github.com/brazil-data-cube/cube-builder-aws/releases
+        :alt: Release
+
+.. image:: https://badges.gitter.im/brazil-data-cube/community.png
+        :target: https://gitter.im/brazil-data-cube/community#
+        :alt: Join the chat
+
+
+.. role:: raw-html(raw)
+    :format: html
+    
 
 Application to generate data cubes on AWS environment.
 
