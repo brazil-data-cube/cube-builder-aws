@@ -50,3 +50,13 @@ then:
 
         $ cd ../../deploy/step_3/
         $ sh deploy.sh
+
+
+Get service status
+---------------------
+
+.. code-block:: shell
+
+        $ curl {your-lambda-endpoint}/
+        
+for more information, see a `SPEC API <https://github.com/brazil-data-cube/cube-builder-aws/tree/master/spec>`_.
