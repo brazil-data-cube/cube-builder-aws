@@ -31,7 +31,8 @@ Cube Builder AWS
     :format: html
     
 
-Application to generate data cubes on AWS environment.
+Application to generate data cubes on AWS environment. 
+Using the services: Lambda, S3, SQS, DynamoDB and Kinesis.
 
 
 Installation
