@@ -39,15 +39,15 @@ def orchestrate(datacube, cube_infos, tiles, start_date, end_date):
             return 'tile ({}) not found in GRS ({})'.format(tile, cube_infos.grs_schema_id), 404
 
         tiles_infos[tile] = tile_info[0]
-        for function in ['WARPED', 'MEDIAN', 'STACK']:
+        for function in ['WARPED', 'STK', 'MED']:
             collection_tile = CollectionTile.query().filter(
-                CollectionTile.collection_id == '{}{}'.format(datacube, function),
+                CollectionTile.collection_id == '{}_{}'.format(datacube, function),
                 CollectionTile.grs_schema_id == cube_infos.grs_schema_id,
                 CollectionTile.tile_id == tile
             ).first()
             if not collection_tile:
                 collection_tiles.append(CollectionTile(
-                    collection_id='{}{}'.format(datacube, function),
+                    collection_id='{}_{}'.format(datacube, function),
                     grs_schema_id=cube_infos.grs_schema_id,
                     tile_id=tile
                 ))
@@ -88,7 +88,7 @@ def orchestrate(datacube, cube_infos, tiles, start_date, end_date):
                 items[tile]['ymax'] = tiles_infos[tile][0].max_y
                 items[tile]['periods'] = items[tile].get('periods', {})
 
-                item_id = '{}-{}-{}-{}'.format(cube_infos.id, tile, p_startdate, p_enddate)
+                item_id = '{}_{}_{}_{}'.format(cube_infos.id, tile, p_startdate, p_enddate)
                 if item_id not in items_id:
                     items_id.append(item_id)
                     if not list(filter(lambda c_i: c_i.id == item_id, collections_items)):
@@ -100,7 +100,7 @@ def orchestrate(datacube, cube_infos, tiles, start_date, end_date):
                             'id': item_id,
                             'composite_start': p_startdate,
                             'composite_end': p_enddate,
-                            'dirname': '{}/{}/{}-{}/'.format(datacube, tile, p_startdate, p_enddate)
+                            'dirname': '{}/{}/{}_{}/'.format(datacube, tile, p_startdate, p_enddate)
                         }
     return items
 
@@ -278,8 +278,8 @@ def prepare_merge(self, datacube, datasets, bands, quicklook, resx, resy, nodata
                             activity['links'].append(scene['link'])
 
                         # Continue filling the activity
-                        activity['ARDfile'] = activity['dirname']+'{0}_{1}_{2}_{3}_ARD_{4}.tif'.format(
-                            dataset, activity['datacube'], activity['tileid'], date, band)
+                        activity['ARDfile'] = activity['dirname']+'{}_WARPED_{}_{}_{}.tif'.format(
+                            activity['datacube'], activity['tileid'], date[0:10], band)
                         activity['sk'] = activity['date'] + activity['dataset']
                         activity['mylaunch'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
@@ -475,8 +475,8 @@ def check_blend(services, datacube, collections, bands, mosaics):
                             check[key] = {}
                             check[key]['status'] = mystatus
                             check[key]['scenes'] = jitem['scenes']
-                            check[key]['MEDIANfile'] = jitem['MEDIANfile']
-                            check[key]['STACKfile'] = jitem['STACKfile']
+                            check[key]['MEDfile'] = jitem['MEDfile']
+                            check[key]['STKfile'] = jitem['STKfile']
     return check
 
 def prepare_blend(self, datacube, datasets, bands, quicklook):
@@ -557,8 +557,8 @@ def next_blend(services, mergeactivity):
         if 'Item' in response \
                 and response['Item']['mystatus'] == 'DONE' \
                 and response['Item']['instancesToBeDone'] == blendactivity['instancesToBeDone'] \
-                and services.s3fileExists(key=blendactivity['MEDIANfile']) \
-                and services.s3fileExists(key=blendactivity['STACKfile']):
+                and services.s3fileExists(key=blendactivity['MEDfile']) \
+                and services.s3fileExists(key=blendactivity['STKfile']):
             blendactivity['mystatus'] = 'DONE'
             next_step(services, blendactivity)
             continue
@@ -618,9 +618,9 @@ def fill_blend(services, mergeactivity, blendactivity):
     
     blendactivity['instancesToBeDone'] += len(items)
     if band != 'quality':
-        for function in ['MEDIAN', 'STACK']:
-            cube_id = '{}{}'.format(blendactivity['datacube'], function)
-            blendactivity['{}file'.format(function)] = '{0}/{1}/{2}-{3}/{0}_{1}_{2}_{3}_{4}.tif'.format(
+        for function in ['MED', 'STK']:
+            cube_id = '{}_{}'.format(blendactivity['datacube'], function)
+            blendactivity['{}file'.format(function)] = '{0}/{1}/{2}_{3}/{0}_{1}_{2}_{3}_{4}.tif'.format(
                 cube_id, blendactivity['tileid'], blendactivity['start'], blendactivity['end'], band)
     return True
 
@@ -739,7 +739,7 @@ def blend(self, activity):
                 mediandataset.nodata = -9999
             mediandataset.build_overviews([2, 4, 8, 16, 32, 64], Resampling.nearest)
             mediandataset.update_tags(ns='rio_overview', resampling='nearest')
-        services.upload_fileobj_S3(medianfile, activity['MEDIANfile'], {'ACL': 'public-read'})
+        services.upload_fileobj_S3(medianfile, activity['MEDfile'], {'ACL': 'public-read'})
 
     # Close all input dataset
     for order in range(numscenes):
@@ -760,7 +760,7 @@ def blend(self, activity):
             ds_stack.write_band(1, stackRaster)
             ds_stack.build_overviews([2, 4, 8, 16, 32, 64], Resampling.nearest)
             ds_stack.update_tags(ns='rio_overview', resampling='nearest')
-        services.upload_fileobj_S3(memfile, activity['STACKfile'], {'ACL': 'public-read'})
+        services.upload_fileobj_S3(memfile, activity['STKfile'], {'ACL': 'public-read'})
 
     # Update status and end time in DynamoDB
     activity['myend'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -834,8 +834,8 @@ def next_publish(services, blendactivity):
 
         # Get blended files
         publishactivity['blended'][band] = {}
-        publishactivity['blended'][band]['MEDIANfile'] = activity['MEDIANfile']
-        publishactivity['blended'][band]['STACKfile'] = activity['STACKfile']
+        publishactivity['blended'][band]['MEDfile'] = activity['MEDfile']
+        publishactivity['blended'][band]['STKfile'] = activity['STKfile']
 
     publishactivity['sk'] = 'ALLBANDS'
     publishactivity['mystatus'] = 'NOTDONE'
@@ -858,8 +858,8 @@ def publish(self, activity):
     activity['mystart'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')    
     # Generate quicklooks for CUBES (MEDIAN, STACK ...) 
     qlbands = activity['quicklook'].split(',')
-    for function in ['MEDIAN', 'STACK']:
-        cube_id = '{}{}'.format(activity['datacube'], function)
+    for function in ['MED', 'STK']:
+        cube_id = '{}_{}'.format(activity['datacube'], function)
         general_scene_id = '{}_{}_{}_{}'.format(
             cube_id, activity['tileid'], activity['start'], activity['end'])
 
@@ -872,9 +872,6 @@ def publish(self, activity):
             '{}/'.format(activity['datacube']), '{}/'.format(cube_id))
         if pngname is None:
             print('publish - Error generateQLook for {}'.format(general_scene_id))
-            self.score = {}
-            self.score['error'] = 6
-            self.score['message'] = 'publish - Error generateQLook for {}'.format(general_scene_id)
             return False
         s3pngname = os.path.join(dirname_ql, os.path.basename(pngname))
         services.upload_file_S3(pngname, s3pngname, {'ACL': 'public-read'})
@@ -884,8 +881,8 @@ def publish(self, activity):
     for datedataset in activity['scenes']:
         scene = activity['scenes'][datedataset]
 
-        general_scene_id = '{0}_{1}_{2}_{3}'.format(
-            scene['dataset'], activity['datacube'], activity['tileid'], scene['date'])
+        general_scene_id = '{}_WARPED_{}_{}'.format(
+            activity['datacube'], activity['tileid'], str(scene['date'])[0:10])
         qlfiles = []
         for band in qlbands:
             filename = os.path.join(services.prefix + activity['dirname'], scene['ARDfiles'][band])
@@ -894,17 +891,14 @@ def publish(self, activity):
         pngname = generateQLook(general_scene_id, qlfiles)
         if pngname is None:
             print('publish - Error generateQLook for {}'.format(general_scene_id))
-            self.score = {}
-            self.score['error'] = 6
-            self.score['message'] = 'publish - Error generateQLook for {}'.format(general_scene_id)
             return False
         s3pngname = os.path.join(activity['dirname'], os.path.basename(pngname))
         services.upload_file_S3(pngname, s3pngname, {'ACL': 'public-read'})
         os.remove(pngname)
 
     # register collection_items and assets in DB (MEDIAN, STACK ...)
-    for function in ['MEDIAN', 'STACK']:
-        cube_id = '{}{}'.format(activity['datacube'], function)
+    for function in ['MED', 'STK']:
+        cube_id = '{}_{}'.format(activity['datacube'], function)
         cube = Collection.query().filter(
             Collection.id == cube_id
         ).first()
@@ -981,7 +975,7 @@ def publish(self, activity):
     for datedataset in activity['scenes']:
         scene = activity['scenes'][datedataset]
 
-        cube_id = '{}WARPED'.format(activity['datacube'])
+        cube_id = '{}_WARPED'.format(activity['datacube'])
         cube = Collection.query().filter(
             Collection.id == cube_id
         ).first()
@@ -989,8 +983,8 @@ def publish(self, activity):
             print('cube {} not found!'.format(cube_id))
             continue
 
-        general_scene_id = '{}_{}_{}_{}'.format(
-            cube_id, activity['tileid'], activity['start'], activity['end'])
+        general_scene_id = '{}_{}_{}'.format(
+            cube_id, activity['tileid'], str(scene['date'])[0:10])
 
         # delete 'assets' and 'collection_items' if exists
         assets = Asset.query().filter(

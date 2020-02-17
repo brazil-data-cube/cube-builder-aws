@@ -20,7 +20,6 @@ def create():
         'resolution': {"type": "integer", "empty": False, "required": True},
         'temporal_schema': {"type": "string", "empty": False, "required": True},
         'bands_quicklook': {"type": "list", "empty": False, "required": True},
-        'composite_function_list': {"type": "list", "empty": False, "required": True},
         'bands': {"type": "list", "empty": False, "required": True},
         'license': {"type": "string", "empty": False, "required": True},
         'oauth_scope': {"type": "string", "empty": True, "required": False},

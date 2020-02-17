@@ -174,7 +174,7 @@ def getMask(raster, dataset):
             (raster & snowice > 512) + \
             (raster & cirrus > 4096)
 
-		strel = numpy.ones((6, 6), dtype=numpy.uint8)
+		strel = numpy.ones((6, 6), dtype=numpy.uint16)
 		out = numpy.empty(notcleararea.shape, dtype=numpy.bool)
 		ndi.binary_dilation(notcleararea, structure=strel, output=out)
 		notcleararea = out
@@ -196,8 +196,8 @@ def getMask(raster, dataset):
 		# 2 		Snow/Ice 		Target covered with snow/ice
 		# 3 		Cloudy 			Target not visible, covered with cloud
 		fill = 0 	# warped images have 0 as fill area
-		lut = numpy.array([0, 1, 1, 2, 2], dtype=numpy.uint8)
-		rastercm = numpy.take(lut, raster+1).astype(numpy.uint8)
+		lut = numpy.array([0, 1, 1, 2, 2], dtype=numpy.uint16)
+		rastercm = numpy.take(lut, raster+1).astype(numpy.uint16)
 
 	elif 'S2SR' in dataset:
 		# S2 sen2cor - The generated classification map is specified as follows:
@@ -215,8 +215,8 @@ def getMask(raster, dataset):
 		# 10		THIN_CIRRUS
 		# 11		SNOW
 		# 0 1 2 3 4 5 6 7 8 9 10 11
-		lut = numpy.array([0,0,2,2,1,1,1,2,2,2,1, 1],dtype=numpy.uint8)
-		rastercm = numpy.take(lut,raster).astype(numpy.uint8)
+		lut = numpy.array([0,0,2,2,1,1,1,2,2,2,1, 1],dtype=numpy.uint16)
+		rastercm = numpy.take(lut,raster).astype(numpy.uint16)
 
 	elif dataset == 'CB4_AWFI' or dataset == 'CB4_MUX':
 		# Key 		Summary QA 		Description
@@ -224,10 +224,10 @@ def getMask(raster, dataset):
 		# 127 		Good Data 		Use with confidence
 		# 255 		Cloudy 			Target not visible, covered with cloud
 		fill = 0 		# warped images have 0 as fill area
-		lut = numpy.zeros(256,dtype=numpy.uint8)
+		lut = numpy.zeros(256,dtype=numpy.uint16)
 		lut[127] = 1
 		lut[255] = 2
-		rastercm = numpy.take(lut,raster).astype(numpy.uint8)
+		rastercm = numpy.take(lut,raster).astype(numpy.uint16)
 
 	totpix   = rastercm.size
 	clearpix = numpy.count_nonzero(rastercm==1)
