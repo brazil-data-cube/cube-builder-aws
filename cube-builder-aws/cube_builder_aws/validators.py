@@ -68,8 +68,6 @@ def raster_size():
     item = {
         'grs_schema': {"type": "string", "empty": False, "required": True},
         'resolution': {"type": "string", "empty": False, "required": True},
-        'raster_size_x': {"type": "float", "empty": False, "required": True},
-        'raster_size_y': {"type": "float", "empty": False, "required": True},
         'chunk_size_x': {"type": "float", "empty": False, "required": True},
         'chunk_size_y': {"type": "float", "empty": False, "required": True}
     }

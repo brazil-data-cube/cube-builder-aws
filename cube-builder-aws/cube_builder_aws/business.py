@@ -1,6 +1,7 @@
 import json
 import rasterio
 from datetime import datetime
+from geoalchemy2 import func
 
 from bdc_db.models.base_sql import BaseModel, db
 from bdc_db.models import Collection, Band, CollectionTile, CollectionItem, Tile, \
@@ -224,17 +225,26 @@ class CubeBusiness:
                 LL_lon = out[0][3]
                 LL_lat = out[1][3]
 
+                wkt_wgs84 = 'POLYGON(({} {},{} {},{} {},{} {},{} {}))'.format(
+                    UL_lon, UL_lat, 
+                    UR_lon, UR_lat,
+                    LR_lon, LR_lat,
+                    LL_lon, LL_lat,
+                    UL_lon, UL_lat)
+
+                wkt = 'POLYGON(({} {},{} {},{} {},{} {},{} {}))'.format(
+                    x1, y2, 
+                    x2, y2,
+                    x2, y1,
+                    x1, y1,
+                    x1, y2)
+
                 # Insert tile
                 tiles.append(Tile(
                     id='{0:03d}{1:03d}'.format(ix, iy),
                     grs_schema_id=name,
-                    geom_wgs84='SRID=0;POLYGON(({} {},{} {},{} {},{} {},{} {}))'.format(
-                        UL_lon, UL_lat, 
-                        UR_lon, UR_lat,
-                        LR_lon, LR_lat,
-                        LL_lon, LL_lat,
-                        UL_lon, UL_lat),
-                    geom=None,
+                    geom_wgs84='SRID=4326;{}'.format(wkt_wgs84),
+                    geom='SRID=0;{}'.format(wkt),
                     min_x=x1,
                     max_y=y1
                 ))
@@ -242,8 +252,21 @@ class CubeBusiness:
         BaseModel.save_all(tiles)
         return 'Grid {} created with successfully'.format(name), 201
 
-    def create_raster_size(self, grs_schema, resolution, raster_size_x, raster_size_y, 
-        chunk_size_x, chunk_size_y):
+    def create_raster_size(self, grs_schema, resolution, chunk_size_x, chunk_size_y):
+        tile = db.session() \
+            .query(
+                Tile, func.ST_Xmin(Tile.geom), func.ST_Xmax(Tile.geom), 
+                func.ST_Ymin(Tile.geom), func.ST_Ymax(Tile.geom)
+            ).filter(
+                Tile.grs_schema_id == grs_schema
+            ).first()
+        if not tile:
+            'GRS not found!', 404
+
+        # x = Xmax - Xmin || y = Ymax - Ymin
+        raster_size_x = int(round((tile[2]-tile[1])/int(resolution),0))
+        raster_size_y = int(round((tile[4]-tile[3])/int(resolution),0))
+
         raster_schema_id = '{}-{}'.format(grs_schema, resolution)
 
         raster_schema = RasterSizeSchema.query().filter(
