@@ -50,7 +50,7 @@ See `RUNNING.rst <./RUNNING.rst>`_.
 API SPEC
 ========
 
-See `spec/README.rst <./spec/README.rst>`_.
+See `spec/README.rst <./spec>`_.
 
 
 License
