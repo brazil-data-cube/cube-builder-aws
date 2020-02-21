@@ -3,7 +3,7 @@ import datetime
 import rasterio
 from datetime import timedelta
 from numpngw import write_png
-
+from scipy import ndimage as ndi
 
 #############################
 def days_in_month(date):
@@ -149,70 +149,74 @@ def getMaskStats(mask):
 
 ############################
 def getMask(raster, dataset):
-	# Output Cloud Mask codes
-	# 0 - fill
-	# 1 - clear data
-	# 0 - cloud
-
+    # Output Cloud Mask codes
+    # 0 - fill
+    # 1 - clear data
+    # 0 - cloud
 	if 'LC8SR' in dataset:
 		# Input pixel_qa codes
-		fill    = 1 				# warped images have 0 as fill area
-		radsat  = 4+8				# 0000 0000 0000 1100
-		cloud   = 16+32+64			# 0000 0000 0110 0000
-		shadow  = 128+256			# 0000 0001 1000 0000
+		fill = 1 				# warped images have 0 as fill area
+		terrain = 2					# 0000 0000 0000 0010
+		radsat = 4+8				# 0000 0000 0000 1100
+		cloud = 16+32+64			# 0000 0000 0110 0000
+		shadow = 128+256			# 0000 0001 1000 0000
 		snowice = 512+1024			# 0000 0110 0000 0000
-		cirrus  = 2048+4096			# 0001 1000 0000 0000
+		cirrus = 2048+4096			# 0001 1000 0000 0000
 
 		# Start with a zeroed image imagearea
 		imagearea = numpy.zeros(raster.shape, dtype=numpy.bool_)
 		# Mark with True the pixels that contain valid data
 		imagearea = imagearea + raster > fill
 		# Create a notcleararea mask with True where the quality criteria is as follows
-		notcleararea = 	(raster & radsat > 4) + \
-						(raster & cloud > 64) + \
-						(raster & shadow > 256) + \
-						(raster & snowice > 512) + \
-						(raster & cirrus > 4096) 
+		notcleararea = (raster & radsat > 4) + \
+            (raster & cloud > 64) + \
+            (raster & shadow > 256) + \
+            (raster & snowice > 512) + \
+            (raster & cirrus > 4096)
 
-		strel = morphology.selem.square(6)
-		notcleararea = morphology.binary_dilation(notcleararea,strel)
-		morphology.remove_small_holes(notcleararea, area_threshold=80, connectivity=1, in_place=True)
+		strel = numpy.ones((6, 6), dtype=numpy.uint16)
+		out = numpy.empty(notcleararea.shape, dtype=numpy.bool)
+		ndi.binary_dilation(notcleararea, structure=strel, output=out)
+		notcleararea = out
+
+		remove_small_holes(notcleararea, area_threshold=80, connectivity=1, in_place=True)
 
 		# Clear area is the area with valid data and with no Cloud or Snow
 		cleararea = imagearea * numpy.invert(notcleararea)
 		# Code the output image rastercm as the output codes
-		rastercm = (2*notcleararea + cleararea).astype(numpy.uint8)
+		rastercm = (2*notcleararea + cleararea).astype(numpy.uint16)  # .astype(numpy.uint8)
 
 	elif dataset == 'MOD13Q1' or dataset == 'MYD13Q1':
-		#MOD13Q1 Pixel Reliability !!!!!!!!!!!!!!!!!!!! Note that 1 was added to this image in downloadModis because of warping
+		# MOD13Q1 Pixel Reliability !!!!!!!!!!!!!!!!!!!!
+		# Note that 1 was added to this image in downloadModis because of warping
 		# Rank/Key Summary QA 		Description
 		# -1 		Fill/No Data 	Not Processed
 		# 0 		Good Data 		Use with confidence
 		# 1 		Marginal data 	Useful, but look at other QA information
 		# 2 		Snow/Ice 		Target covered with snow/ice
 		# 3 		Cloudy 			Target not visible, covered with cloud
-		fill    = 0 	# warped images have 0 as fill area
-		lut = numpy.array([0,1,1,2,2],dtype=numpy.uint8)
-		rastercm = numpy.take(lut,raster+1).astype(numpy.uint8)
+		fill = 0 	# warped images have 0 as fill area
+		lut = numpy.array([0, 1, 1, 2, 2], dtype=numpy.uint16)
+		rastercm = numpy.take(lut, raster+1).astype(numpy.uint16)
 
 	elif 'S2SR' in dataset:
 		# S2 sen2cor - The generated classification map is specified as follows:
 		# Label Classification
-		# 0		NO_DATA
-		# 1		SATURATED_OR_DEFECTIVE
-		# 2		DARK_AREA_PIXELS
-		# 3		CLOUD_SHADOWS
-		# 4		VEGETATION
-		# 5		NOT_VEGETATED
-		# 6		WATER
-		# 7		UNCLASSIFIED
-		# 8		CLOUD_MEDIUM_PROBABILITY
-		# 9		CLOUD_HIGH_PROBABILITY
-		#10		THIN_CIRRUS
-		#11		SNOW 
-		#                  0 1 2 3 4 5 6 7 8 9 10 11
-		lut = numpy.array([0,0,2,2,1,1,1,2,2,2,1, 1],dtype=numpy.uint8)
-		rastercm = numpy.take(lut,raster).astype(numpy.uint8)
+		#  0		NO_DATA
+		#  1		SATURATED_OR_DEFECTIVE
+		#  2		DARK_AREA_PIXELS
+		#  3		CLOUD_SHADOWS
+		#  4		VEGETATION
+		#  5		NOT_VEGETATED
+		#  6		WATER
+		#  7		UNCLASSIFIED
+		#  8		CLOUD_MEDIUM_PROBABILITY
+		#  9		CLOUD_HIGH_PROBABILITY
+		# 10		THIN_CIRRUS
+		# 11		SNOW
+		# 0 1 2 3 4 5 6 7 8 9 10 11
+		lut = numpy.array([0,0,2,2,1,1,1,2,2,2,1, 1],dtype=numpy.uint16)
+		rastercm = numpy.take(lut,raster).astype(numpy.uint16)
 
 	elif dataset == 'CB4_AWFI' or dataset == 'CB4_MUX':
 		# Key 		Summary QA 		Description
@@ -220,10 +224,10 @@ def getMask(raster, dataset):
 		# 127 		Good Data 		Use with confidence
 		# 255 		Cloudy 			Target not visible, covered with cloud
 		fill = 0 		# warped images have 0 as fill area
-		lut = numpy.zeros(256,dtype=numpy.uint8)
+		lut = numpy.zeros(256,dtype=numpy.uint16)
 		lut[127] = 1
 		lut[255] = 2
-		rastercm = numpy.take(lut,raster).astype(numpy.uint8)
+		rastercm = numpy.take(lut,raster).astype(numpy.uint16)
 
 	totpix   = rastercm.size
 	clearpix = numpy.count_nonzero(rastercm==1)
@@ -234,7 +238,7 @@ def getMask(raster, dataset):
 		cloudratio = round(100.*cloudpix/imagearea,1)
 	efficacy = round(100.*clearpix/totpix,2)
 
-	return rastercm, efficacy, cloudratio
+	return rastercm.astype(numpy.uint16), efficacy, cloudratio
 
 
 ############################
@@ -262,3 +266,64 @@ def generateQLook(generalSceneId, qlfiles):
 
     write_png(pngname, image, transparent=(0, 0, 0))
     return pngname
+
+############################
+def remove_small_holes(ar, area_threshold=64, connectivity=1, in_place=False):
+    """
+	@author (scikit-image)
+	- https://github.com/scikit-image/scikit-image/blob/master/skimage/morphology/misc.py
+    """
+
+    if in_place:
+        out = ar
+    else:
+        out = ar.copy()
+
+    # Creating the inverse of ar
+    if in_place:
+        numpy.logical_not(out, out=out)
+    else:
+        out = numpy.logical_not(out)
+
+    # removing small objects from the inverse of ar
+    out = remove_small_objects(out, area_threshold, connectivity, in_place)
+
+    if in_place:
+        numpy.logical_not(out, out=out)
+    else:
+        out = numpy.logical_not(out)
+
+    return out
+
+def remove_small_objects(ar, min_size=64, connectivity=1, in_place=False):
+    """
+	@author (scikit-image)
+	- https://github.com/scikit-image/scikit-image/blob/master/skimage/morphology/misc.py
+    """
+    # Raising type error if not int or bool
+    if in_place:
+        out = ar
+    else:
+        out = ar.copy()
+
+    if min_size == 0:  # shortcut for efficiency
+        return out
+
+    if out.dtype == bool:
+        selem = ndi.generate_binary_structure(ar.ndim, connectivity)
+        ccs = numpy.zeros_like(ar, dtype=numpy.int32)
+        ndi.label(ar, selem, output=ccs)
+    else:
+        ccs = out
+
+    try:
+        component_sizes = numpy.bincount(ccs.ravel())
+    except ValueError:
+        raise ValueError("Negative value labels are not supported. Try "
+                         "relabeling the input with `scipy.ndimage.label` or "
+                         "`skimage.morphology.label`.")
+
+    too_small = component_sizes < min_size
+    too_small_mask = too_small[ccs]
+    out[too_small_mask] = 0
+    return out

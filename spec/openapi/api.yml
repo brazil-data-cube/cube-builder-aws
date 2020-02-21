@@ -2,7 +2,7 @@ openapi: 3.0.0
 
 info:
   description: Cube generation - API Cube Builder
-  version: "1.0.0"
+  version: "0.2.0"
   title: API Cube Builder (AWS)
   contact:
     name: OBT-INPE
@@ -213,7 +213,9 @@ request:
         - temporal_schema
         - bands_quicklook
         - composite_function_list
+        - bands
         - description
+        - license
       properties:
         datacube:
           type: string
@@ -237,7 +239,17 @@ request:
           description: list of composite_functions (allow => MEDIAN, STACK)
           items:
             type: string
-        
+        bands:
+          type: array
+          description: list of bands (common name)
+          items:
+            type: string
         description:
           type: string
           description: description of cube
+        license:
+          type: string
+          description: license of cube
+        oauth_scope:
+          type: string
+          description: oauth scope (OBT) to cube access

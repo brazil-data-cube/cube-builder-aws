@@ -39,15 +39,15 @@ def orchestrate(datacube, cube_infos, tiles, start_date, end_date):
             return 'tile ({}) not found in GRS ({})'.format(tile, cube_infos.grs_schema_id), 404
 
         tiles_infos[tile] = tile_info[0]
-        for function in ['WARPED', 'MEDIAN', 'STACK']:
+        for function in ['WARPED', 'STK', 'MED']:
             collection_tile = CollectionTile.query().filter(
-                CollectionTile.collection_id == '{}{}'.format(datacube, function),
+                CollectionTile.collection_id == '{}_{}'.format(datacube, function),
                 CollectionTile.grs_schema_id == cube_infos.grs_schema_id,
                 CollectionTile.tile_id == tile
             ).first()
             if not collection_tile:
                 collection_tiles.append(CollectionTile(
-                    collection_id='{}{}'.format(datacube, function),
+                    collection_id='{}_{}'.format(datacube, function),
                     grs_schema_id=cube_infos.grs_schema_id,
                     tile_id=tile
                 ))
@@ -88,7 +88,7 @@ def orchestrate(datacube, cube_infos, tiles, start_date, end_date):
                 items[tile]['ymax'] = tiles_infos[tile][0].max_y
                 items[tile]['periods'] = items[tile].get('periods', {})
 
-                item_id = '{}-{}-{}-{}'.format(cube_infos.id, tile, p_startdate, p_enddate)
+                item_id = '{}_{}_{}_{}'.format(cube_infos.id, tile, p_startdate, p_enddate)
                 if item_id not in items_id:
                     items_id.append(item_id)
                     if not list(filter(lambda c_i: c_i.id == item_id, collections_items)):
@@ -100,7 +100,7 @@ def orchestrate(datacube, cube_infos, tiles, start_date, end_date):
                             'id': item_id,
                             'composite_start': p_startdate,
                             'composite_end': p_enddate,
-                            'dirname': '{}/{}/{}-{}/'.format(datacube, tile, p_startdate, p_enddate)
+                            'dirname': '{}/{}/{}_{}/'.format(datacube, tile, p_startdate, p_enddate)
                         }
     return items
 
@@ -278,8 +278,8 @@ def prepare_merge(self, datacube, datasets, bands, quicklook, resx, resy, nodata
                             activity['links'].append(scene['link'])
 
                         # Continue filling the activity
-                        activity['ARDfile'] = activity['dirname']+'{0}_{1}_{2}_{3}_ARD_{4}.tif'.format(
-                            dataset, activity['datacube'], activity['tileid'], date, band)
+                        activity['ARDfile'] = activity['dirname']+'{}_WARPED_{}_{}_{}.tif'.format(
+                            activity['datacube'], activity['tileid'], date[0:10], band)
                         activity['sk'] = activity['date'] + activity['dataset']
                         activity['mylaunch'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
@@ -345,9 +345,10 @@ def merge_warped(self, activity):
     band = activity['band']
     if band == 'quality':
         resampling = Resampling.nearest
-        raster = numpy.zeros((numlin, numcol,), dtype=numpy.uint8)
-        raster_merge = numpy.zeros((numlin, numcol,), dtype=numpy.uint8)
-        raster_mask = numpy.ones((numlin, numcol,), dtype=numpy.uint8)
+
+        raster = numpy.zeros((numlin, numcol,), dtype=numpy.uint16)
+        raster_merge = numpy.zeros((numlin, numcol,), dtype=numpy.uint16)
+        raster_mask = numpy.ones((numlin, numcol,), dtype=numpy.uint16)
         nodata = 0
     else: 
         resampling = Resampling.bilinear
@@ -406,7 +407,7 @@ def merge_warped(self, activity):
     cloudratio = 100
     if activity['band'] == 'quality':
         raster_merge, efficacy, cloudratio = getMask(raster_merge, activity['dataset'])
-        template.update({'dtype': 'uint8'})
+        template.update({'dtype': 'uint16'})
 
     # Save merged image on S3
     with MemoryFile() as memfile:
@@ -474,8 +475,8 @@ def check_blend(services, datacube, collections, bands, mosaics):
                             check[key] = {}
                             check[key]['status'] = mystatus
                             check[key]['scenes'] = jitem['scenes']
-                            check[key]['MEDIANfile'] = jitem['MEDIANfile']
-                            check[key]['STACKfile'] = jitem['STACKfile']
+                            check[key]['MEDfile'] = jitem['MEDfile']
+                            check[key]['STKfile'] = jitem['STKfile']
     return check
 
 def prepare_blend(self, datacube, datasets, bands, quicklook):
@@ -556,8 +557,8 @@ def next_blend(services, mergeactivity):
         if 'Item' in response \
                 and response['Item']['mystatus'] == 'DONE' \
                 and response['Item']['instancesToBeDone'] == blendactivity['instancesToBeDone'] \
-                and services.s3fileExists(key=blendactivity['MEDIANfile']) \
-                and services.s3fileExists(key=blendactivity['STACKfile']):
+                and services.s3fileExists(key=blendactivity['MEDfile']) \
+                and services.s3fileExists(key=blendactivity['STKfile']):
             blendactivity['mystatus'] = 'DONE'
             next_step(services, blendactivity)
             continue
@@ -617,9 +618,9 @@ def fill_blend(services, mergeactivity, blendactivity):
     
     blendactivity['instancesToBeDone'] += len(items)
     if band != 'quality':
-        for function in ['MEDIAN', 'STACK']:
-            cube_id = '{}{}'.format(blendactivity['datacube'], function)
-            blendactivity['{}file'.format(function)] = '{0}/{1}/{2}-{3}/{0}_{1}_{2}_{3}_{4}.tif'.format(
+        for function in ['MED', 'STK']:
+            cube_id = '{}_{}'.format(blendactivity['datacube'], function)
+            blendactivity['{}file'.format(function)] = '{0}/{1}/{2}_{3}/{0}_{1}_{2}_{3}_{4}.tif'.format(
                 cube_id, blendactivity['tileid'], blendactivity['start'], blendactivity['end'], band)
     return True
 
@@ -646,6 +647,12 @@ def blend(self, activity):
     profile = None
     with rasterio.open(filename) as src:
         profile = src.profile
+        profile.update({
+            'compress': 'LZW',
+            'tiled': True,
+            'blockxsize': activity.get('chunk_size_x', 512),
+            'blockysize': activity.get('chunk_size_y', 512)
+        })
         tilelist = list(src.block_windows())
 
     # Order scenes based in efficacy/resolution
@@ -689,38 +696,50 @@ def blend(self, activity):
 
     # STACK will be generated in memory
     stackRaster = numpy.zeros((height,width), dtype=profile['dtype'])
+    maskRaster = numpy.ones((height,width), dtype=profile['dtype'])
 
-    # MEDIAN will be generated in local disk
-    medianfile = '/tmp/{0}'.format(os.path.basename(activity['MEDIANfile']))
-    mediandataset = rasterio.open(medianfile, 'w', **profile)
-    for _, window in tilelist:
-        # Build the stack to store all images as a masked array. At this stage the array will contain the masked data	
-        stackMA = numpy.ma.zeros((numscenes,window.height,window.width),dtype=numpy.int16)
-        # notdonemask will keep track of pixels that have not been filled in each step
-        notdonemask = numpy.ones(shape=(window.height,window.width),dtype=numpy.bool_)
-        notdone = numpy.count_nonzero(notdonemask)
+    with MemoryFile() as medianfile:
+        with medianfile.open(**profile) as mediandataset:
+            for _, window in tilelist:
+                # Build the stack to store all images as a masked array. At this stage the array will contain the masked data	
+                stackMA = numpy.ma.zeros((numscenes, window.height, window.width), dtype=numpy.int16)
 
-        # For all pair (quality,band) scenes 
-        for order in range(numscenes):
-            ssrc = bandlist[order]
-            msrc = masklist[order]
-            raster = ssrc.read(1, window=window)
-            mask = msrc.read(1, window=window)
-            mask[mask!=1] = 0
-            bmask = mask.astype(numpy.bool_)
-            # Use the mask to mark the fill (0) and cloudy (2) pixels
-            stackMA[order] = numpy.ma.masked_where(numpy.invert(bmask), raster)
-            # Evaluate the STACK image
-            # Pixels that have been already been filled by previous rasters will be masked in the current raster
-            todomask = notdonemask * bmask
-            notdonemask = notdonemask * numpy.invert(bmask)
-            stackRaster[window.row_off:window.row_off+window.height,window.col_off:window.col_off+window.width] += (raster*todomask).astype(profile['dtype'])
-            notdone = numpy.count_nonzero(notdonemask)
-            todo = numpy.count_nonzero(todomask)
-            marked = numpy.count_nonzero(bmask)
+                notdonemask = numpy.ones(shape=(window.height,window.width),dtype=numpy.bool_)
 
-        medianRaster = numpy.ma.median(stackMA, axis=0).data
-        mediandataset.write(medianRaster.astype(profile['dtype']), window=window, indexes=1)
+                # For all pair (quality,band) scenes 
+                for order in range(numscenes):
+                    ssrc = bandlist[order]
+                    msrc = masklist[order]
+                    raster = ssrc.read(1, window=window)
+                    mask = msrc.read(1, window=window)
+                    mask[mask != 1] = 0
+
+                    # True => nodata
+                    bmask = numpy.invert(mask.astype(numpy.bool_))
+
+                    # Use the mask to mark the fill (0) and cloudy (2) pixels
+                    stackMA[order] = numpy.ma.masked_where(bmask, raster)
+
+                    # Evaluate the STACK image
+                    # Pixels that have been already been filled by previous rasters will be masked in the current raster
+                    maskRaster[window.row_off : window.row_off+window.height, window.col_off : window.col_off+window.width] *= bmask.astype(profile['dtype'])
+                    
+                    raster[raster == -9999] = 0
+                    todomask = notdonemask * numpy.invert(bmask)
+                    notdonemask = notdonemask * bmask
+                    stackRaster[window.row_off : window.row_off+window.height, window.col_off : window.col_off+window.width] += (todomask * raster.astype(profile['dtype']))
+
+                medianRaster = numpy.ma.median(stackMA, axis=0).data
+                medianRaster[notdonemask.astype(numpy.bool_)] = -9999
+                mediandataset.write(medianRaster.astype(profile['dtype']), window=window, indexes=1)
+
+            stackRaster[maskRaster.astype(numpy.bool_)] = -9999
+
+            if band != 'quality':
+                mediandataset.nodata = -9999
+            mediandataset.build_overviews([2, 4, 8, 16, 32, 64], Resampling.nearest)
+            mediandataset.update_tags(ns='rio_overview', resampling='nearest')
+        services.upload_fileobj_S3(medianfile, activity['MEDfile'], {'ACL': 'public-read'})
 
     # Close all input dataset
     for order in range(numscenes):
@@ -732,31 +751,16 @@ def blend(self, activity):
     activity['cloudratio'] = int(cloudcover)
     activity['raster_size_y'] = height
     activity['raster_size_x'] = width
-    activity['chunk_size_x'] = profile['blockxsize']
-    activity['chunk_size_y'] = profile['blockysize']
 
-    # Close dataset and save without overview
-    mediandataset.close()
-    mediandataset = None
-
-    # Add overviews to MEDIAN dataset
-    ds_median = rasterio.open(medianfile, 'r+')
-    ds_median.nodata = activity.get('nodata', -9999)
-    ds_median.build_overviews([2, 4, 8, 16, 32, 64], Resampling.nearest)
-    ds_median.update_tags(ns='rio_overview', resampling='nearest')
-    ds_median.close()
-    ds_median = None
-    services.upload_file_S3(medianfile, activity['MEDIANfile'], {'ACL': 'public-read'})
-    os.remove(medianfile)
-    
     # Create and upload the STACK dataset
     with MemoryFile() as memfile:
         with memfile.open(**profile) as ds_stack:
-            ds_stack.nodata = activity.get('nodata', -9999)
+            if band != 'quality':
+                ds_stack.nodata = -9999
             ds_stack.write_band(1, stackRaster)
             ds_stack.build_overviews([2, 4, 8, 16, 32, 64], Resampling.nearest)
             ds_stack.update_tags(ns='rio_overview', resampling='nearest')
-        services.upload_fileobj_S3(memfile, activity['STACKfile'], {'ACL': 'public-read'})
+        services.upload_fileobj_S3(memfile, activity['STKfile'], {'ACL': 'public-read'})
 
     # Update status and end time in DynamoDB
     activity['myend'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -830,8 +834,8 @@ def next_publish(services, blendactivity):
 
         # Get blended files
         publishactivity['blended'][band] = {}
-        publishactivity['blended'][band]['MEDIANfile'] = activity['MEDIANfile']
-        publishactivity['blended'][band]['STACKfile'] = activity['STACKfile']
+        publishactivity['blended'][band]['MEDfile'] = activity['MEDfile']
+        publishactivity['blended'][band]['STKfile'] = activity['STKfile']
 
     publishactivity['sk'] = 'ALLBANDS'
     publishactivity['mystatus'] = 'NOTDONE'
@@ -854,8 +858,8 @@ def publish(self, activity):
     activity['mystart'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')    
     # Generate quicklooks for CUBES (MEDIAN, STACK ...) 
     qlbands = activity['quicklook'].split(',')
-    for function in ['MEDIAN', 'STACK']:
-        cube_id = '{}{}'.format(activity['datacube'], function)
+    for function in ['MED', 'STK']:
+        cube_id = '{}_{}'.format(activity['datacube'], function)
         general_scene_id = '{}_{}_{}_{}'.format(
             cube_id, activity['tileid'], activity['start'], activity['end'])
 
@@ -868,9 +872,6 @@ def publish(self, activity):
             '{}/'.format(activity['datacube']), '{}/'.format(cube_id))
         if pngname is None:
             print('publish - Error generateQLook for {}'.format(general_scene_id))
-            self.score = {}
-            self.score['error'] = 6
-            self.score['message'] = 'publish - Error generateQLook for {}'.format(general_scene_id)
             return False
         s3pngname = os.path.join(dirname_ql, os.path.basename(pngname))
         services.upload_file_S3(pngname, s3pngname, {'ACL': 'public-read'})
@@ -880,8 +881,8 @@ def publish(self, activity):
     for datedataset in activity['scenes']:
         scene = activity['scenes'][datedataset]
 
-        general_scene_id = '{0}_{1}_{2}_{3}'.format(
-            scene['dataset'], activity['datacube'], activity['tileid'], scene['date'])
+        general_scene_id = '{}_WARPED_{}_{}'.format(
+            activity['datacube'], activity['tileid'], str(scene['date'])[0:10])
         qlfiles = []
         for band in qlbands:
             filename = os.path.join(services.prefix + activity['dirname'], scene['ARDfiles'][band])
@@ -890,17 +891,14 @@ def publish(self, activity):
         pngname = generateQLook(general_scene_id, qlfiles)
         if pngname is None:
             print('publish - Error generateQLook for {}'.format(general_scene_id))
-            self.score = {}
-            self.score['error'] = 6
-            self.score['message'] = 'publish - Error generateQLook for {}'.format(general_scene_id)
             return False
         s3pngname = os.path.join(activity['dirname'], os.path.basename(pngname))
         services.upload_file_S3(pngname, s3pngname, {'ACL': 'public-read'})
         os.remove(pngname)
 
     # register collection_items and assets in DB (MEDIAN, STACK ...)
-    for function in ['MEDIAN', 'STACK']:
-        cube_id = '{}{}'.format(activity['datacube'], function)
+    for function in ['MED', 'STK']:
+        cube_id = '{}_{}'.format(activity['datacube'], function)
         cube = Collection.query().filter(
             Collection.id == cube_id
         ).first()
@@ -977,7 +975,7 @@ def publish(self, activity):
     for datedataset in activity['scenes']:
         scene = activity['scenes'][datedataset]
 
-        cube_id = '{}WARPED'.format(activity['datacube'])
+        cube_id = '{}_WARPED'.format(activity['datacube'])
         cube = Collection.query().filter(
             Collection.id == cube_id
         ).first()
@@ -985,8 +983,8 @@ def publish(self, activity):
             print('cube {} not found!'.format(cube_id))
             continue
 
-        general_scene_id = '{}_{}_{}_{}'.format(
-            cube_id, activity['tileid'], activity['start'], activity['end'])
+        general_scene_id = '{}_{}_{}'.format(
+            cube_id, activity['tileid'], str(scene['date'])[0:10])
 
         # delete 'assets' and 'collection_items' if exists
         assets = Asset.query().filter(

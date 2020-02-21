@@ -1,5 +1,10 @@
 # app.py
 
+try:
+    import unzip_requirements
+except ImportError:
+    pass
+
 import os
 import json
 import base64
@@ -11,6 +16,7 @@ from config import USER, PASSWORD, HOST, DBNAME
 from cube_builder_aws.business import CubeBusiness
 from cube_builder_aws.validators import validate
 from cube_builder_aws.utils.auth import require_oauth_scopes
+from cube_builder_aws.version import __version__ 
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://{}:{}@{}:5432/{}'.format(
@@ -27,7 +33,9 @@ business = CubeBusiness()
 @app.route("/", methods=["GET"])
 def status():
     return jsonify(
-        message = 'Running'
+        message = 'Running',
+        description = 'Cube Builder AWS',
+        version = __version__
     ), 200
 
 

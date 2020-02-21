@@ -1,6 +1,6 @@
 {
   "name": "cube-builder-aws-spec",
-  "version": "1.0.0",
+  "version": "0.2.0",
   "description": "generate spec Cube Builder API",
   "main": "index.js",
   "scripts": {

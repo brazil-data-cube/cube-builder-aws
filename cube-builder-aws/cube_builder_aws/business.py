@@ -20,9 +20,7 @@ class CubeBusiness:
         self.services = CubeServices()
 
     def create_cube(self, params):
-        # add WARPED type if not send 
-        if 'WARPED' not in [func.upper() for func in params['composite_function_list']]:
-            params['composite_function_list'].append('WARPED')
+        params['composite_function_list'] = ['WARPED', 'STK', 'MED']
 
         # generate cubes metadata
         cubes_db = Collection.query().filter().all()
@@ -30,7 +28,7 @@ class CubeBusiness:
         cubes_serealized = []
         for composite_function in params['composite_function_list']:
             c_function_id = composite_function.upper()
-            cube_id = '{}{}'.format(params['datacube'], c_function_id)
+            cube_id = '{}_{}'.format(params['datacube'], c_function_id)
             raster_size_id = '{}-{}'.format(params['grs'], int(params['resolution']))
 
             # add cube
@@ -46,7 +44,7 @@ class CubeBusiness:
                     geometry_processing=None,
                     sensor=None,
                     is_cube=True,
-                    oauth_scope=None,
+                    oauth_scope=params.get('oauth_scope', None),
                     license=params['license'],
                     bands_quicklook=','.join(params['bands_quicklook'])
                 )
@@ -57,16 +55,16 @@ class CubeBusiness:
         bands = []
         for cube in cubes:
             # save bands
-            for band in params['bands']['names']:
+            for band in params['bands']:
                 band = band.strip()
                 bands.append(Band(
                     name=band,
                     collection_id=cube.id,
-                    min=params['bands']['min'] if band != 'quality' else 0,
-                    max=params['bands']['max'] if band != 'quality' else 255,
-                    fill=params['bands']['fill'] if band != 'quality' else 0,
-                    scale=params['bands']['scale'] if band != 'quality' else 1,
-                    data_type=params['bands']['data_type'] if band != 'quality' else 'Uint8',
+                    min=0 if band != 'quality' else 0,
+                    max=10000 if band != 'quality' else 255,
+                    fill=-9999 if band != 'quality' else 0,
+                    scale=0.0001 if band != 'quality' else 1,
+                    data_type='int16' if band != 'quality' else 'Uint16',
                     common_name=band,
                     resolution_x=params['resolution'],
                     resolution_y=params['resolution'],
@@ -79,7 +77,7 @@ class CubeBusiness:
         return cubes_serealized, 201
 
     def start_process(self, params):
-        cubeid = '{}WARPED'.format(params['datacube'])
+        cubeid = '{}_WARPED'.format(params['datacube'])
         tiles = params['tiles'].split(',')
         start_date = datetime.strptime(params['start_date'], '%Y-%m-%d').strftime('%Y-%m-%d')
         end_date = datetime.strptime(params['end_date'], '%Y-%m-%d').strftime('%Y-%m-%d') \
