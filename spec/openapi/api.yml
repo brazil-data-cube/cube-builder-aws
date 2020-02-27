@@ -35,7 +35,11 @@ paths:
               schema:
                 type: object
                 properties:
+                  description:
+                    type: string
                   message:
+                    type: string
+                  version:
                     type: string
 
   /create-grs:
@@ -180,8 +184,6 @@ request:
       required:
         - grs_schema
         - resolution
-        - raster_size_x
-        - raster_size_y
         - chunk_size_x
         - chunk_size_y
       properties:
@@ -191,12 +193,6 @@ request:
         resolution:
           type: number
           description: Spatial Resolution of cube
-        raster_size_x:
-          type: number
-          description: Raster size X (number of columns)
-        raster_size_y:
-          type: number
-          description: Raster size Y (number of lines)
         chunk_size_x:
           type: number
           description: chunk size X
@@ -212,7 +208,6 @@ request:
         - resolution
         - temporal_schema
         - bands_quicklook
-        - composite_function_list
         - bands
         - description
         - license
@@ -232,11 +227,6 @@ request:
         bands_quicklook:
           type: array
           description: list of bands (common name) to composite quicklook (RGB)
-          items:
-            type: string
-        composite_function_list:
-          type: array
-          description: list of composite_functions (allow => MEDIAN, STACK)
           items:
             type: string
         bands:
