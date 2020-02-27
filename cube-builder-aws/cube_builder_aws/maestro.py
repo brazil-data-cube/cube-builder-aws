@@ -79,7 +79,9 @@ def orchestrate(datacube, cube_infos, tiles, start_date, end_date):
             if end_date is not None and p_enddate > end_date : continue
 
             for tile in tiles:
-                bbox = tiles_infos[tile][1].replace('LINESTRING(', '').replace(')', '') \
+                bbox = tiles_infos[tile][1].replace('LINESTRING(', '') \
+                    .replace('LINESTRING Z (', '') \
+                    .replace(')', '') \
                     .replace(' ', ',')
 
                 items[tile] = items.get(tile, {})
