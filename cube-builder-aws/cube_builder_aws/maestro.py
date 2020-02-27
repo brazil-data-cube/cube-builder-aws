@@ -82,10 +82,14 @@ def orchestrate(datacube, cube_infos, tiles, start_date, end_date):
                 bbox = tiles_infos[tile][1].replace('LINESTRING(', '') \
                     .replace('LINESTRING Z (', '') \
                     .replace(')', '') \
-                    .replace(' ', ',')
+                    .replace(' ', ',') \
+                    .split(',')
+                if len(bbox) != 4:
+                    del bbox[2]
+                    del bbox[-1]
 
                 items[tile] = items.get(tile, {})
-                items[tile]['bbox'] = bbox
+                items[tile]['bbox'] = ','.join(bbox)
                 items[tile]['xmin'] = tiles_infos[tile][0].min_x
                 items[tile]['ymax'] = tiles_infos[tile][0].max_y
                 items[tile]['periods'] = items[tile].get('periods', {})
