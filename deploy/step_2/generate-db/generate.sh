@@ -3,6 +3,10 @@ rm -r ./migrations
 
 git clone https://github.com/brazil-data-cube/bdc-db.git
 
+cd bdc-db && git checkout b-0.2
+
+cd ../
+
 mv ./bdc-db/migrations ./
 
 rm -r ./bdc-db
