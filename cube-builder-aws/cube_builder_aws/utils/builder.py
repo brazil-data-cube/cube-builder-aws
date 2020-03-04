@@ -5,6 +5,12 @@ from datetime import timedelta
 from numpngw import write_png
 from scipy import ndimage as ndi
 
+
+#############################
+def get_date(str_date):
+    return datetime.datetime.strptime(str_date, '%Y-%m-%d %H:%M:%S')
+
+
 #############################
 def days_in_month(date):
 	year = int(date.split('-')[0])

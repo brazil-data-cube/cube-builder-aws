@@ -58,6 +58,12 @@ def raster_size():
     }
     return item
 
+def status():
+    item = {
+        'datacube': {"type": "string", "empty": False, "required": True}
+    }
+    return item
+
 
 def validate(data, type_schema):
     schema = eval('{}()'.format(type_schema))

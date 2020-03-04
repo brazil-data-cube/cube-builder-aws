@@ -162,7 +162,7 @@ def check_merge(services, datacube, collections, mosaics, bands):
             for band in activity['bands']:
                 for _ in activity['datasets']:
                     key = encode_key(activity, ['action','datacube','tileid','start','end']) + band
-                    response = services.get_activities(key)
+                    response = services.get_activities_by_key(key)
                     if 'Items' not in response or len(response['Items']) == 0:
                         check[key] = 'NOTDONE'
                         continue
@@ -467,7 +467,7 @@ def check_blend(services, datacube, collections, bands, mosaics):
             for band in activity['bands']:
                 for _ in activity['datasets']:
                     key = encode_key(activity, ['action','datacube','tileid','start','end'])
-                    response = services.get_activities(key)
+                    response = services.get_activities_by_key(key)
                     if 'Items' not in response or len(response['Items']) == 0:
                         return
 
@@ -597,7 +597,7 @@ def fill_blend(services, mergeactivity, blendactivity):
     dynamoKey = encode_key(mergeactivity, ['action','datacube','tileid','start','end','band'])
 
     # Query dynamoDB to get all merged 
-    response = services.get_activities(dynamoKey)
+    response = services.get_activities_by_key(dynamoKey)
     if 'Items' not in response or len(response['Items']) == 0:
         return False
     items = response['Items']
@@ -814,7 +814,7 @@ def next_publish(services, blendactivity):
     publishactivity['dynamoKey'] = encode_key(publishactivity, ['action','datacube','tileid','start','end'])
 
     # Get information from blended bands
-    response = services.get_activities(blendactivity['dynamoKey'])
+    response = services.get_activities_by_key(blendactivity['dynamoKey'])
 
     items = response['Items']
     publishactivity['scenes'] = {}

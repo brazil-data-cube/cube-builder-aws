@@ -90,6 +90,18 @@ def craete_raster_size():
     return jsonify(message), status
 
 
+@app.route("/cube-status", methods=["GET"])
+@require_oauth_scopes(scope="cube_builder_aws:metadata:GET")
+def get_status():
+    # validate params
+    data, status = validate(request.args.to_dict(), 'status')
+    if status is False:
+        return jsonify(json.dumps(data)), 400
+
+    message, status = business.get_cube_status(**data)
+    return jsonify(message), status
+
+
 #########################################
 # REQUEST -> from SQS trigger or Kinesis 
 #########################################
