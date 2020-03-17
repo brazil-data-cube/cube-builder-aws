@@ -8,6 +8,7 @@ from bdc_db.models import Collection, Band, CollectionTile, CollectionItem, Tile
     GrsSchema, RasterSizeSchema
 
 from .utils.serializer import Serializer
+from .utils.builder import get_date
 from .maestro import orchestrate, check_merge, prepare_merge, \
     merge_warped, solo, blend, publish
 from .services import CubeServices
@@ -75,6 +76,77 @@ class CubeBusiness:
         BaseModel.save_all(bands)
 
         return cubes_serealized, 201
+
+    def get_cube_status(self, datacube):
+        activities = self.services.get_activities()
+        activitiesCtrl = self.services.get_activities_ctrl()
+
+        # STATUS
+        items = [item for item in activitiesCtrl['Items'] if datacube in item['id']]
+        not_done = [i for i in activities['Items'] if datacube in i['id'] and i['mystatus'] == 'NOTDONE']
+        if len(not_done): 
+            return dict(
+                finished = False,
+                not_done = len(not_done)
+            ), 200
+
+        for item in items:
+            items_by_id = [i for i in activities['Items'] if item['id'] in i['id']]
+            if int(items_by_id[0]['totalInstancesToBeDone']) > int(item['mycount']): 
+                return dict(
+                    finished = False,
+                    not_done = int(items_by_id[0]['totalInstancesToBeDone']) - int(item['mycount'])
+                ), 200
+
+        # TIME
+        acts = sorted(activities['Items'], key=lambda i: i['mystart'], reverse=True)
+        start_date = get_date(acts[-1]['mystart'])
+        end_date = get_date(acts[0]['mystart'])
+
+        time = 0
+        list_dates = []
+        for a in acts:
+            start = get_date(a['mystart'])
+            end = get_date(a['myend'])
+            if len(list_dates) == 0:
+                time += (end - start).seconds
+                list_dates.append({'s': start, 'e': end})
+                continue
+
+            time_by_act = 0
+            i = 0
+            for dates in list_dates:
+                i += 1
+                if dates['s'] < start < dates['e']:
+                    value = (end - dates['e']).seconds
+                    if value > 0 and value < time_by_act:
+                        time_by_act = value
+                
+                elif dates['s'] < end < dates['e']:
+                    value = (dates['s'] - start).seconds
+                    if value > 0 and value < time_by_act:
+                        time_by_act = value
+
+                elif start > dates['e'] or end < dates['s']:
+                    value = (end - start).seconds
+                    if value < time_by_act or i == 1:
+                        time_by_act = value
+
+                elif start < dates['s'] or end > dates['e']:
+                    time_by_act = 0
+            
+            time += time_by_act
+            list_dates.append({'s': start, 'e': end})
+        
+        time_str = '{} h {} m {} s'.format(
+            int(time / 60 / 60), int(time / 60), (time % 60))
+
+        return dict(
+            finished = True,
+            start_date = str(start_date),
+            last_date = str(end_date),
+            duration = time_str
+        ), 200
 
     def start_process(self, params):
         cubeid = '{}_WARPED'.format(params['datacube'])

@@ -99,7 +99,13 @@ class CubeServices:
             # Wait until the table exists.
         	self.dynamoDBResource.meta.client.get_waiter('table_exists').wait(TableName=DBNAME_TB_CONTROL)
     
-    def get_activities(self, dinamo_key):
+    def get_activities(self):
+        return self.activitiesTable.scan()
+
+    def get_activities_ctrl(self):
+        return self.activitiesControlTable.scan()
+
+    def get_activities_by_key(self, dinamo_key):
         return self.activitiesTable.query(
             KeyConditionExpression=Key('id').eq(dinamo_key)
         )
