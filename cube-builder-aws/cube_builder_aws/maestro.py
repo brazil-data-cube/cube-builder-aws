@@ -316,6 +316,7 @@ def merge_warped(self, activity):
     mystart = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     activity['mystart'] = mystart
     activity['mystatus'] = 'DONE'
+    dataset = activity.get('dataset')
 
     # If ARDfile already exists, update activitiesTable and chech if this merge is the last one for the mosaic
     if services.s3fileExists(key=key):
@@ -375,8 +376,17 @@ def merge_warped(self, activity):
                 })
 
                 source_nodata = 0
+                
                 if src.profile['nodata'] is not None:
                     source_nodata = src.profile['nodata']
+                elif 'LC8SR' in dataset:
+                    if band != 'quality':
+                        source_nodata = nodata
+                    else:
+                        source_nodata = 1
+                elif 'CBERS' in dataset and band != 'quality':
+                    source_nodata = nodata
+
                 kwargs.update({
                     'nodata': source_nodata
                 })
@@ -407,12 +417,11 @@ def merge_warped(self, activity):
                                 template['dtype'] = 'int16'
                                 template['nodata'] = nodata
 
-
     # Evaluate cloud cover and efficacy if band is quality
     efficacy = 0
     cloudratio = 100
     if activity['band'] == 'quality':
-        raster_merge, efficacy, cloudratio = getMask(raster_merge, activity['dataset'])
+        raster_merge, efficacy, cloudratio = getMask(raster_merge, dataset)
         template.update({'dtype': 'uint16'})
 
     # Save merged image on S3
@@ -420,6 +429,7 @@ def merge_warped(self, activity):
         template.update({
             'compress': 'LZW',
             'tiled': True,
+            'interleave': 'pixel',
             'blockxsize': block_size,
             'blockysize': block_size
         })  
@@ -638,6 +648,7 @@ def blend(self, activity):
     activity['sk'] = activity['band']
     band = activity['band']
     numscenes = len(activity['scenes'])
+    nodata = activity.get('nodata', -9999)
 
     # Check if band ARDfiles are in activity
     for datedataset in activity['scenes']:
@@ -701,8 +712,14 @@ def blend(self, activity):
     height = profile['height']
 
     # STACK will be generated in memory
-    stackRaster = numpy.zeros((height,width), dtype=profile['dtype'])
-    maskRaster = numpy.ones((height,width), dtype=profile['dtype'])
+    stack_raster = numpy.zeros((height,width), dtype=profile['dtype'])
+    mask_raster = numpy.ones((height,width), dtype=profile['dtype'])
+
+    # create file to save count no cloud
+    build_cnc = activity['bands'][0] == band
+    if build_cnc:
+        cloud_cloud_file = '/tmp/cnc.tif'
+        count_cloud_dataset = rasterio.open(cloud_cloud_file, mode='w', **profile)
 
     with MemoryFile() as medianfile:
         with medianfile.open(**profile) as mediandataset:
@@ -728,23 +745,28 @@ def blend(self, activity):
 
                     # Evaluate the STACK image
                     # Pixels that have been already been filled by previous rasters will be masked in the current raster
-                    maskRaster[window.row_off : window.row_off+window.height, window.col_off : window.col_off+window.width] *= bmask.astype(profile['dtype'])
+                    mask_raster[window.row_off : window.row_off+window.height, window.col_off : window.col_off+window.width] *= bmask.astype(profile['dtype'])
                     
-                    raster[raster == -9999] = 0
+                    raster[raster == nodata] = 0
                     todomask = notdonemask * numpy.invert(bmask)
                     notdonemask = notdonemask * bmask
-                    stackRaster[window.row_off : window.row_off+window.height, window.col_off : window.col_off+window.width] += (todomask * raster.astype(profile['dtype']))
+                    stack_raster[window.row_off : window.row_off+window.height, window.col_off : window.col_off+window.width] += (todomask * raster.astype(profile['dtype']))
 
-                medianRaster = numpy.ma.median(stackMA, axis=0).data
-                medianRaster[notdonemask.astype(numpy.bool_)] = -9999
-                mediandataset.write(medianRaster.astype(profile['dtype']), window=window, indexes=1)
+                median_raster = numpy.ma.median(stackMA, axis=0).data
+                median_raster[notdonemask.astype(numpy.bool_)] = nodata
+                mediandataset.write(median_raster.astype(profile['dtype']), window=window, indexes=1)
 
-            stackRaster[maskRaster.astype(numpy.bool_)] = -9999
+                if build_cnc:
+                    count_raster = numpy.ma.count(stackMA, axis=0)
+                    count_cloud_dataset.write(count_raster.astype(profile['dtype']), window=window, indexes=1)
+
+            stack_raster[mask_raster.astype(numpy.bool_)] = nodata
 
             if band != 'quality':
-                mediandataset.nodata = -9999
+                mediandataset.nodata = nodata
             mediandataset.build_overviews([2, 4, 8, 16, 32, 64], Resampling.nearest)
             mediandataset.update_tags(ns='rio_overview', resampling='nearest')
+
         services.upload_fileobj_S3(medianfile, activity['MEDfile'], {'ACL': 'public-read'})
 
     # Close all input dataset
@@ -753,17 +775,28 @@ def blend(self, activity):
         masklist[order].close()
 
     # Evaluate cloudcover
-    cloudcover = 100.*((height*width - numpy.count_nonzero(stackRaster))/(height*width))
+    cloudcover = 100. * ((height * width - numpy.count_nonzero(stack_raster)) / (height * width))
     activity['cloudratio'] = int(cloudcover)
     activity['raster_size_y'] = height
     activity['raster_size_x'] = width
+
+    # Upload the CNC dataset
+    if build_cnc:
+        count_cloud_dataset.close()
+        count_cloud_dataset = None
+
+        key_cnc_med = '_'.join(activity['MEDfile'].split('_')[:-1]) + '_cnc.tif'
+        key_cnc_stk = '_'.join(activity['STKfile'].split('_')[:-1]) + '_cnc.tif'
+        services.upload_file_S3(cloud_cloud_file, key_cnc_med, {'ACL': 'public-read'})
+        services.upload_file_S3(cloud_cloud_file, key_cnc_stk, {'ACL': 'public-read'})
+        os.remove(cloud_cloud_file)
 
     # Create and upload the STACK dataset
     with MemoryFile() as memfile:
         with memfile.open(**profile) as ds_stack:
             if band != 'quality':
-                ds_stack.nodata = -9999
-            ds_stack.write_band(1, stackRaster)
+                ds_stack.nodata = nodata
+            ds_stack.write_band(1, stack_raster)
             ds_stack.build_overviews([2, 4, 8, 16, 32, 64], Resampling.nearest)
             ds_stack.update_tags(ns='rio_overview', resampling='nearest')
         services.upload_fileobj_S3(memfile, activity['STKfile'], {'ACL': 'public-read'})
@@ -1036,7 +1069,10 @@ def publish(self, activity):
             if not band_id:
                 print('band {} not found!'.format(band))
                 continue
-
+            
+            raster_size_x = scene['raster_size_x'] if scene.get('raster_size_x') else activity.get('raster_size_x')
+            raster_size_y = scene['raster_size_y'] if scene.get('raster_size_y') else activity.get('raster_size_y')
+            block_size = scene['block_size'] if scene.get('block_size') else activity.get('block_size')
             Asset(
                 collection_id=cube_id,
                 band_id=band_id[0].id,
@@ -1045,11 +1081,11 @@ def publish(self, activity):
                 collection_item_id=general_scene_id,
                 url='{}/{}'.format(BUCKET_NAME, os.path.join(activity['dirname'], scene['ARDfiles'][band])),
                 source=None,
-                raster_size_x=int(scene['raster_size_x']),
-                raster_size_y=int(scene['raster_size_y']),
+                raster_size_x=raster_size_x,
+                raster_size_y=raster_size_y,
                 raster_size_t=1,
-                chunk_size_x=int(scene['block_size']),
-                chunk_size_y=int(scene['block_size']),
+                chunk_size_x=block_size,
+                chunk_size_y=block_size,
                 chunk_size_t=1
             ).save()
 
