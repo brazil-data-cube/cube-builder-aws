@@ -194,46 +194,46 @@ def getMask(raster, dataset):
 
 	elif dataset == 'MOD13Q1' or dataset == 'MYD13Q1':
 		# MOD13Q1 Pixel Reliability !!!!!!!!!!!!!!!!!!!!
-		# Note that 1 was added to this image in downloadModis because of warping
-		# Rank/Key Summary QA 		Description
-		# -1 		Fill/No Data 	Not Processed
-		# 0 		Good Data 		Use with confidence
-		# 1 		Marginal data 	Useful, but look at other QA information
-		# 2 		Snow/Ice 		Target covered with snow/ice
-		# 3 		Cloudy 			Target not visible, covered with cloud
+        # Note that 1 was added to this image in downloadModis because of warping
+        # Rank/Key Summary QA 		Description
+        # -1 		Fill/No Data 	Not Processed
+        # 0 		Good Data 		Use with confidence
+        # 1 		Marginal data 	Useful, but look at other QA information
+        # 2 		Snow/Ice 		Target covered with snow/ice
+        # 3 		Cloudy 			Target not visible, covered with cloud
 		fill = 0 	# warped images have 0 as fill area
-		lut = numpy.array([0, 1, 1, 2, 2], dtype=numpy.uint16)
-		rastercm = numpy.take(lut, raster+1).astype(numpy.uint16)
+		lut = numpy.array([0, 1, 1, 2, 2], dtype=numpy.uint8)
+		rastercm = numpy.take(lut, raster+1).astype(numpy.uint8)
 
 	elif 'S2SR' in dataset:
 		# S2 sen2cor - The generated classification map is specified as follows:
-		# Label Classification
-		#  0		NO_DATA
-		#  1		SATURATED_OR_DEFECTIVE
-		#  2		DARK_AREA_PIXELS
-		#  3		CLOUD_SHADOWS
-		#  4		VEGETATION
-		#  5		NOT_VEGETATED
-		#  6		WATER
-		#  7		UNCLASSIFIED
-		#  8		CLOUD_MEDIUM_PROBABILITY
-		#  9		CLOUD_HIGH_PROBABILITY
-		# 10		THIN_CIRRUS
-		# 11		SNOW
-		# 0 1 2 3 4 5 6 7 8 9 10 11
-		lut = numpy.array([0,0,2,2,1,1,1,2,2,2,1, 1],dtype=numpy.uint16)
-		rastercm = numpy.take(lut,raster).astype(numpy.uint16)
+        # Label Classification
+        #  0		NO_DATA
+        #  1		SATURATED_OR_DEFECTIVE
+        #  2		DARK_AREA_PIXELS
+        #  3		CLOUD_SHADOWS
+        #  4		VEGETATION
+        #  5		NOT_VEGETATED
+        #  6		WATER
+        #  7		UNCLASSIFIED
+        #  8		CLOUD_MEDIUM_PROBABILITY
+        #  9		CLOUD_HIGH_PROBABILITY
+        # 10		THIN_CIRRUS
+        # 11		SNOW
+        # 0 1 2 3 4 5 6 7 8 9 10 11
+		lut = numpy.array([0,0,2,2,1,1,1,2,2,2,1, 1],dtype=numpy.uint8)
+		rastercm = numpy.take(lut,raster).astype(numpy.uint8)
 
 	elif dataset == 'CB4_AWFI' or dataset == 'CB4_MUX':
-		# Key 		Summary QA 		Description
-		# 0 		Fill/No Data 	Not Processed
-		# 127 		Good Data 		Use with confidence
-		# 255 		Cloudy 			Target not visible, covered with cloud
-		fill = 0 		# warped images have 0 as fill area
-		lut = numpy.zeros(256,dtype=numpy.uint16)
+		# Key Summary        QA Description
+        #   0 Fill/No Data - Not Processed
+        # 127 Good Data    - Use with confidence
+        # 255 Cloudy       - Target not visible, covered with cloud
+        # fill = 0  # warped images have 0 as fill area
+		lut = numpy.zeros(256, dtype=numpy.uint8)
 		lut[127] = 1
 		lut[255] = 2
-		rastercm = numpy.take(lut,raster).astype(numpy.uint16)
+		rastercm = numpy.take(lut, raster).astype(numpy.uint8)
 
 	totpix   = rastercm.size
 	clearpix = numpy.count_nonzero(rastercm==1)
