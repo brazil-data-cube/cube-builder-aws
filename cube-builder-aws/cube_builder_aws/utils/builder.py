@@ -141,16 +141,16 @@ def encode_key(activity, keylist):
 ############################
 def getMaskStats(mask):
 	totpix   = mask.size
-	clearpix = numpy.count_nonzero(mask==1)
-	cloudpix = numpy.count_nonzero(mask==2)
-	imagearea = clearpix+cloudpix
-	clearratio = 0
-	cloudratio = 100
+	clearpix = numpy.count_nonzero(mask == 1)
+	cloudpix = numpy.count_nonzero(mask == 2)
+	imagearea = clearpix + cloudpix
+
+	cloud_ratio = 100
 	if imagearea != 0:
-		clearratio = round(100.*clearpix/imagearea,1)
-		cloudratio = round(100.*cloudpix/imagearea,1)
-	efficacy = round(100.*clearpix/totpix,2)
-	return (cloudratio,clearratio,efficacy)
+		cloud_ratio = round(100. * cloudpix / imagearea, 1)
+		
+	efficacy = round(100. * clearpix / totpix, 2)
+	return cloud_ratio, efficacy
 
 
 ############################

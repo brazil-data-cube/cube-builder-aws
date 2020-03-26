@@ -325,7 +325,7 @@ def merge_warped(self, activity):
         if activity['band'] == 'quality':
             with rasterio.open('{}{}'.format(services.prefix, key)) as src:
                 mask = src.read(1)
-                cloudratio, _, efficacy = getMaskStats(mask)
+                cloudratio, efficacy = getMaskStats(mask)
 
         # Update entry in DynamoDB
         activity['myend'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
