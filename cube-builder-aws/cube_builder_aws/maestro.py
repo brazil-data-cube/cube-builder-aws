@@ -16,7 +16,7 @@ from bdc_db.models import CollectionTile, CollectionItem, Tile, \
     Collection, Asset, Band
 
 from .utils.builder import decode_periods, encode_key, \
-    getMaskStats, getMask, generateQLook
+    getMaskStats, getMask, generateQLook, get_cube_id
 from config import BUCKET_NAME
 
 
@@ -40,14 +40,15 @@ def orchestrate(datacube, cube_infos, tiles, start_date, end_date):
 
         tiles_infos[tile] = tile_info[0]
         for function in ['WARPED', 'STK', 'MED']:
+            cube_id = get_cube_id(datacube, function)
             collection_tile = CollectionTile.query().filter(
-                CollectionTile.collection_id == '{}_{}'.format(datacube, function),
+                CollectionTile.collection_id == cube_id,
                 CollectionTile.grs_schema_id == cube_infos.grs_schema_id,
                 CollectionTile.tile_id == tile
             ).first()
             if not collection_tile:
                 collection_tiles.append(CollectionTile(
-                    collection_id='{}_{}'.format(datacube, function),
+                    collection_id=cube_id,
                     grs_schema_id=cube_infos.grs_schema_id,
                     tile_id=tile
                 ))
@@ -65,7 +66,7 @@ def orchestrate(datacube, cube_infos, tiles, start_date, end_date):
     # get/mount timeline
     temporal_schema = cube_infos.temporal_composition_schema.temporal_schema
     step = cube_infos.temporal_composition_schema.temporal_composite_t
-    timeline = decode_periods(cube_start_date, end_date, temporal_schema.upper(), int(step))
+    timeline = decode_periods(temporal_schema.upper(), cube_start_date, end_date, int(step))
 
     # create collection items (old model => mosaic)
     items_id = []
@@ -94,7 +95,7 @@ def orchestrate(datacube, cube_infos, tiles, start_date, end_date):
                 items[tile]['ymax'] = tiles_infos[tile][0].max_y
                 items[tile]['periods'] = items[tile].get('periods', {})
 
-                item_id = '{}_{}_{}_{}'.format(cube_infos.id, tile, p_startdate, p_enddate)
+                item_id = '{}_{}_{}'.format(cube_infos.id, tile, p_basedate)
                 if item_id not in items_id:
                     items_id.append(item_id)
                     if not list(filter(lambda c_i: c_i.id == item_id, collections_items)):
@@ -106,7 +107,7 @@ def orchestrate(datacube, cube_infos, tiles, start_date, end_date):
                             'id': item_id,
                             'composite_start': p_startdate,
                             'composite_end': p_enddate,
-                            'dirname': '{}/{}/{}_{}/'.format(datacube, tile, p_startdate, p_enddate)
+                            'dirname': '{}/{}/'.format(get_cube_id(datacube), tile)
                         }
     return items
 
@@ -121,7 +122,12 @@ def solo(self, activitylist):
 
 
 def next_step(services, activity):
-    activitiesControlTableKey = activity['dynamoKey'].replace(activity['band'],'')
+    activitiesControlTableKey = activity['dynamoKey']\
+            .replace(activity['band'], '')
+    if activity['action'] == 'merge':
+        activitiesControlTableKey = activitiesControlTableKey.replace(
+            activity['date'], '{}{}'.format(activity['start'], activity['end']))
+
     response = services.update_control_table(
         Key = {'id': activitiesControlTableKey},
         UpdateExpression = "ADD #mycount :increment",
@@ -141,52 +147,14 @@ def next_step(services, activity):
 ###############################
 # MERGE
 ###############################
-def check_merge(services, datacube, collections, mosaics, bands):
-    activity = {}
-    activity['action'] = 'merge'
-    activity['datacube'] = datacube
-    activity['datasets'] = collections
-    activity['bands'] = bands
-
-    check = {}
-    # For all tiles
-    for tileid in mosaics:
-        activity['tileid'] = tileid
-        
-        # For all periods
-        for periodkey in mosaics[tileid]['periods']:
-            activity['start'] = mosaics[tileid]['periods'][periodkey]['composite_start']
-            activity['end'] = mosaics[tileid]['periods'][periodkey]['composite_end']
-            
-            # For all bands and collections/datasets
-            for band in activity['bands']:
-                for _ in activity['datasets']:
-                    key = encode_key(activity, ['action','datacube','tileid','start','end']) + band
-                    response = services.get_activities_by_key(key)
-                    if 'Items' not in response or len(response['Items']) == 0:
-                        check[key] = 'NOTDONE'
-                        continue
-
-                    items = response['Items']
-                    for item in items:
-                        json_item = json.loads(item['activity'])
-                        date = item['sk']
-                        mystatus = item['mystatus']
-                        if mystatus != 'DONE':
-                            key = key+'_'+date
-                            check[key] = {}
-                            check[key]['status'] = mystatus
-                            check[key]['links'] = json_item['links']
-                            check[key]['ARDfile'] = json_item['ARDfile']
-    return check
-
 def prepare_merge(self, datacube, datasets, bands, quicklook, resx, resy, nodata, numcol, numlin, block_size, crs):
     services = self.services
 
     # Build the basics of the merge activity
     activity = {}
     activity['action'] = 'merge'
-    activity['datacube'] = datacube
+    activity['datacube_orig_name'] = datacube
+    activity['datacube'] = get_cube_id(datacube)
     activity['datasets'] = datasets
     activity['bands'] = bands
     activity['quicklook'] = quicklook
@@ -253,9 +221,6 @@ def prepare_merge(self, datacube, datasets, bands, quicklook, resx, resy, nodata
             for band in self.score['items'][tileid]['periods'][periodkey]['scenes']:
                 activity['band'] = band
 
-                # Create the dynamoKey for the activity in DynamoDB
-                activity['dynamoKey'] = encode_key(activity,['action','datacube','tileid','start','end','band'])
-
                 # For all datasets
                 for dataset in self.score['items'][tileid]['periods'][periodkey]['scenes'][band]:
                     activity['dataset'] = dataset
@@ -276,15 +241,18 @@ def prepare_merge(self, datacube, datasets, bands, quicklook, resx, resy, nodata
 
                     # For all dates
                     for date in self.score['items'][tileid]['periods'][periodkey]['scenes'][band][dataset]:
-                        activity['date'] = date
+                        activity['date'] = date[0:10]
                         activity['links'] = []
+
+                        # Create the dynamoKey for the activity in DynamoDB
+                        activity['dynamoKey'] = encode_key(activity, ['action','datacube','tileid','date','band'])
 
                         # Get all scenes that were acquired in the same date
                         for scene in self.score['items'][tileid]['periods'][periodkey]['scenes'][band][dataset][date]:
                             activity['links'].append(scene['link'])
 
                         # Continue filling the activity
-                        activity['ARDfile'] = activity['dirname']+'{}_WARPED_{}_{}_{}.tif'.format(
+                        activity['ARDfile'] = activity['dirname']+'{}/{}_{}_{}_{}.tif'.format(date[0:10],
                             activity['datacube'], activity['tileid'], date[0:10], band)
                         activity['sk'] = activity['date'] + activity['dataset']
                         activity['mylaunch'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -292,8 +260,7 @@ def prepare_merge(self, datacube, datasets, bands, quicklook, resx, resy, nodata
                         # Check if we have already done and no need to do it again
                         response = services.get_activity_item({'id': activity['dynamoKey'], 'sk': activity['sk'] })
                         if 'Item' in response:
-                            if response['Item']['instancesToBeDone'] == activity['instancesToBeDone'] \
-                                and response['Item']['mystatus'] == 'DONE' \
+                            if response['Item']['mystatus'] == 'DONE' \
                                 and services.s3fileExists(key=activity['ARDfile']):
                                 next_step(services, activity)
                                 continue
@@ -457,78 +424,12 @@ def merge_warped(self, activity):
 ###############################
 # BLEND
 ###############################
-def check_blend(services, datacube, collections, bands, mosaics):
-    # Build the basics of the activity
-    activity = {}
-    activity['action'] = 'blend'
-    activity['datacube'] = datacube
-    activity['datasets'] = collections
-    activity['bands'] = bands
-    
-    check = {}
-    # For all tiles
-    for tileid in mosaics:
-        activity['tileid'] = tileid
-
-        # For all periods
-        for periodkey in mosaics[tileid]['periods']:
-            activity['start'] = mosaics[tileid]['periods'][periodkey]['start']
-            activity['end'] = mosaics[tileid]['periods'][periodkey]['end']
-            for band in activity['bands']:
-                for _ in activity['datasets']:
-                    key = encode_key(activity, ['action','datacube','tileid','start','end'])
-                    response = services.get_activities_by_key(key)
-                    if 'Items' not in response or len(response['Items']) == 0:
-                        return
-
-                    items = response['Items']
-                    for item in items:
-                        jitem = json.loads(item['activity'])
-                        band = item['sk']
-                        mystatus = item['mystatus']
-                        if mystatus != 'DONE':
-                            key = key+'_'+band
-                            check[key] = {}
-                            check[key]['status'] = mystatus
-                            check[key]['scenes'] = jitem['scenes']
-                            check[key]['MEDfile'] = jitem['MEDfile']
-                            check[key]['STKfile'] = jitem['STKfile']
-    return check
-
-def prepare_blend(self, datacube, datasets, bands, quicklook):
-    services = self.services
-    # Build the basics of the dynamoKey for a synthetic previous merge activity 
-    mergeactivity = {}
-    mergeactivity['datacube'] = datacube
-    mergeactivity['datasets'] = datasets
-    mergeactivity['bands'] = bands
-    mergeactivity['quicklook'] = quicklook
-    mergeactivity['action'] = 'merge'
-
-    # For all tiles
-    for tileid in self.score['items']:
-        if len(self.score['items']) != 1:
-            self.params['tileid'] = tileid
-            services.send_to_sqs(self.params)
-            continue
-
-        mergeactivity['tileid'] = tileid
-        mergeactivity['bbox'] = self.score['items'][tileid]['bbox']
-        mergeactivity['xmin'] = self.score['items'][tileid]['xmin']
-        mergeactivity['ymax'] = self.score['items'][tileid]['ymax']
-        
-        # For all periods
-        for periodkey in self.score['items'][tileid]['periods']:
-            mergeactivity['start'] = self.score['items'][tileid]['periods'][periodkey]['composite_start']
-            mergeactivity['end'] = self.score['items'][tileid]['periods'][periodkey]['composite_end']
-            mergeactivity['dirname'] = self.score['items'][tileid]['periods'][periodkey]['dirname']
-            next_blend(services, mergeactivity)
-
 def next_blend(services, mergeactivity):
     # Fill the blendactivity from mergeactivity
     blendactivity = {}	
     blendactivity['action'] = 'blend'
-    for key in ['datacube','datasets','bands','quicklook','xmin','ymax','srs','tileid','start','end','dirname','nodata']:
+    blendactivity['datacube'] = mergeactivity['datacube_orig_name']
+    for key in ['datasets','bands','quicklook','xmin','ymax','srs','tileid','start','end','dirname','nodata']:
         blendactivity[key] = mergeactivity[key]
     blendactivity['totalInstancesToBeDone'] = len(blendactivity['bands'])-1
     
@@ -604,7 +505,7 @@ def fill_blend(services, mergeactivity, blendactivity):
     # Fill blend activity fields with data for band from the DynamoDB merge records
     band = blendactivity['band']
     blendactivity['instancesToBeDone'] = 0
-    dynamoKey = encode_key(mergeactivity, ['action','datacube','tileid','start','end','band'])
+    dynamoKey = encode_key(mergeactivity, ['action','datacube','tileid','date','band'])
 
     # Query dynamoDB to get all merged 
     response = services.get_activities_by_key(dynamoKey)
@@ -659,7 +560,10 @@ def blend(self, activity):
 
     # Get basic information (profile) of input files
     keys = list(activity['scenes'].keys())
-    filename = os.path.join(services.prefix + activity['dirname'], activity['scenes'][keys[0]]['ARDfiles'][band])
+    filename = os.path.join(
+        services.prefix + activity['dirname'], 
+        activity['scenes'][keys[0]]['date'], 
+        activity['scenes'][keys[0]]['ARDfiles'][band])
     tilelist = []
     profile = None
     with rasterio.open(filename) as src:
@@ -690,7 +594,10 @@ def blend(self, activity):
         scene = activity['scenes'][key]
 
         # MASK -> Quality
-        filename = os.path.join(services.prefix + activity['dirname'], scene['ARDfiles']['quality'])
+        filename = os.path.join(
+            services.prefix + activity['dirname'],
+            scene['date'],
+            scene['ARDfiles']['quality'])
         try:
             masklist.append(rasterio.open(filename))
         except:
@@ -699,7 +606,10 @@ def blend(self, activity):
             return
 
         # BANDS
-        filename = os.path.join(services.prefix + activity['dirname'], scene['ARDfiles'][band])
+        filename = os.path.join(
+            services.prefix + activity['dirname'],
+            scene['date'],
+            scene['ARDfiles'][band])
         try:
             bandlist.append(rasterio.open(filename))
         except:
@@ -810,31 +720,6 @@ def blend(self, activity):
 ###############################
 # PUBLISH
 ###############################
-def prepare_publish(self, datacube, datasets, bands, quicklook):
-    services = self.services
-
-    # Build the basics of the dynamoKey for a synthetic previous blend activity 
-    blendactivity = {}
-    blendactivity['datacube'] = datacube
-    blendactivity['datasets'] = datasets
-    blendactivity['bands'] = bands
-    blendactivity['quicklook'] = quicklook
-    blendactivity['action'] = 'blend'
-
-    # For all tiles
-    for tileid in self.score['items']:
-        blendactivity['tileid'] = tileid
-        for key in ['xmin','ymax']:
-            blendactivity[key] = self.score['items'][tileid][key]
-
-        # For all periods
-        for periodkey in self.score['items'][tileid]['periods']:
-            blendactivity['start'] = self.score['items'][tileid]['periods'][periodkey]['composite_start']
-            blendactivity['end'] = self.score['items'][tileid]['periods'][periodkey]['composite_end']
-            blendactivity['dirname'] = self.score['items'][tileid]['periods'][periodkey]['dirname']
-            blendactivity['dynamoKey'] = encode_key(blendactivity, ['action','datacube','tileid','start','end'])
-            next_publish(services, blendactivity)
-
 def next_publish(services, blendactivity):
     # Fill the publish activity from blend activity
     publishactivity = {}
@@ -898,7 +783,7 @@ def publish(self, activity):
     # Generate quicklooks for CUBES (MEDIAN, STACK ...) 
     qlbands = activity['quicklook'].split(',')
     for function in ['MED', 'STK']:
-        cube_id = '{}_{}'.format(activity['datacube'], function)
+        cube_id = get_cube_id(activity['datacube'], function)
         general_scene_id = '{}_{}_{}_{}'.format(
             cube_id, activity['tileid'], activity['start'], activity['end'])
 
@@ -920,8 +805,9 @@ def publish(self, activity):
     for datedataset in activity['scenes']:
         scene = activity['scenes'][datedataset]
 
-        general_scene_id = '{}_WARPED_{}_{}'.format(
-            activity['datacube'], activity['tileid'], str(scene['date'])[0:10])
+        cube_id = get_cube_id(activity['datacube'])
+        general_scene_id = '{}_{}_{}'.format(
+            cube_id, activity['tileid'], str(scene['date'])[0:10])
         qlfiles = []
         for band in qlbands:
             filename = os.path.join(services.prefix + activity['dirname'], scene['ARDfiles'][band])
@@ -1014,7 +900,7 @@ def publish(self, activity):
     for datedataset in activity['scenes']:
         scene = activity['scenes'][datedataset]
 
-        cube_id = '{}_WARPED'.format(activity['datacube'])
+        cube_id = get_cube_id(activity['datacube'])
         cube = Collection.query().filter(
             Collection.id == cube_id
         ).first()

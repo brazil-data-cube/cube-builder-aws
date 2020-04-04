@@ -8,8 +8,8 @@ from bdc_db.models import Collection, Band, CollectionTile, CollectionItem, Tile
     GrsSchema, RasterSizeSchema
 
 from .utils.serializer import Serializer
-from .utils.builder import get_date
-from .maestro import orchestrate, check_merge, prepare_merge, \
+from .utils.builder import get_date, get_cube_id
+from .maestro import orchestrate, prepare_merge, \
     merge_warped, solo, blend, publish
 from .services import CubeServices
 
@@ -29,14 +29,14 @@ class CubeBusiness:
         cubes_serealized = []
         for composite_function in params['composite_function_list']:
             c_function_id = composite_function.upper()
-            cube_id = '{}_{}'.format(params['datacube'], c_function_id)
             raster_size_id = '{}-{}'.format(params['grs'], int(params['resolution']))
+            cube_id = get_cube_id(params['datacube'], c_function_id)
 
             # add cube
             if not list(filter(lambda x: x.id == cube_id, cubes)) and not list(filter(lambda x: x.id == cube_id, cubes_db)):
                 cube = Collection(
                     id=cube_id,
-                    temporal_composition_schema_id=params['temporal_schema'],
+                    temporal_composition_schema_id=params['temporal_schema'] if c_function_id.upper() != 'WARPED' else 'Anull',
                     raster_size_schema_id=raster_size_id,
                     composite_function_schema_id=c_function_id if c_function_id.upper() != 'WARPED' else 'IDENTITY',
                     grs_schema_id=params['grs'],
@@ -58,8 +58,9 @@ class CubeBusiness:
             # save bands
             for band in params['bands']:
                 band = band.strip()
-                if (band == 'cnc' and 'WARPED' in cube.id) or \
-                    (band =='quality' and not 'WARPED' in cube.id):
+
+                if (band == 'cnc' and cube.composite_function_schema_id == 'IDENTITY') or \
+                    (band =='quality' and cube.composite_function_schema_id != 'IDENTITY'):
                     continue
 
                 is_not_cloud = band != 'quality' and band != 'cnc'
@@ -154,7 +155,7 @@ class CubeBusiness:
         ), 200
 
     def start_process(self, params):
-        cubeid = '{}_WARPED'.format(params['datacube'])
+        cube_id = get_cube_id(params['datacube'], 'MED')
         tiles = params['tiles'].split(',')
         start_date = datetime.strptime(params['start_date'], '%Y-%m-%d').strftime('%Y-%m-%d')
         end_date = datetime.strptime(params['end_date'], '%Y-%m-%d').strftime('%Y-%m-%d') \
@@ -162,24 +163,20 @@ class CubeBusiness:
 
         # verify cube info
         cube_infos = Collection.query().filter(
-            Collection.id == cubeid
+            Collection.id == cube_id
         ).first()
         if not cube_infos:
             return 'Cube not found!', 404
 
         # get bands list
         bands = Band.query().filter(
-            Band.collection_id == cubeid
+            Band.collection_id == get_cube_id(params['datacube'])
         ).all()
         bands_list = [band.name for band in bands]
 
         # items => old mosaic
         # orchestrate
         self.score['items'] = orchestrate(params['datacube'], cube_infos, tiles, start_date, end_date)
-
-        # check merge
-        self.score['check'] = check_merge(self.services, params['datacube'], params['collections'].split(','), 
-            self.score['items'], bands_list)
 
         # prepare merge
         prepare_merge(self, params['datacube'], params['collections'].split(','), bands_list, 
