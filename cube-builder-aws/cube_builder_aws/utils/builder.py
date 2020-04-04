@@ -2,6 +2,7 @@ import numpy
 import datetime
 import rasterio
 from datetime import timedelta
+from dateutil.relativedelta import relativedelta
 from numpngw import write_png
 from scipy import ndimage as ndi
 
@@ -28,106 +29,119 @@ def days_in_month(date):
 
 
 #############################
-def decode_periods(start_date, end_date, temporalschema, timestep):
-	requestedperiods = {}
+def decode_periods(temporal_schema, start_date, end_date, time_step):
+    """
+	Retrieve datacube temporal resolution by periods.
+    """
+    requested_periods = {}
+    if start_date is None:
+        return requested_periods
+    if isinstance(start_date, datetime.date):
+        start_date = start_date.strftime('%Y-%m-%d')
 
-	tdtimestep = datetime.timedelta(days=timestep)
-	stepsperperiod = int(round(365./timestep))
+    td_time_step = datetime.timedelta(days=time_step)
+    steps_per_period = int(round(365./time_step))
 
-	if temporalschema is None:
-		periodkey = start_date + '_' + start_date + '_' + end_date
-		requestedperiod = []
-		requestedperiod.append(periodkey)
-		requestedperiods[start_date] = requestedperiod
-		return requestedperiods
+    if end_date is None:
+        end_date = datetime.datetime.now().strftime('%Y-%m-%d')
+    if isinstance(end_date, datetime.date):
+        end_date = end_date.strftime('%Y-%m-%d')
 
-	if temporalschema == 'M':
-		start_date = numpy.datetime64(start_date)
-		end_date = numpy.datetime64(end_date)
-		requestedperiod = []
-		while start_date <= end_date:
-			next_date = start_date + days_in_month(str(start_date))
-			periodkey = str(start_date)[:10] + '_' + str(start_date)[:10] + '_' + str(next_date - numpy.timedelta64(1, 'D'))[:10]
-			requestedperiod.append(periodkey)
-			requestedperiods[start_date] = requestedperiod
-			start_date = next_date
-		return requestedperiods
+    if temporal_schema is None:
+        periodkey = start_date + '_' + start_date + '_' + end_date
+        requested_period = list()
+        requested_period.append(periodkey)
+        requested_periods[start_date] = requested_period
+        return requested_periods
+
+    if temporal_schema == 'M':
+        start_date = datetime.datetime.strptime(start_date, '%Y-%m-%d')
+        end_date = datetime.datetime.strptime(end_date, '%Y-%m-%d')
+        delta = relativedelta(months=time_step)
+        requested_period = []
+        while start_date <= end_date:
+            next_date = start_date + delta
+            periodkey = str(start_date)[:10] + '_' + str(start_date)[:10] + '_' + str(next_date - relativedelta(days=1))[:10]
+            requested_period.append(periodkey)
+            requested_periods[start_date] = requested_period
+            start_date = next_date
+        return requested_periods
 
     # Find the exact start_date based on periods that start on yyyy-01-01
-	firstyear = start_date.split('-')[0]
-	new_start_date = datetime.datetime.strptime(start_date, '%Y-%m-%d')
-	if temporalschema == 'A':
-		dbase = datetime.datetime.strptime(firstyear+'-01-01', '%Y-%m-%d')
-		while dbase < new_start_date:
-			dbase += tdtimestep
-		if dbase > new_start_date:
-			dbase -= tdtimestep
-		start_date = dbase.strftime('%Y-%m-%d')
-		new_start_date = dbase
+    firstyear = start_date.split('-')[0]
+    new_start_date = datetime.datetime.strptime(start_date, '%Y-%m-%d')
+    if temporal_schema == 'A':
+        dbase = datetime.datetime.strptime(firstyear+'-01-01', '%Y-%m-%d')
+        while dbase < new_start_date:
+            dbase += td_time_step
+        if dbase > new_start_date:
+            dbase -= td_time_step
+        start_date = dbase.strftime('%Y-%m-%d')
+        new_start_date = dbase
 
     # Find the exact end_date based on periods that start on yyyy-01-01
-	lastyear = end_date.split('-')[0]
-	new_end_date = datetime.datetime.strptime(end_date, '%Y-%m-%d')
-	if temporalschema == 'A':
-		dbase = datetime.datetime.strptime(lastyear+'-12-31', '%Y-%m-%d')
-		while dbase > new_end_date:
-			dbase -= tdtimestep
-		new_end_date = dbase
-		if new_end_date == new_start_date:
-			new_end_date += tdtimestep - datetime.timedelta(days=1)
-		end_date = new_start_date.strftime('%Y-%m-%d')
+    lastyear = end_date.split('-')[0]
+    new_end_date = datetime.datetime.strptime(end_date, '%Y-%m-%d')
+    if temporal_schema == 'A':
+        dbase = datetime.datetime.strptime(lastyear+'-12-31', '%Y-%m-%d')
+        while dbase > new_end_date:
+            dbase -= td_time_step
+        end_date = dbase
+        if end_date == start_date:
+            end_date += td_time_step - datetime.timedelta(days=1)
+        end_date = end_date.strftime('%Y-%m-%d')
 
     # For annual periods
-	if temporalschema == 'A':
-		dbase = new_start_date
-		yearold = dbase.year
-		count = 0
-		requestedperiod = []
-		while dbase < new_end_date:
-			if yearold != dbase.year:
-				dbase = datetime.datetime(dbase.year,1,1)
-			yearold = dbase.year
-			dstart = dbase
-			dend = dbase + tdtimestep - datetime.timedelta(days=1)
-			dend = min(datetime.datetime(dbase.year,12,31),dend)
-			basedate = dbase.strftime('%Y-%m-%d')
-			start_date = dstart.strftime('%Y-%m-%d')
-			end_date = dend.strftime('%Y-%m-%d')
-			periodkey = basedate + '_' + start_date + '_' + end_date
-			if count % stepsperperiod == 0:
-				count = 0
-				requestedperiod = []
-				requestedperiods[basedate] = requestedperiod
-			requestedperiod.append(periodkey)
-			count += 1
-			dbase += tdtimestep
-		if len(requestedperiods) == 0 and count > 0:
-			requestedperiods[basedate].append(requestedperiod)
-	else:
-		yeari = start_date.year
-		yearf = new_end_date.year
-		monthi = start_date.month
-		monthf = new_end_date.month
-		dayi = start_date.day
-		dayf = new_end_date.day
-		for year in range(yeari,yearf+1):
-			dbase = datetime.datetime(year,monthi,dayi)
-			if monthi <= monthf:
-				dbasen = datetime.datetime(year,monthf,dayf)
-			else:
-				dbasen = datetime.datetime(year+1,monthf,dayf)
-			while dbase < dbasen:
-				dstart = dbase
-				dend = dbase + tdtimestep - datetime.timedelta(days=1)
-				basedate = dbase.strftime('%Y-%m-%d')
-				start_date = dstart.strftime('%Y-%m-%d')
-				end_date = dend.strftime('%Y-%m-%d')
-				periodkey = basedate + '_' + start_date + '_' + end_date
-				requestedperiod = []
-				requestedperiods[basedate] = requestedperiod
-				requestedperiods[basedate].append(periodkey)
-				dbase += tdtimestep
-	return requestedperiods
+    if temporal_schema == 'A':
+        dbase = new_start_date
+        yearold = dbase.year
+        count = 0
+        requested_period = []
+        while dbase < new_end_date:
+            if yearold != dbase.year:
+                dbase = datetime.datetime(dbase.year,1,1)
+            yearold = dbase.year
+            dstart = dbase
+            dend = dbase + td_time_step - datetime.timedelta(days=1)
+            dend = min(datetime.datetime(dbase.year, 12, 31), dend)
+            basedate = dbase.strftime('%Y-%m-%d')
+            start_date = dstart.strftime('%Y-%m-%d')
+            end_date = dend.strftime('%Y-%m-%d')
+            periodkey = basedate + '_' + start_date + '_' + end_date
+            if count % steps_per_period == 0:
+                count = 0
+                requested_period = []
+                requested_periods[basedate] = requested_period
+            requested_period.append(periodkey)
+            count += 1
+            dbase += td_time_step
+        if len(requested_periods) == 0 and count > 0:
+            requested_periods[basedate].append(requested_period)
+    else:
+        yeari = start_date.year
+        yearf = end_date.year
+        monthi = start_date.month
+        monthf = end_date.month
+        dayi = start_date.day
+        dayf = end_date.day
+        for year in range(yeari,yearf+1):
+            dbase = datetime.datetime(year,monthi,dayi)
+            if monthi <= monthf:
+                dbasen = datetime.datetime(year,monthf,dayf)
+            else:
+                dbasen = datetime.datetime(year+1,monthf,dayf)
+            while dbase < dbasen:
+                dstart = dbase
+                dend = dbase + td_time_step - datetime.timedelta(days=1)
+                basedate = dbase.strftime('%Y-%m-%d')
+                start_date = dstart.strftime('%Y-%m-%d')
+                end_date = dend.strftime('%Y-%m-%d')
+                periodkey = basedate + '_' + start_date + '_' + end_date
+                requested_period = []
+                requested_periods[basedate] = requested_period
+                requested_periods[basedate].append(periodkey)
+                dbase += td_time_step
+    return requested_periods
 
 
 #############################
@@ -333,3 +347,11 @@ def remove_small_objects(ar, min_size=64, connectivity=1, in_place=False):
     too_small_mask = too_small[ccs]
     out[too_small_mask] = 0
     return out
+
+
+#############################
+def get_cube_id(cube, function=None):
+	if not function or function.upper() == 'WARPED':
+		return '_'.join(cube.split('_')[:-1])
+	else:
+		return '{}_{}'.format(cube, function)
