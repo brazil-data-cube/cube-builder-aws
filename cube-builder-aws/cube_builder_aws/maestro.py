@@ -191,8 +191,10 @@ def prepare_merge(self, datacube, datasets, bands, quicklook, resx, resy, nodata
             # Evaluate the number of dates, the number of scenes for each date and the total amount merges that will be done
             number_of_datasets_dates = 0
             band = activity['bands'][0]
+            list_dates = []
             for dataset in self.score['items'][tileid]['periods'][periodkey]['scenes'][band].keys():
                 for date in self.score['items'][tileid]['periods'][periodkey]['scenes'][band][dataset].keys():
+                    list_dates.append(str(date)[:10])
                     number_of_datasets_dates += 1
             activity['instancesToBeDone'] = number_of_datasets_dates
             activity['totalInstancesToBeDone'] = number_of_datasets_dates*len(activity['bands'])
@@ -218,6 +220,7 @@ def prepare_merge(self, datacube, datasets, bands, quicklook, resx, resy, nodata
 
             # Build each merge activity
             # For all bands
+            activity['list_dates'] = list_dates
             for band in self.score['items'][tileid]['periods'][periodkey]['scenes']:
                 activity['band'] = band
 
@@ -505,13 +508,16 @@ def fill_blend(services, mergeactivity, blendactivity):
     # Fill blend activity fields with data for band from the DynamoDB merge records
     band = blendactivity['band']
     blendactivity['instancesToBeDone'] = 0
-    dynamoKey = encode_key(mergeactivity, ['action','datacube','tileid','date','band'])
 
     # Query dynamoDB to get all merged 
-    response = services.get_activities_by_key(dynamoKey)
-    if 'Items' not in response or len(response['Items']) == 0:
-        return False
-    items = response['Items']
+    items = []
+    for date in mergeactivity['list_dates']:
+        mergeactivity['date_formated'] = date
+        dynamoKey = encode_key(mergeactivity, ['action','datacube','tileid','date_formated','band'])
+        response = services.get_activities_by_key(dynamoKey)
+        if 'Items' not in response or len(response['Items']) == 0:
+            return False
+        items += response['Items']
 
     for item in items:
         if item['mystatus'] != 'DONE':
@@ -779,7 +785,9 @@ def publish(self, activity):
     print('==> start PUBLISH')
     services = self.services
 
-    activity['mystart'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')    
+    activity['mystart'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')   
+    warped_cube = '_'.join(activity['datacube'].split('_')[0:2])
+
     # Generate quicklooks for CUBES (MEDIAN, STACK ...) 
     qlbands = activity['quicklook'].split(',')
     for function in ['MED', 'STK']:
@@ -793,11 +801,11 @@ def publish(self, activity):
 
         pngname = generateQLook(general_scene_id, qlfiles)
         dirname_ql = activity['dirname'].replace(
-            '{}/'.format(activity['datacube']), '{}/'.format(cube_id))
+            '{}/'.format(warped_cube), '{}/'.format(cube_id))
         if pngname is None:
             print('publish - Error generateQLook for {}'.format(general_scene_id))
             return False
-        s3pngname = os.path.join(dirname_ql, os.path.basename(pngname))
+        s3pngname = os.path.join(dirname_ql, '{}_{}'.format(activity['start'], activity['end']), os.path.basename(pngname))
         services.upload_file_S3(pngname, s3pngname, {'ACL': 'public-read'})
         os.remove(pngname)
 
@@ -810,14 +818,14 @@ def publish(self, activity):
             cube_id, activity['tileid'], str(scene['date'])[0:10])
         qlfiles = []
         for band in qlbands:
-            filename = os.path.join(services.prefix + activity['dirname'], scene['ARDfiles'][band])
+            filename = os.path.join(services.prefix + activity['dirname'], str(scene['date'])[0:10], scene['ARDfiles'][band])
             qlfiles.append(filename)
 
         pngname = generateQLook(general_scene_id, qlfiles)
         if pngname is None:
             print('publish - Error generateQLook for {}'.format(general_scene_id))
             return False
-        s3pngname = os.path.join(activity['dirname'], os.path.basename(pngname))
+        s3pngname = os.path.join(activity['dirname'], str(scene['date'])[0:10], os.path.basename(pngname))
         services.upload_file_S3(pngname, s3pngname, {'ACL': 'public-read'})
         os.remove(pngname)
 
@@ -850,10 +858,11 @@ def publish(self, activity):
             db.session().commit()
 
         # insert 'collection_item'
-        pngname = '{}.png'.format(general_scene_id)
+        range_date = '{}_{}'.format(activity['start'], activity['end'])
+        png_name = '{}.png'.format(general_scene_id)
         dirname_ql = activity['dirname'].replace(
-            '{}/'.format(activity['datacube']), '{}/'.format(cube_id))
-        s3pngname = os.path.join(dirname_ql, pngname)
+            '{}/'.format(warped_cube), '{}/'.format(cube_id))
+        s3_pngname = os.path.join(dirname_ql, range_date, png_name)
         CollectionItem(
             id=general_scene_id,
             collection_id=cube_id,
@@ -862,7 +871,7 @@ def publish(self, activity):
             item_date=activity['start'],
             composite_start=activity['start'],
             composite_end=activity['end'],
-            quicklook='{}/{}'.format(BUCKET_NAME, s3pngname),
+            quicklook='{}/{}'.format(BUCKET_NAME, s3_pngname),
             cloud_cover=activity['cloudratio'],
             scene_type=function,
             compressed_file=None
@@ -928,15 +937,15 @@ def publish(self, activity):
 
         # insert 'collection_item'
         pngname = '{}.png'.format(general_scene_id)
-        s3pngname = os.path.join(activity['dirname'], pngname)
+        s3pngname = os.path.join(activity['dirname'], str(scene['date'])[0:10], pngname)
         CollectionItem(
             id=general_scene_id,
             collection_id=cube_id,
             grs_schema_id=cube.grs_schema_id,
             tile_id=activity['tileid'],
             item_date=scene['date'],
-            composite_start=activity['start'],
-            composite_end=activity['end'],
+            composite_start=scene['date'],
+            composite_end=scene['date'],
             quicklook='{}/{}'.format(BUCKET_NAME, s3pngname),
             cloud_cover=int(scene['cloudratio']),
             scene_type='WARPED',
@@ -965,7 +974,7 @@ def publish(self, activity):
                 grs_schema_id=cube.grs_schema_id,
                 tile_id=activity['tileid'],
                 collection_item_id=general_scene_id,
-                url='{}/{}'.format(BUCKET_NAME, os.path.join(activity['dirname'], scene['ARDfiles'][band])),
+                url='{}/{}'.format(BUCKET_NAME, os.path.join(activity['dirname'], str(scene['date'])[0:10], scene['ARDfiles'][band])),
                 source=None,
                 raster_size_x=raster_size_x,
                 raster_size_y=raster_size_y,

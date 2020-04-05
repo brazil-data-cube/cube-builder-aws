@@ -5,7 +5,7 @@ Flask-Migrate==2.5.2
 Flask-SQLAlchemy==2.4.1
 GeoAlchemy2==0.6.3
 SQLAlchemy[postgresql]==1.3.13
-git+https://github.com/brazil-data-cube/bdc-db@v0.2.1
+git+https://github.com/brazil-data-cube/bdc-db@b-0.2
 git+https://github.com/brazil-data-cube/stac.py@v0.8.0-0
 psycopg2-binary==2.8.4
 cerberus==1.3.1
