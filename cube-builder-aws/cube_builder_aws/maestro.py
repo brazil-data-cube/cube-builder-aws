@@ -10,6 +10,7 @@ from rasterio.transform import Affine
 from rasterio.warp import reproject, Resampling, transform
 from rasterio.merge import merge 
 from rasterio.io import MemoryFile
+from sqlalchemy_utils import refresh_materialized_view
 
 from bdc_db.models.base_sql import BaseModel, db
 from bdc_db.models import CollectionTile, CollectionItem, Tile, \
@@ -988,4 +989,6 @@ def publish(self, activity):
     activity['myend'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     activity['mystatus'] = 'DONE'
     services.put_item_kinesis(activity)
+
+    refresh_materialized_view(db.session, AssetMV.__table__)
     return True
