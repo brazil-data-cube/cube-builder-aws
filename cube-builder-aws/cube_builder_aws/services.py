@@ -249,10 +249,12 @@ class CubeServices:
     ## ----------------------
     # STAC
     def get_collection_stac(self, collection_id):
+        _ = self.stac.catalog
         return self.stac.collection(collection_id)
 
     def search_STAC(self, activity):
         # Get DATACUBE params
+        _ = self.stac.catalog
         bands = activity['bands']
         datasets = activity['datasets']
         bbox = activity['bbox']
@@ -266,7 +268,7 @@ class CubeServices:
                 bbox=bbox,
                 limit=10000
             )
-            items = self.stac.collections[dataset].get_items(filter=filter_opts)
+            items = self.stac.collection(dataset).get_items(filter=filter_opts)
 
             for f in items['features']:
                 if f['type'] == 'Feature':
