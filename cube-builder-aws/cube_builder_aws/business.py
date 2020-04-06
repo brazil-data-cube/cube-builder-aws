@@ -21,7 +21,7 @@ class CubeBusiness:
         self.services = CubeServices()
 
     def create_cube(self, params):
-        params['composite_function_list'] = ['WARPED', 'STK', 'MED']
+        params['composite_function_list'] = ['IDENTITY', 'STK', 'MED']
 
         # generate cubes metadata
         cubes_db = Collection.query().filter().all()
@@ -36,9 +36,9 @@ class CubeBusiness:
             if not list(filter(lambda x: x.id == cube_id, cubes)) and not list(filter(lambda x: x.id == cube_id, cubes_db)):
                 cube = Collection(
                     id=cube_id,
-                    temporal_composition_schema_id=params['temporal_schema'] if c_function_id.upper() != 'WARPED' else 'Anull',
+                    temporal_composition_schema_id=params['temporal_schema'] if c_function_id.upper() != 'IDENTITY' else 'Anull',
                     raster_size_schema_id=raster_size_id,
-                    composite_function_schema_id=c_function_id if c_function_id.upper() != 'WARPED' else 'IDENTITY',
+                    composite_function_schema_id=c_function_id,
                     grs_schema_id=params['grs'],
                     description=params['description'],
                     radiometric_processing=None,

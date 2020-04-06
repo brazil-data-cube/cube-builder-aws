@@ -40,7 +40,7 @@ def orchestrate(datacube, cube_infos, tiles, start_date, end_date):
             return 'tile ({}) not found in GRS ({})'.format(tile, cube_infos.grs_schema_id), 404
 
         tiles_infos[tile] = tile_info[0]
-        for function in ['WARPED', 'STK', 'MED']:
+        for function in ['IDENTITY', 'STK', 'MED']:
             cube_id = get_cube_id(datacube, function)
             collection_tile = CollectionTile.query().filter(
                 CollectionTile.collection_id == cube_id,

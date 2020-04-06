@@ -351,7 +351,7 @@ def remove_small_objects(ar, min_size=64, connectivity=1, in_place=False):
 
 #############################
 def get_cube_id(cube, function=None):
-	if not function or function.upper() == 'WARPED':
+	if not function or function.upper() == 'IDENTITY':
 		return '_'.join(cube.split('_')[:-1])
 	else:
 		return '{}_{}'.format(cube, function)
