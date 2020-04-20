@@ -1,11 +1,11 @@
 openapi: 3.0.0
 
 info:
-  description: Cube generation - API Cube Builder
+  description: Cube generation - API Cube Builder AWS
   version: "0.2.0"
   title: API Cube Builder (AWS)
   contact:
-    name: OBT-INPE
+    name: BDC INPE
     email: brazildatacube@dpi.inpe.br
   license:
     name: MIT

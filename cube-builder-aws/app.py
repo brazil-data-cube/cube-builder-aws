@@ -10,6 +10,7 @@ import json
 import base64
 
 from flask import Flask, request, jsonify
+from flask_redoc import Redoc
 from bdc_db import BDCDatabase
 from config import USER, PASSWORD, HOST, DBNAME
 
@@ -23,9 +24,14 @@ app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://{}:{}@{}:5432/{}'.format(
    USER, PASSWORD, HOST, DBNAME
 )
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = True
+app.config['REDOC'] = {
+    'title': 'Cube Builder AWS',
+    'spec_route': '/docs'
+}
 
 BDCDatabase(app)
 business = CubeBusiness()
+_ = Redoc('./spec/openapi.yaml', app)
 
 #########################################
 # REQUEST HTTP -> from API Gateway
