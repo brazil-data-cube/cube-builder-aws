@@ -59,4 +59,4 @@ Get service status
 
         $ curl {your-lambda-endpoint}/
         
-for more information, see a `SPEC API <https://github.com/brazil-data-cube/cube-builder-aws/tree/master/spec>`_.
+for more information, see a SPEC API in: {your-lambda-endpoint}/docs

@@ -12,7 +12,7 @@ custom:
     packRequirements: false
   pythonRequirements:
     dockerizePip: non-linux
-    slim: true
+    slim: false
     zip: true
 
 provider:

@@ -17,3 +17,4 @@ requests==2.22.0
 numpngw==0.0.8
 scipy==1.4.1
 python-dateutil>=2.8,<3
+flask-redoc==0.1.0
