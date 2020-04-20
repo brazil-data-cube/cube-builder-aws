@@ -50,7 +50,7 @@ See `RUNNING.rst <./RUNNING.rst>`_.
 API SPEC
 ========
 
-See `spec/README.rst <./spec>`_.
+See a SPEC API in: {your-lambda-endpoint}/docs
 
 
 License
