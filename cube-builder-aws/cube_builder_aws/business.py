@@ -361,3 +361,19 @@ class CubeBusiness:
             chunk_size_t=1
         ).save()
         return 'Schema created with successfully', 201
+
+    @classmethod
+    def list_cubes(cls):
+        """Retrieve the list of data cubes from Brazil Data Cube database."""
+        cubes = Collection.query().filter(Collection.is_cube.is_(True)).all()
+
+        return [Serializer.serialize(cube) for cube in cubes], 200
+
+    @classmethod
+    def get_cube(cls, cube_name: str):
+        collection = Collection.query().filter(Collection.id == cube_name).first()
+
+        if collection is None or not collection.is_cube:
+            return 'Cube "{}" not found.'.format(cube_name), 404
+
+        return Serializer.serialize(collection), 200

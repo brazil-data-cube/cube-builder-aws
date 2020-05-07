@@ -108,6 +108,17 @@ def get_status():
     return jsonify(message), status
 
 
+@app.route('/cubes', defaults=dict(cube_id=None), methods=['GET'])
+@app.route('/cubes/<cube_id>', methods=['GET'])
+def list_cubes(cube_id):
+    if cube_id is not None:
+        message, status_code = business.get_cube(cube_id)
+    else:
+        message, status_code = business.list_cubes()
+
+    return jsonify(message), status_code
+
+
 #########################################
 # REQUEST -> from SQS trigger or Kinesis 
 #########################################
