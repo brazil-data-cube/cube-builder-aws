@@ -11,13 +11,14 @@ import base64
 
 from flask import Flask, request, jsonify
 from flask_redoc import Redoc
+from flask_cors import CORS
 from bdc_db import BDCDatabase
 from config import USER, PASSWORD, HOST, DBNAME
 
 from cube_builder_aws.business import CubeBusiness
 from cube_builder_aws.validators import validate
 from cube_builder_aws.utils.auth import require_oauth_scopes
-from cube_builder_aws.version import __version__ 
+from cube_builder_aws.version import __version__
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://{}:{}@{}:5432/{}'.format(
@@ -28,6 +29,7 @@ app.config['REDOC'] = {
     'title': 'Cube Builder AWS',
     'spec_route': '/docs'
 }
+CORS(app)
 
 BDCDatabase(app)
 business = CubeBusiness()
@@ -119,8 +121,15 @@ def list_cubes(cube_id):
     return jsonify(message), status_code
 
 
+@app.route('/cubes/<cube_id>/tiles', methods=['GET'])
+def list_tiles_as_features(cube_id):
+    message, status_code = business.list_tiles(cube_id)
+
+    return jsonify(message), status_code
+
+
 #########################################
-# REQUEST -> from SQS trigger or Kinesis 
+# REQUEST -> from SQS trigger or Kinesis
 #########################################
 def continue_process(event, context):
     with app.app_context():
