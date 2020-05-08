@@ -395,11 +395,17 @@ class CubeBusiness:
 
     @classmethod
     def list_tiles(cls, cube_name: str):
+        cube = Collection.query().filter(Collection.id == cube_name).first()
+
+        if cube is None or not cube.is_cube:
+            return 'Cube "{}" not found.'.format(cube_name), 404
+
         features = db.session.query(
                 func.ST_AsGeoJSON(func.ST_SetSRID(Tile.geom_wgs84, 4326), 6, 3).cast(sqlalchemy.JSON)
             ).distinct(Tile.id).filter(
                 CollectionItem.tile_id == Tile.id,
-                CollectionItem.collection_id == cube_name
+                CollectionItem.collection_id == cube_name,
+                Tile.grs_schema_id == cube.grs_schema_id
             ).all()
 
         return [feature[0] for feature in features], 200
