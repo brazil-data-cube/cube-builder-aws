@@ -382,11 +382,14 @@ class CubeBusiness:
             func.max(CollectionItem.composite_end).cast(sqlalchemy.String)
         ).filter(CollectionItem.collection_id == collection.id).first()
 
+        bands = Band.query().filter(Band.collection_id == cube_name).all()
+
         if temporal is None:
             temporal = []
 
         dump_collection = Serializer.serialize(collection)
         dump_collection['temporal'] = temporal
+        dump_collection['bands'] = [Serializer.serialize(b) for b in bands]
 
         return dump_collection, 200
 
@@ -394,7 +397,7 @@ class CubeBusiness:
     def list_tiles(cls, cube_name: str):
         features = db.session.query(
                 func.ST_AsGeoJSON(func.ST_SetSRID(Tile.geom_wgs84, 4326), 6, 3).cast(sqlalchemy.JSON)
-            ).filter(
+            ).distinct(Tile.id).filter(
                 CollectionItem.tile_id == Tile.id,
                 CollectionItem.collection_id == cube_name
             ).all()
