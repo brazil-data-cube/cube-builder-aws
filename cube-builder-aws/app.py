@@ -123,7 +123,18 @@ def list_cubes(cube_id):
 
 @app.route('/cubes/<cube_id>/tiles', methods=['GET'])
 def list_tiles_as_features(cube_id):
-    message, status_code = business.list_tiles(cube_id)
+    message, status_code = business.list_tiles_cube(cube_id)
+
+    return jsonify(message), status_code
+
+
+@app.route('/grs', defaults=dict(grs_id=None), methods=['GET'])
+@app.route('/grs/<grs_id>', methods=['GET'])
+def list_grs_schemas(grs_id):
+    if grs_id is not None:
+        message, status_code = business.get_grs_schema(grs_id)
+    else:
+        message, status_code = business.list_grs_schemas()
 
     return jsonify(message), status_code
 
