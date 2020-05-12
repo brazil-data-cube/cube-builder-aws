@@ -1,10 +1,11 @@
 # serverless.yml
 
-service: cube-builder
+service: ${env:PROJECT_NAME}
 
 plugins:
   - serverless-python-requirements
   - serverless-wsgi
+  - serverless-dotenv-plugin
 
 custom:
   wsgi:
@@ -17,27 +18,24 @@ custom:
 
 provider:
   name: aws
-  runtime: python3.6
-  stage: prod
-  region: us-east-1
+  runtime: python3.7
+  stage: ${env:STAGE}
+  region: ${env:REGION}
 
   environment:
-    KEY_ID: CHANGE_ME
-    SECRET_KEY: CHANGE_ME
-    RDS_HOST: CHANGE_ME
-    RDS_DBNAME: CHANGE_ME
-    RDS_USER: CHANGE_ME
-    RDS_PASSWORD: CHANGE_ME
-    URL_STAC: CHANGE_ME
-    BUCKET_NAME: CHANGE_ME
     LAMBDA_FUNCTION_NAME: ${self:service}-${self:provider.stage}-app
-    QUEUE_NAME: cubeBuilderQueue
-    KINESIS_NAME: cubeBuilderKinesis
-    DYNAMO_TB_ACTIVITY: CHANGE_ME
-    DBNAME_TB_CONTROL: CHANGE_ME
-    ENABLE_OBT_OAUTH: 0
-    AUTH_CLIENT_SECRET_KEY: CHANGE_ME
-    AUTH_CLIENT_AUDIENCE: CHANGE_ME
+    QUEUE_NAME: ${self:service}-${self:provider.stage}-queue
+    KINESIS_NAME: ${self:service}-${self:provider.stage}-kinesis
+    DYNAMO_TB_ACTIVITY: ${self:service}-${self:provider.stage}-act
+    DBNAME_TB_CONTROL: ${self:service}-${self:provider.stage}-actControl
+    KEY_ID: ${env:KEY_ID}
+    SECRET_KEY: ${env:SECRET_KEY}
+    RDS_HOST: ${env:RDS_HOST}
+    RDS_DBNAME: ${env:RDS_DBNAME}
+    RDS_USER: ${env:RDS_USER}
+    RDS_PASSWORD: ${env:RDS_PASSWORD}
+    URL_STAC: ${env:URL_STAC}
+    BUCKET_NAME: ${env:BUCKET_NAME}
 
   iamRoleStatements:
     - Effect: "Allow"
@@ -83,6 +81,7 @@ package:
     - package-lock.json
     - cube_builder_aws/__pycache__/**
     - cube_builder_aws/utils/__pycache__/**
+    - cube_builder_aws/.env
 
 functions:
   app:
@@ -117,7 +116,7 @@ resources:
     cubeBuilderQueue:
       Type: AWS::SQS::Queue
       Properties:
-        QueueName: cubeBuilderQueue
+        QueueName: ${self:service}-${self:provider.stage}-queue
         VisibilityTimeout: 720
         RedrivePolicy:
           deadLetterTargetArn:
@@ -130,10 +129,10 @@ resources:
       Type: AWS::SQS::Queue
       Properties:
         VisibilityTimeout: 500
-        QueueName: cubeBuilderQueueDLQ
+        QueueName: ${self:service}-${self:provider.stage}-queueDLQ
 
     cubeBuilderKinesis:
       Type: AWS::Kinesis::Stream
       Properties:
-        Name: cubeBuilderKinesis
+        Name: ${self:service}-${self:provider.stage}-kinesis
         ShardCount: 1
