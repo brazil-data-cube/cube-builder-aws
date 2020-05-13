@@ -58,6 +58,14 @@ def raster_size():
     }
     return item
 
+def temporal_composition():
+    item = {
+        'temporal_schema': {"type": "string", "empty": False, "required": True, "allowed": ['A', 'M', 'S']},
+        'temporal_composite_t': {"type": "string", "empty": True, "required": False},
+        'temporal_composite_unit': {"type": "string", "empty": True, "required": False, "allowed": ['day', 'month']}
+    }
+    return item
+
 def status():
     item = {
         'datacube': {"type": "string", "empty": False, "required": True}

@@ -54,8 +54,10 @@ def create():
         return jsonify(json.dumps(data)), 400
 
     cubes, status = business.create_cube(data)
-    return jsonify(cubes), status
-
+    return jsonify(
+        message = 'Cube created',
+        cubes = cubes
+    ), status
 
 @app.route("/start", methods=["GET"])
 def start():
@@ -67,7 +69,6 @@ def start():
     message, status = business.start_process(data)
     return jsonify(message), status
 
-
 @app.route("/create-grs", methods=["POST"])
 def craete_grs():
     # validate params
@@ -77,7 +78,6 @@ def craete_grs():
 
     message, status = business.create_grs(**data)
     return jsonify(message), status
-
 
 @app.route("/create-raster-size", methods=["POST"])
 def craete_raster_size():
@@ -126,6 +126,28 @@ def list_grs_schemas(grs_id):
         message, status_code = business.get_grs_schema(grs_id)
     else:
         message, status_code = business.list_grs_schemas()
+
+    return jsonify(message), status_code
+
+@app.route('/temporal-composition', methods=['GET'])
+def list_temporal_composition():
+    message, status_code = business.list_temporal_composition()
+
+    return jsonify(message), status_code
+
+@app.route("/create-temporal-composition", methods=["POST"])
+def craete_temporal_composition():
+    # validate params
+    data, status = validate(request.json, 'temporal_composition')
+    if status is False:
+        return jsonify(json.dumps(data)), 400
+
+    message, status = business.create_temporal_composition(**data)
+    return jsonify(message), status
+
+@app.route('/composite-functions', methods=['GET'])
+def list_composite_functions():
+    message, status_code = business.list_composite_functions()
 
     return jsonify(message), status_code
 

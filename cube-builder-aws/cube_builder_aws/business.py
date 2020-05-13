@@ -6,7 +6,7 @@ import sqlalchemy
 
 from bdc_db.models.base_sql import BaseModel, db
 from bdc_db.models import Collection, Band, CollectionTile, CollectionItem, Tile, \
-    GrsSchema, RasterSizeSchema
+    GrsSchema, RasterSizeSchema, TemporalCompositionSchema, CompositeFunctionSchema
 
 from .utils.serializer import Serializer
 from .utils.builder import get_date, get_cube_id
@@ -434,3 +434,35 @@ class CubeBusiness:
         dump_grs['tiles'] = [dict(id=t.id, geom_wgs84=t.geom_wgs84) for t in tiles]
 
         return dump_grs, 200
+
+    @classmethod
+    def list_temporal_composition(cls):
+        """Retrieve a list of available Temporal Composition Schemas on Brazil Data Cube database."""
+        schemas = TemporalCompositionSchema.query().all()
+
+        return [Serializer.serialize(schema) for schema in schemas], 200
+
+    def create_temporal_composition(self, temporal_schema, temporal_composite_t='', temporal_composite_unit=''):
+        id = temporal_schema
+        id += temporal_composite_t if temporal_composite_t != '' else 'null'
+        id += temporal_composite_unit if temporal_composite_unit != '' else ''
+
+        schema = TemporalCompositionSchema.query().filter(TemporalCompositionSchema.id == id).first()
+        if schema:
+            return 'Temporal Composition Schema {} already exists.'.format(id), 409
+
+        TemporalCompositionSchema(
+            id=id,
+            temporal_schema=temporal_schema,
+            temporal_composite_t=temporal_composite_t,
+            temporal_composite_unit=temporal_composite_unit
+        ).save()
+
+        return 'Temporal Composition Schema created with successfully', 201
+        
+    @classmethod
+    def list_composite_functions(cls):
+        """Retrieve a list of available Composite Functions on Brazil Data Cube database."""
+        schemas = CompositeFunctionSchema.query().all()
+
+        return [Serializer.serialize(schema) for schema in schemas], 200
