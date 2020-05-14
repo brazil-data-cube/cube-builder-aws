@@ -1,9 +1,10 @@
 from sqlalchemy.inspection import inspect
 
-class Serializer(object):
 
-    def serialize(self):
-        return {c: getattr(self, c) for c in inspect(self).attrs.keys()}
+class Serializer(object):
+    @staticmethod
+    def serialize(obj):
+        return {c.key: getattr(obj, c.key) for c in inspect(obj).mapper.column_attrs}
 
     @staticmethod
     def serialize_list(l):
