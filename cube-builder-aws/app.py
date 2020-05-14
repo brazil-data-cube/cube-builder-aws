@@ -59,6 +59,7 @@ def create():
         cubes = cubes
     ), status
 
+
 @app.route("/start", methods=["GET"])
 def start():
     # validate params
@@ -69,6 +70,7 @@ def start():
     message, status = business.start_process(data)
     return jsonify(message), status
 
+
 @app.route("/create-grs", methods=["POST"])
 def craete_grs():
     # validate params
@@ -78,6 +80,7 @@ def craete_grs():
 
     message, status = business.create_grs(**data)
     return jsonify(message), status
+
 
 @app.route("/create-raster-size", methods=["POST"])
 def craete_raster_size():

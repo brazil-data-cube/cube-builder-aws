@@ -21,6 +21,9 @@ provider:
   runtime: python3.6
   stage: ${env:STAGE}
   region: ${env:REGION}
+  apiKeys:
+    - name: key-${env:PROJECT_NAME}-${env:STAGE}
+      value: ${env:TOKEN}
 
   environment:
     LAMBDA_FUNCTION_NAME: ${self:service}-${self:provider.stage}-app
@@ -36,6 +39,7 @@ provider:
     RDS_PASSWORD: ${env:RDS_PASSWORD}
     URL_STAC: ${env:URL_STAC}
     BUCKET_NAME: ${env:BUCKET_NAME}
+    TOKEN: ${env:TOKEN}
 
   iamRoleStatements:
     - Effect: "Allow"
@@ -89,8 +93,32 @@ functions:
     timeout: 720
     memorySize: 512
     events:
-      - http: ANY /
-      - http: 'ANY {proxy+}'
+      - http: 
+          path: /
+          method: ANY
+          private: true
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+      - http:
+          path: '{proxy+}'
+          method: ANY
+          private: true
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
 
   app_stream: 
     handler: app.continue_process
