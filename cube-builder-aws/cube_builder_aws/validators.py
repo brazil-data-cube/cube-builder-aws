@@ -73,6 +73,17 @@ def status():
     return item
 
 
+def list_merge_form():
+    item = dict(
+        data_cube=dict(type='string', empty=False, required=True),
+        tile_id=dict(type='string', empty=False, required=True),
+        start=dict(type='string', empty=False, required=True),
+        end=dict(type='string', empty=False, required=True),
+    )
+
+    return item
+
+
 def validate(data, type_schema):
     schema = eval('{}()'.format(type_schema))
 
