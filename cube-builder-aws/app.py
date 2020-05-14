@@ -17,7 +17,6 @@ from config import USER, PASSWORD, HOST, DBNAME
 
 from cube_builder_aws.business import CubeBusiness
 from cube_builder_aws.validators import validate
-from cube_builder_aws.utils.auth import require_oauth_scopes
 from cube_builder_aws.version import __version__
 
 app = Flask(__name__)
@@ -48,7 +47,6 @@ def status():
 
 
 @app.route("/create", methods=["POST"])
-@require_oauth_scopes(scope="cube_builder_aws:metadata:POST")
 def create():
     # validate params
     data, status = validate(request.json, 'create')
@@ -63,7 +61,6 @@ def create():
 
 
 @app.route("/start", methods=["GET"])
-@require_oauth_scopes(scope="cube_builder_aws:process:POST")
 def start():
     # validate params
     data, status = validate(request.args.to_dict(), 'process')
@@ -75,7 +72,6 @@ def start():
 
 
 @app.route("/create-grs", methods=["POST"])
-@require_oauth_scopes(scope="cube_builder_aws:metadata:POST")
 def craete_grs():
     # validate params
     data, status = validate(request.json, 'grs')
@@ -87,7 +83,6 @@ def craete_grs():
 
 
 @app.route("/create-raster-size", methods=["POST"])
-@require_oauth_scopes(scope="cube_builder_aws:metadata:POST")
 def craete_raster_size():
     # validate params
     data, status = validate(request.json, 'raster_size')
@@ -99,7 +94,6 @@ def craete_raster_size():
 
 
 @app.route("/cube-status", methods=["GET"])
-@require_oauth_scopes(scope="cube_builder_aws:metadata:GET")
 def get_status():
     # validate params
     data, status = validate(request.args.to_dict(), 'status')
@@ -135,6 +129,28 @@ def list_grs_schemas(grs_id):
         message, status_code = business.get_grs_schema(grs_id)
     else:
         message, status_code = business.list_grs_schemas()
+
+    return jsonify(message), status_code
+
+@app.route('/temporal-composition', methods=['GET'])
+def list_temporal_composition():
+    message, status_code = business.list_temporal_composition()
+
+    return jsonify(message), status_code
+
+@app.route("/create-temporal-composition", methods=["POST"])
+def craete_temporal_composition():
+    # validate params
+    data, status = validate(request.json, 'temporal_composition')
+    if status is False:
+        return jsonify(json.dumps(data)), 400
+
+    message, status = business.create_temporal_composition(**data)
+    return jsonify(message), status
+
+@app.route('/composite-functions', methods=['GET'])
+def list_composite_functions():
+    message, status_code = business.list_composite_functions()
 
     return jsonify(message), status_code
 

@@ -10,6 +10,7 @@
   "author": "",
   "license": "ISC",
   "devDependencies": {
+    "serverless-dotenv-plugin": "^2.4.2",
     "serverless-python-requirements": "^5.0.1",
     "serverless-wsgi": "^1.7.4"
   }
