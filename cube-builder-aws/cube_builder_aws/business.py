@@ -8,7 +8,6 @@ from bdc_db.models.base_sql import BaseModel, db
 from bdc_db.models import Collection, Band, CollectionTile, CollectionItem, Tile, \
     GrsSchema, RasterSizeSchema, TemporalCompositionSchema, CompositeFunctionSchema
 
-from config import BUCKET_NAME
 from .utils.serializer import Serializer
 from .utils.builder import get_date, get_cube_id, get_cube_parts
 from .maestro import orchestrate, prepare_merge, \
