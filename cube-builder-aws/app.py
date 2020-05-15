@@ -19,6 +19,14 @@ from cube_builder_aws.business import CubeBusiness
 from cube_builder_aws.validators import validate
 from cube_builder_aws.version import __version__
 
+
+class ImprovedJSONEncoder(json.JSONEncoder):
+    def default(self, o):
+        if isinstance(o, set):
+            return list(o)
+        return super(ImprovedJSONEncoder, self).default(o)
+
+
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://{}:{}@{}:5432/{}'.format(
    USER, PASSWORD, HOST, DBNAME
@@ -28,11 +36,13 @@ app.config['REDOC'] = {
     'title': 'Cube Builder AWS',
     'spec_route': '/docs'
 }
+app.json_encoder = ImprovedJSONEncoder
 CORS(app)
 
 BDCDatabase(app)
 business = CubeBusiness()
 _ = Redoc('./spec/openapi.yaml', app)
+
 
 #########################################
 # REQUEST HTTP -> from API Gateway
@@ -169,6 +179,17 @@ def list_composite_functions():
 @app.route('/list-buckets', methods=['GET'])
 def list_buckets():
     message, status_code = business.list_buckets()
+
+    return jsonify(message), status_code
+
+
+@app.route('/list-merges', methods=['GET'])
+def list_merges():
+    data, status = validate(request.args, 'list_merge_form')
+    if status is False:
+        return jsonify(json.dumps(data)), 400
+
+    message, status_code = business.list_merges(**data)
 
     return jsonify(message), status_code
 
