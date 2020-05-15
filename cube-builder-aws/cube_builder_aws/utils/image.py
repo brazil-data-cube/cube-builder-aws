@@ -29,7 +29,7 @@ def validate(activity_row: dict):
 
     errors = list()
 
-    if 'ERROR' in activity_row['mystatus'] or activity_row['id'] == 'mergeS2_100890982019-01-15swir2':
+    if 'ERROR' in activity_row['mystatus']:
         band = activity['band']
 
         for link in activity['links']:
