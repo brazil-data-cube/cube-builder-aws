@@ -487,6 +487,8 @@ class CubeBusiness:
         # Temp workaround to remove composite function from data cube name
         if len(parts) == 4:
             data_cube = '_'.join(parts[:-2])
+        elif len(parts) == 3:
+            data_cube = '_'.join(parts[:-1])
 
         items = self.services.get_merges(data_cube, tile_id, start, end)
 

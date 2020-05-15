@@ -87,20 +87,21 @@ def validate_merges(activities: Tuple[dict], num_threads: int = 4) -> dict:
                 continue
 
             activity = item['activity']
+            merge_date = activity['date']
             band = item['activity']['band']
 
-            output.setdefault(item['period_start'], dict())
-            output[item['period_start']].setdefault('collections', activity['datasets'])
-            output[item['period_start']].setdefault('errors', list())
-            output[item['period_start']].setdefault('bands', dict())
+            output.setdefault(merge_date, dict())
+            output[merge_date].setdefault('collections', activity['datasets'])
+            output[merge_date].setdefault('errors', list())
+            output[merge_date].setdefault('bands', dict())
 
-            output[item['period_start']]['errors'].extend(errors)
+            output[merge_date]['errors'].extend(errors)
 
             merge_file = 's3://{}/{}'.format(activity['bucket_name'], activity['ARDfile']) if activity.get('ARDfile') else None
 
-            output[item['period_start']]['bands'].setdefault(band, dict(merge=merge_file, scenes=set()))
+            output[merge_date]['bands'].setdefault(band, dict(merge=merge_file, scenes=set()))
 
             for link in activity['links']:
-                output[item['period_start']]['bands'][band]['scenes'].add(link)
+                output[merge_date]['bands'][band]['scenes'].add(link)
 
         return output

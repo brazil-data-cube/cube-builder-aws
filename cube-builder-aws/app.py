@@ -70,10 +70,10 @@ def create():
     ), status
 
 
-@app.route("/start", methods=["GET"])
+@app.route("/start", methods=["POST"])
 def start():
     # validate params
-    data, status = validate(request.args.to_dict(), 'process')
+    data, status = validate(request.json, 'process')
     if status is False:
         return jsonify(json.dumps(data)), 400
 
