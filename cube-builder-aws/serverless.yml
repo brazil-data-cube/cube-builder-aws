@@ -37,8 +37,6 @@ provider:
     RDS_DBNAME: ${env:RDS_DBNAME}
     RDS_USER: ${env:RDS_USER}
     RDS_PASSWORD: ${env:RDS_PASSWORD}
-    URL_STAC: ${env:URL_STAC}
-    BUCKET_NAME: ${env:BUCKET_NAME}
     TOKEN: ${env:TOKEN}
 
   iamRoleStatements:

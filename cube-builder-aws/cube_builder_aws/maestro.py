@@ -18,7 +18,6 @@ from bdc_db.models import CollectionTile, CollectionItem, Tile, \
 
 from .utils.builder import decode_periods, encode_key, \
     getMaskStats, getMask, generateQLook, get_cube_id
-from config import BUCKET_NAME
 
 
 def orchestrate(datacube, cube_infos, tiles, start_date, end_date):
@@ -166,6 +165,8 @@ def prepare_merge(self, datacube, datasets, bands, quicklook, resx, resy, nodata
     activity['nodata'] = nodata
     activity['block_size'] = block_size
     activity['srs'] = crs
+    activity['bucket_name'] = services.bucket_name
+    activity['url_stac'] = services.url_stac
 
     # For all tiles
     for tileid in self.score['items']:
@@ -207,11 +208,10 @@ def prepare_merge(self, datacube, datasets, bands, quicklook, resx, resy, nodata
             # Save the activity in DynamoDB if no scenes are available
             if number_of_datasets_dates == 0:
                 dynamo_key = encode_key(activity, ['action','datacube','tileid','start','end'])
-                mylaunch = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 activity['dynamoKey'] = dynamo_key
                 activity['sk'] = 'NODATE'
                 activity['mystatus'] = 'NOSCENES'
-                activity['mylaunch'] = mylaunch
+                activity['mylaunch'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 activity['mystart'] = 'XXXX-XX-XX'
                 activity['myend'] = 'YYYY-YY-YY'
                 activity['efficacy'] = '0'
@@ -265,7 +265,7 @@ def prepare_merge(self, datacube, datasets, bands, quicklook, resx, resy, nodata
                         response = services.get_activity_item({'id': activity['dynamoKey'], 'sk': activity['sk'] })
                         if 'Item' in response:
                             if response['Item']['mystatus'] == 'DONE' \
-                                and services.s3fileExists(key=activity['ARDfile']):
+                                and services.s3_file_exists(key=activity['ARDfile']):
                                 next_step(services, activity)
                                 continue
                         else:
@@ -283,6 +283,8 @@ def merge_warped(self, activity):
     print('==> start MERGE')
     services = self.services
     key = activity['ARDfile']
+    bucket_name = activity['bucket_name']
+    prefix = services.get_s3_prefix(bucket_name)
 
     mystart = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     activity['mystart'] = mystart
@@ -290,11 +292,11 @@ def merge_warped(self, activity):
     dataset = activity.get('dataset')
 
     # If ARDfile already exists, update activitiesTable and chech if this merge is the last one for the mosaic
-    if services.s3fileExists(key=key):
+    if services.s3_file_exists(bucket_name=bucket_name, key=key):
         efficacy = 0
         cloudratio = 100
         if activity['band'] == 'quality':
-            with rasterio.open('{}{}'.format(services.prefix, key)) as src:
+            with rasterio.open('{}{}'.format(prefix, key)) as src:
                 mask = src.read(1)
                 cloudratio, efficacy = getMaskStats(mask)
 
@@ -305,7 +307,7 @@ def merge_warped(self, activity):
         services.put_item_kinesis(activity)
 
         key = '{}activities/{}{}.json'.format(activity['dirname'], activity['dynamoKey'], activity['date'])
-        services.save_file_S3(key, activity)
+        services.save_file_S3(bucket_name=bucket_name, key=key, activity=activity)
         return
 
     # Lets warp and merge
@@ -409,7 +411,7 @@ def merge_warped(self, activity):
             riodataset.write_band(1, raster_merge)
             riodataset.build_overviews([2, 4, 8, 16, 32, 64], Resampling.nearest)
             riodataset.update_tags(ns='rio_overview', resampling='nearest')
-        services.upload_fileobj_S3(memfile, key, {'ACL': 'public-read'})
+        services.upload_fileobj_S3(memfile, key, {'ACL': 'public-read'}, bucket_name=bucket_name)
 
     # Update entry in DynamoDB
     myend = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -422,7 +424,7 @@ def merge_warped(self, activity):
     services.put_item_kinesis(activity)
 
     key = '{}activities/{}{}.json'.format(activity['dirname'], activity['dynamoKey'], activity['date'])
-    services.save_file_S3(key, activity)
+    services.save_file_S3(bucket_name=bucket_name, key=key, activity=activity)
 
 
 ###############################
@@ -433,7 +435,7 @@ def next_blend(services, mergeactivity):
     blendactivity = {}	
     blendactivity['action'] = 'blend'
     blendactivity['datacube'] = mergeactivity['datacube_orig_name']
-    for key in ['datasets','bands','quicklook','xmin','ymax','srs','tileid','start','end','dirname','nodata']:
+    for key in ['datasets','bands','quicklook','xmin','ymax','srs','tileid','start','end','dirname','nodata','bucket_name']:
         blendactivity[key] = mergeactivity[key]
     blendactivity['totalInstancesToBeDone'] = len(blendactivity['bands'])-1
     
@@ -478,8 +480,8 @@ def next_blend(services, mergeactivity):
         if 'Item' in response \
                 and response['Item']['mystatus'] == 'DONE' \
                 and response['Item']['instancesToBeDone'] == blendactivity['instancesToBeDone'] \
-                and services.s3fileExists(key=blendactivity['MEDfile']) \
-                and services.s3fileExists(key=blendactivity['STKfile']):
+                and services.s3_file_exists(bucket_name=mergeactivity['bucket_name'], key=blendactivity['MEDfile']) \
+                and services.s3_file_exists(bucket_name=mergeactivity['bucket_name'], key=blendactivity['STKfile']):
             blendactivity['mystatus'] = 'DONE'
             next_step(services, blendactivity)
             continue
@@ -495,7 +497,7 @@ def next_blend(services, mergeactivity):
         
         # Create an entry in dynamoDB for each band blend activity (quality band is not an entry in DynamoDB)
         key = '{}activities/{}.json'.format(blendactivity['dirname'], blendactivity['dynamoKey'])
-        services.save_file_S3(key, blendactivity)
+        services.save_file_S3(bucket_name=blendactivity['bucket_name'], key=key, activity=blendactivity)
         services.put_item_kinesis(blendactivity)
         services.send_to_sqs(blendactivity)
         
@@ -557,6 +559,8 @@ def blend(self, activity):
     band = activity['band']
     numscenes = len(activity['scenes'])
     nodata = activity.get('nodata', -9999)
+    bucket_name = activity['bucket_name']
+    prefix = services.get_s3_prefix(bucket_name)
 
     # Check if band ARDfiles are in activity
     for datedataset in activity['scenes']:
@@ -568,7 +572,7 @@ def blend(self, activity):
     # Get basic information (profile) of input files
     keys = list(activity['scenes'].keys())
     filename = os.path.join(
-        services.prefix + activity['dirname'], 
+        prefix + activity['dirname'], 
         activity['scenes'][keys[0]]['date'], 
         activity['scenes'][keys[0]]['ARDfiles'][band])
     tilelist = []
@@ -602,7 +606,7 @@ def blend(self, activity):
 
         # MASK -> Quality
         filename = os.path.join(
-            services.prefix + activity['dirname'],
+            prefix + activity['dirname'],
             scene['date'],
             scene['ARDfiles']['quality'])
         try:
@@ -614,7 +618,7 @@ def blend(self, activity):
 
         # BANDS
         filename = os.path.join(
-            services.prefix + activity['dirname'],
+            prefix + activity['dirname'],
             scene['date'],
             scene['ARDfiles'][band])
         try:
@@ -684,7 +688,7 @@ def blend(self, activity):
             mediandataset.build_overviews([2, 4, 8, 16, 32, 64], Resampling.nearest)
             mediandataset.update_tags(ns='rio_overview', resampling='nearest')
 
-        services.upload_fileobj_S3(medianfile, activity['MEDfile'], {'ACL': 'public-read'})
+        services.upload_fileobj_S3(medianfile, activity['MEDfile'], {'ACL': 'public-read'}, bucket_name=bucket_name)
 
     # Close all input dataset
     for order in range(numscenes):
@@ -704,8 +708,8 @@ def blend(self, activity):
 
         key_cnc_med = '_'.join(activity['MEDfile'].split('_')[:-1]) + '_cnc.tif'
         key_cnc_stk = '_'.join(activity['STKfile'].split('_')[:-1]) + '_cnc.tif'
-        services.upload_file_S3(cloud_cloud_file, key_cnc_med, {'ACL': 'public-read'})
-        services.upload_file_S3(cloud_cloud_file, key_cnc_stk, {'ACL': 'public-read'})
+        services.upload_file_S3(cloud_cloud_file, key_cnc_med, {'ACL': 'public-read'}, bucket_name=bucket_name)
+        services.upload_file_S3(cloud_cloud_file, key_cnc_stk, {'ACL': 'public-read'}, bucket_name=bucket_name)
         os.remove(cloud_cloud_file)
 
     # Create and upload the STACK dataset
@@ -716,7 +720,7 @@ def blend(self, activity):
             ds_stack.write_band(1, stack_raster)
             ds_stack.build_overviews([2, 4, 8, 16, 32, 64], Resampling.nearest)
             ds_stack.update_tags(ns='rio_overview', resampling='nearest')
-        services.upload_fileobj_S3(memfile, activity['STKfile'], {'ACL': 'public-read'})
+        services.upload_fileobj_S3(memfile, activity['STKfile'], {'ACL': 'public-read'}, bucket_name=bucket_name)
 
     # Update status and end time in DynamoDB
     activity['myend'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -731,7 +735,7 @@ def next_publish(services, blendactivity):
     # Fill the publish activity from blend activity
     publishactivity = {}
     for key in ['datacube','datasets','bands','quicklook','xmin','ymax','srs','tileid','start','end', \
-        'dirname', 'cloudratio', 'raster_size_x', 'raster_size_y', 'chunk_size_x', 'chunk_size_y']:
+        'dirname', 'cloudratio', 'raster_size_x', 'raster_size_y', 'chunk_size_x', 'chunk_size_y', 'bucket_name']:
         publishactivity[key] = blendactivity.get(key)
     publishactivity['action'] = 'publish'
 
@@ -785,6 +789,8 @@ def next_publish(services, blendactivity):
 def publish(self, activity):
     print('==> start PUBLISH')
     services = self.services
+    bucket_name = activity['bucket_name']
+    prefix = services.get_s3_prefix(bucket_name)
 
     activity['mystart'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')   
     warped_cube = '_'.join(activity['datacube'].split('_')[0:2])
@@ -798,7 +804,7 @@ def publish(self, activity):
 
         qlfiles = []
         for band in qlbands:
-            qlfiles.append(services.prefix + activity['blended'][band][function + 'file'])
+            qlfiles.append(prefix + activity['blended'][band][function + 'file'])
 
         pngname = generateQLook(general_scene_id, qlfiles)
         dirname_ql = activity['dirname'].replace(
@@ -807,7 +813,7 @@ def publish(self, activity):
             print('publish - Error generateQLook for {}'.format(general_scene_id))
             return False
         s3pngname = os.path.join(dirname_ql, '{}_{}'.format(activity['start'], activity['end']), os.path.basename(pngname))
-        services.upload_file_S3(pngname, s3pngname, {'ACL': 'public-read'})
+        services.upload_file_S3(pngname, s3pngname, {'ACL': 'public-read'}, bucket_name=bucket_name)
         os.remove(pngname)
 
     # Generate quicklooks for all ARD scenes (WARPED)
@@ -819,7 +825,7 @@ def publish(self, activity):
             cube_id, activity['tileid'], str(scene['date'])[0:10])
         qlfiles = []
         for band in qlbands:
-            filename = os.path.join(services.prefix + activity['dirname'], str(scene['date'])[0:10], scene['ARDfiles'][band])
+            filename = os.path.join(prefix + activity['dirname'], str(scene['date'])[0:10], scene['ARDfiles'][band])
             qlfiles.append(filename)
 
         pngname = generateQLook(general_scene_id, qlfiles)
@@ -827,7 +833,7 @@ def publish(self, activity):
             print('publish - Error generateQLook for {}'.format(general_scene_id))
             return False
         s3pngname = os.path.join(activity['dirname'], str(scene['date'])[0:10], os.path.basename(pngname))
-        services.upload_file_S3(pngname, s3pngname, {'ACL': 'public-read'})
+        services.upload_file_S3(pngname, s3pngname, {'ACL': 'public-read'}, bucket_name=bucket_name)
         os.remove(pngname)
 
     # register collection_items and assets in DB (MEDIAN, STACK ...)
@@ -872,7 +878,7 @@ def publish(self, activity):
             item_date=activity['start'],
             composite_start=activity['start'],
             composite_end=activity['end'],
-            quicklook='{}/{}'.format(BUCKET_NAME, s3_pngname),
+            quicklook='{}/{}'.format(bucket_name, s3_pngname),
             cloud_cover=activity['cloudratio'],
             scene_type=function,
             compressed_file=None
@@ -896,7 +902,7 @@ def publish(self, activity):
                 grs_schema_id=cube.grs_schema_id,
                 tile_id=activity['tileid'],
                 collection_item_id=general_scene_id,
-                url='{}/{}'.format(BUCKET_NAME, activity['blended'][band][function + 'file']),
+                url='{}/{}'.format(bucket_name, activity['blended'][band][function + 'file']),
                 source=None,
                 raster_size_x=activity['raster_size_x'],
                 raster_size_y=activity['raster_size_y'],
@@ -947,7 +953,7 @@ def publish(self, activity):
             item_date=scene['date'],
             composite_start=scene['date'],
             composite_end=scene['date'],
-            quicklook='{}/{}'.format(BUCKET_NAME, s3pngname),
+            quicklook='{}/{}'.format(bucket_name, s3pngname),
             cloud_cover=int(scene['cloudratio']),
             scene_type='WARPED',
             compressed_file=None
@@ -975,7 +981,7 @@ def publish(self, activity):
                 grs_schema_id=cube.grs_schema_id,
                 tile_id=activity['tileid'],
                 collection_item_id=general_scene_id,
-                url='{}/{}'.format(BUCKET_NAME, os.path.join(activity['dirname'], str(scene['date'])[0:10], scene['ARDfiles'][band])),
+                url='{}/{}'.format(bucket_name, os.path.join(activity['dirname'], str(scene['date'])[0:10], scene['ARDfiles'][band])),
                 source=None,
                 raster_size_x=raster_size_x,
                 raster_size_y=raster_size_y,

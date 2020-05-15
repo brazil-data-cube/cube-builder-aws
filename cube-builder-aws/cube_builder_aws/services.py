@@ -8,13 +8,13 @@ from boto3.dynamodb.conditions import Key, Attr
 from botocore.errorfactory import ClientError
 from stac import STAC
 
-from config import BUCKET_NAME, DYNAMO_TB_ACTIVITY, DBNAME_TB_CONTROL, \
-    QUEUE_NAME, KINESIS_NAME, URL_STAC, LAMBDA_FUNCTION_NAME, \
+from config import DYNAMO_TB_ACTIVITY, DBNAME_TB_CONTROL, \
+    QUEUE_NAME, KINESIS_NAME, LAMBDA_FUNCTION_NAME, \
     AWS_KEY_ID, AWS_SECRET_KEY
 
 class CubeServices:
     
-    def __init__(self):
+    def __init__(self, url_stac=None, bucket=None):
         # session = boto3.Session(profile_name='africa')
         session = boto3.Session(
             aws_access_key_id=AWS_KEY_ID, 
@@ -29,8 +29,7 @@ class CubeServices:
         self.dynamoDBResource = session.resource('dynamodb')
 
         self.QueueUrl = None
-        self.prefix = 'https://s3.amazonaws.com/{}/'.format(BUCKET_NAME)
-        #self.prefix = 's3//{}/'.format(BUCKET_NAME)
+        self.bucket_name = bucket
 
         # ---------------------------
         # create / get DynamoDB tables
@@ -42,8 +41,14 @@ class CubeServices:
 
         # ---------------------------
         # init STAC instance
-        self.stac = STAC(URL_STAC)
+        self.url_stac = url_stac
+        if url_stac:
+            self.stac = STAC(url_stac)
 
+    def get_s3_prefix(self, bucket):
+        # prefix = 'https://s3.amazonaws.com/{}/'.format(bucket)
+        prefix = 's3://{}/'.format(bucket)
+        return prefix
     
     ## ----------------------
     # DYNAMO DB
@@ -259,7 +264,6 @@ class CubeServices:
         datasets = activity['datasets']
         bbox = activity['bbox']
         time = '{}/{}'.format(activity['start'], activity['end'])
-        bucket_archive_name = 'bdc-archive'
 
         scenes = {}
         for dataset in datasets:
@@ -292,12 +296,7 @@ class CubeServices:
                         if dataset == 'MOD13Q1' and band == 'quality':
                             scene['link'] = scene['link'].replace('quality','reliability')
 
-                        try:
-                            key = scene['link'].replace('s3://{}/'.format(bucket_archive_name),'')
-                            self.s3fileExists(bucket_name=bucket_archive_name, key=key)
-                        except ClientError:
-                            print('STAC key not found {} - link {}'.format(key, scene['link']))
-                            break
+                        # TODO: verify if scene['link'] exist 
 
                         if date not in scenes[band][dataset]:
                             scenes[band][dataset][date] = []
@@ -306,32 +305,43 @@ class CubeServices:
     
     ## ----------------------
     # S3
-    def s3fileExists(self, bucket_name=BUCKET_NAME, key=''):
+    def s3_file_exists(self, bucket_name=None, key=''):
         try:
+            if not bucket_name:
+                bucket_name = self.bucket_name
             self.S3client.head_object(Bucket=bucket_name, Key=key)
         except ClientError:
             return False
         return True
 
-    def save_file_S3(self, key, activity):
+    def save_file_S3(self, bucket_name=None, key='', activity={}):
+        if not bucket_name:
+            bucket_name = self.bucket_name
         return self.S3client.put_object(
-            Bucket=BUCKET_NAME,
+            Bucket=bucket_name,
             Key=key,
             Body=(bytes(json.dumps(activity).encode('UTF-8')))
         )
 
-    def upload_file_S3(self, memfile, key, args):
+    def upload_file_S3(self, memfile, key, args, bucket_name=None):
+        if not bucket_name:
+            bucket_name = self.bucket_name
         return self.S3client.upload_file(
             memfile, 
-            Bucket=BUCKET_NAME,
+            Bucket=bucket_name,
             Key=key,
             ExtraArgs=args
         )
 
-    def upload_fileobj_S3(self, memfile, key, args):
+    def upload_fileobj_S3(self, memfile, key, args, bucket_name=None):
+        if not bucket_name:
+            bucket_name = self.bucket_name
         return self.S3client.upload_fileobj(
             memfile, 
-            Bucket=BUCKET_NAME,
+            Bucket=bucket_name,
             Key=key,
             ExtraArgs=args
         )
+
+    def list_repositories(self):
+        return self.S3client.list_buckets()['Buckets']

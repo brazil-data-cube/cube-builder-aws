@@ -67,6 +67,7 @@ def start():
     if status is False:
         return jsonify(json.dumps(data)), 400
 
+    business = CubeBusiness(url_stac=data['url_stac'], bucket=data['bucket'])
     message, status = business.start_process(data)
     return jsonify(message), status
 
@@ -91,6 +92,13 @@ def craete_raster_size():
 
     message, status = business.create_raster_size(**data)
     return jsonify(message), status
+
+
+@app.route("/raster-size", methods=["GET"])
+def list_raster_size():
+    message, status_code = business.list_raster_size()
+
+    return jsonify(message), status_code
 
 
 @app.route("/cube-status", methods=["GET"])
@@ -132,11 +140,13 @@ def list_grs_schemas(grs_id):
 
     return jsonify(message), status_code
 
+
 @app.route('/temporal-composition', methods=['GET'])
 def list_temporal_composition():
     message, status_code = business.list_temporal_composition()
 
     return jsonify(message), status_code
+
 
 @app.route("/create-temporal-composition", methods=["POST"])
 def craete_temporal_composition():
@@ -148,9 +158,17 @@ def craete_temporal_composition():
     message, status = business.create_temporal_composition(**data)
     return jsonify(message), status
 
+
 @app.route('/composite-functions', methods=['GET'])
 def list_composite_functions():
     message, status_code = business.list_composite_functions()
+
+    return jsonify(message), status_code
+
+
+@app.route('/list-buckets', methods=['GET'])
+def list_buckets():
+    message, status_code = business.list_buckets()
 
     return jsonify(message), status_code
 
