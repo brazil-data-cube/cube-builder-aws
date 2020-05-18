@@ -10,7 +10,6 @@ from rasterio.transform import Affine
 from rasterio.warp import reproject, Resampling, transform
 from rasterio.merge import merge 
 from rasterio.io import MemoryFile
-from sqlalchemy_utils import refresh_materialized_view
 
 from bdc_db.models.base_sql import BaseModel, db
 from bdc_db.models import CollectionTile, CollectionItem, Tile, \
@@ -414,8 +413,7 @@ def merge_warped(self, activity):
         services.upload_fileobj_S3(memfile, key, {'ACL': 'public-read'}, bucket_name=bucket_name)
 
     # Update entry in DynamoDB
-    myend = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    activity['myend'] = myend
+    activity['myend'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     activity['efficacy'] = '{}'.format(int(efficacy))
     activity['cloudratio'] = '{}'.format(int(cloudratio))
     activity['raster_size_x'] = '{}'.format(numcol)
@@ -995,6 +993,4 @@ def publish(self, activity):
     activity['myend'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     activity['mystatus'] = 'DONE'
     services.put_item_kinesis(activity)
-
-    refresh_materialized_view(db.session, AssetMV.__table__)
     return True
