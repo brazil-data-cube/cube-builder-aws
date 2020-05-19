@@ -5,7 +5,7 @@ try:
 except ImportError:
     pass
 
-import os
+from datetime import date
 import json
 import base64
 
@@ -24,6 +24,8 @@ class ImprovedJSONEncoder(json.JSONEncoder):
     def default(self, o):
         if isinstance(o, set):
             return list(o)
+        if isinstance(o, date):
+            return o.strftime('%Y-%m-%d')
         return super(ImprovedJSONEncoder, self).default(o)
 
 
@@ -190,6 +192,18 @@ def list_merges():
         return jsonify(json.dumps(data)), 400
 
     message, status_code = business.list_merges(**data)
+
+    return jsonify(message), status_code
+
+
+@app.route('/cubes/<cube_id>/items', methods=['GET'])
+def list_cube_items(cube_id):
+    data, status = validate(request.args.to_dict(), 'list_cube_items_form')
+
+    if status is False:
+        return jsonify(json.dumps(data)), 400
+
+    message, status_code = business.list_cube_items(cube_id, **data)
 
     return jsonify(message), status_code
 

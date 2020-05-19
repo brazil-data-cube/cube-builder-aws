@@ -3,9 +3,10 @@ import rasterio
 from datetime import datetime
 from geoalchemy2 import func
 import sqlalchemy
+from sqlalchemy.sql import functions as db_functions
 
 from bdc_db.models.base_sql import BaseModel, db
-from bdc_db.models import Collection, Band, CollectionTile, CollectionItem, Tile, \
+from bdc_db.models import Asset, Collection, Band, CollectionItem, Tile, \
     GrsSchema, RasterSizeSchema, TemporalCompositionSchema, CompositeFunctionSchema
 
 from .utils.serializer import Serializer
@@ -518,3 +519,56 @@ class CubeBusiness:
         result = validate_merges(items)
 
         return result, 200
+
+    def list_cube_items(self, data_cube: str, bbox: str = None, start: str = None,
+                        end: str = None, page: int = 1, per_page: int = 10):
+        cube = Collection.query().filter(Collection.id == data_cube).first()
+
+        if cube is None:
+            return 'Cube "{}" not found.'.format(data_cube), 404
+
+        where = [
+            CollectionItem.collection_id == data_cube,
+            Tile.grs_schema_id == cube.grs_schema_id,
+            Tile.id == CollectionItem.tile_id
+        ]
+
+        if start:
+            where.append(CollectionItem.composite_start >= start)
+
+        if end:
+            where.append(CollectionItem.composite_end <= end)
+
+        if bbox:
+            xmin, ymin, xmax, ymax = [float(coord) for coord in bbox.split(',')]
+            where.append(
+                func.ST_Intersects(
+                    func.ST_SetSRID(Tile.geom_wgs84, 4326), func.ST_MakeEnvelope(xmin, ymin, xmax, ymax, 4326)
+                )
+            )
+
+        paginator = db.session.query(CollectionItem).filter(
+            *where
+        ).order_by(CollectionItem.item_date.desc()).paginate(int(page), int(per_page), error_out=False)
+
+        result = []
+
+        for item in paginator.items:
+            assets = db.session.query(
+                db_functions.concat('s3://', Asset.url).label('url'),
+                Band.name.label('band')
+            ).filter(Asset.collection_item_id == item.id, Asset.band_id == Band.id).all()
+
+            obj = Serializer.serialize(item)
+            obj['quicklook'] = item.quicklook
+            obj['assets'] = [dict(url=asset.url, band=asset.band) for asset in assets]
+
+            result.append(obj)
+
+        return dict(
+            items=result,
+            page=page,
+            per_page=page,
+            total_items=paginator.total,
+            total_pages=paginator.pages
+        ), 200
