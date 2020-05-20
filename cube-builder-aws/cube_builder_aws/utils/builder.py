@@ -1,3 +1,4 @@
+from typing import List
 import numpy
 import datetime
 import rasterio
@@ -351,7 +352,34 @@ def remove_small_objects(ar, min_size=64, connectivity=1, in_place=False):
 
 #############################
 def get_cube_id(cube, function=None):
-	if not function or function.upper() == 'IDENTITY':
-		return '_'.join(cube.split('_')[:-1])
-	else:
-		return '{}_{}'.format(cube, function)
+    if not function or function.upper() == 'IDENTITY':
+        return '_'.join(cube.split('_')[:-1])
+    else:
+        return '{}_{}'.format(cube, function)
+
+
+def get_cube_parts(datacube: str) -> List[str]:
+    """Parse a data cube name and retrieve their parts.
+
+    A data cube is composed by the following structure:
+    ``Collections_Resolution_TemporalPeriod_CompositeFunction``.
+
+    An IDENTITY data cube does not have TemporalPeriod and CompositeFunction.
+
+    Examples:
+        >>> # Parse Sentinel 2 Monthly MEDIAN
+        >>> get_cube_parts('S2_10_1M_MED') # ['S2', '10', '1M', 'MED']
+        >>> # Parse Sentinel 2 IDENTITY
+        >>> get_cube_parts('S2_10') # ['S2', '10']
+        >>> # Invalid data cubes
+        >>> get_cube_parts('S2-10')
+
+    Raises:
+        ValueError when data cube name is invalid.
+    """
+    cube_fragments = datacube.split('_')
+
+    if len(cube_fragments) > 4 or len(cube_fragments) < 2:
+        raise ValueError('Invalid data cube name. "{}"'.format(datacube))
+
+    return cube_fragments

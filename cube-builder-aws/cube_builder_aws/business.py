@@ -9,10 +9,11 @@ from bdc_db.models import Collection, Band, CollectionTile, CollectionItem, Tile
     GrsSchema, RasterSizeSchema, TemporalCompositionSchema, CompositeFunctionSchema
 
 from .utils.serializer import Serializer
-from .utils.builder import get_date, get_cube_id
+from .utils.builder import get_date, get_cube_id, get_cube_parts
 from .maestro import orchestrate, prepare_merge, \
     merge_warped, solo, blend, publish
 from .services import CubeServices
+from .utils.image import validate_merges
 
 class CubeBusiness:
 
@@ -479,3 +480,18 @@ class CubeBusiness:
         schemas = RasterSizeSchema.query().all()
 
         return [Serializer.serialize(schema) for schema in schemas], 200
+
+    def list_merges(self, data_cube: str, tile_id: str, start: str, end: str):
+        parts = get_cube_parts(data_cube)
+
+        # Temp workaround to remove composite function from data cube name
+        if len(parts) == 4:
+            data_cube = '_'.join(parts[:-2])
+        elif len(parts) == 3:
+            data_cube = '_'.join(parts[:-1])
+
+        items = self.services.get_merges(data_cube, tile_id, start, end)
+
+        result = validate_merges(items)
+
+        return result, 200

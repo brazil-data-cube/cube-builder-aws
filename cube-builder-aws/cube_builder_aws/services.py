@@ -12,6 +12,7 @@ from config import DYNAMO_TB_ACTIVITY, DBNAME_TB_CONTROL, \
     QUEUE_NAME, KINESIS_NAME, LAMBDA_FUNCTION_NAME, \
     AWS_KEY_ID, AWS_SECRET_KEY
 
+
 class CubeServices:
     
     def __init__(self, url_stac=None, bucket=None):
@@ -105,6 +106,8 @@ class CubeServices:
         	self.dynamoDBResource.meta.client.get_waiter('table_exists').wait(TableName=DBNAME_TB_CONTROL)
     
     def get_activities(self):
+        # self.activitiesTable.meta.client.delete_table(TableName=DYNAMO_TB_ACTIVITY)
+
         return self.activitiesTable.scan()
 
     def get_activities_ctrl(self):
@@ -120,11 +123,47 @@ class CubeServices:
             Key=query
         )
 
+    def get_all_items(self, filters):
+        response = self.activitiesTable.scan(
+            FilterExpression=filters,
+            Limit=100000000
+        )
+
+        items = response['Items']
+
+        while 'LastEvaluatedKey' in response:
+            response = self.activitiesTable.scan(
+                FilterExpression=filters,
+                ExclusiveStartKey=response['LastEvaluatedKey']
+            )
+            items.extend(response['Items'])
+
+        return items
+
+    def get_merges(self, data_cube: str, tile_id: str, start: str, end: str):
+        """List all merges activities used to build a data cube.
+
+        Args:
+            data_cube - Data cube name
+            start - Filter start data
+            end - Filter end data
+        """
+        expression = Key('tile_id').eq(tile_id) & Key('period_start').between(start, start) & \
+            Key('period_end').between(end, end) & Key('data_cube').eq(data_cube)
+
+        return self.get_all_items(expression)
+
     def put_activity(self, activity):
         self.activitiesTable.put_item(
-			Item = {
+            Item={
                 'id': activity['dynamoKey'],
                 'sk': activity['sk'],
+
+                'tile_id': activity['tileid'],
+                'period_start': activity['start'],
+                'period_end': activity['end'],
+                'data_cube': activity['datacube'],
+
                 'mystatus': activity['mystatus'],
                 'mylaunch': activity['mylaunch'],
                 'mystart': activity['mystart'],
