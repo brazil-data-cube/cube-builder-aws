@@ -187,7 +187,7 @@ def list_buckets():
 
 @app.route('/list-merges', methods=['GET'])
 def list_merges():
-    data, status = validate(request.args, 'list_merge_form')
+    data, status = validate(request.args.to_dict(), 'list_merge_form')
     if status is False:
         return jsonify(json.dumps(data)), 400
 
