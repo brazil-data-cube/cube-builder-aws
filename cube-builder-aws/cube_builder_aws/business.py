@@ -86,35 +86,41 @@ class CubeBusiness:
         return cubes_serealized, 201
 
     def get_cube_status(self, datacube):
-        activities = self.services.get_activities()
-        activitiesCtrl = self.services.get_activities_ctrl()
+        datacube_request = datacube
+
+        # split and format datacube NAME
+        parts_cube_name = get_cube_parts(datacube)
+        irregular_datacube = '_'.join(parts_cube_name[:2])
+        is_irregular = len(parts_cube_name) > 2
+        datacube = '_'.join(get_cube_parts(datacube)[:3]) if is_irregular else irregular_datacube
 
         # STATUS
-        items = [item for item in activitiesCtrl['Items'] if datacube in item['id']]
-        not_done = [i for i in activities['Items'] if datacube in i['id'] and i['mystatus'] == 'NOTDONE']
-        if len(not_done):
+        acts_datacube = []
+        not_done_datacube = 0
+        if is_irregular:
+            acts_datacube = self.services.get_activities_by_datacube(datacube)
+            not_done_datacube = len(list(filter(lambda i: i['mystatus'] == 'NOTDONE', acts_datacube)))
+        acts_irregular = self.services.get_activities_by_datacube(irregular_datacube)
+        not_done_irregular = len(list(filter(lambda i: i['mystatus'] == 'NOTDONE', acts_irregular)))
+
+        activities = acts_irregular + acts_datacube
+        not_done = not_done_irregular + not_done_datacube
+        if not_done:
             return dict(
                 finished = False,
-                not_done = len(not_done)
+                done = len(activities) - not_done,
+                not_done = not_done
             ), 200
 
-        for item in items:
-            items_by_id = [i for i in activities['Items'] if item['id'] in i['id']]
-            if int(items_by_id[0]['totalInstancesToBeDone']) > int(item['mycount']):
-                return dict(
-                    finished = False,
-                    not_done = int(items_by_id[0]['totalInstancesToBeDone']) - int(item['mycount'])
-                ), 200
-
         # TIME
-        acts = sorted(activities['Items'], key=lambda i: i['mystart'], reverse=True)
-        start_date = get_date(acts[-1]['mystart'])
-        end_date = get_date(acts[0]['mystart'])
+        acts = sorted(activities, key=lambda i: i['mylaunch'], reverse=True)
+        start_date = get_date(acts[-1]['mylaunch'])
+        end_date = get_date(acts[0]['myend'])
 
         time = 0
         list_dates = []
         for a in acts:
-            start = get_date(a['mystart'])
+            start = get_date(a['mylaunch'])
             end = get_date(a['myend'])
             if len(list_dates) == 0:
                 time += (end - start).seconds
@@ -149,11 +155,17 @@ class CubeBusiness:
         time_str = '{} h {} m {} s'.format(
             int(time / 60 / 60), int(time / 60), (time % 60))
 
+        quantity_coll_items = CollectionItem.query().filter(
+            CollectionItem.collection_id == datacube_request
+        ).count()
+
         return dict(
             finished = True,
             start_date = str(start_date),
             last_date = str(end_date),
-            duration = time_str
+            done = len(activities),
+            duration = time_str,
+            collection_item = quantity_coll_items
         ), 200
 
     def start_process(self, params):
@@ -364,15 +376,32 @@ class CubeBusiness:
         ).save()
         return 'Schema created with successfully', 201
 
-    @classmethod
-    def list_cubes(cls):
+    def list_cubes(self):
         """Retrieve the list of data cubes from Brazil Data Cube database."""
         cubes = Collection.query().filter(Collection.is_cube.is_(True)).all()
 
-        return [Serializer.serialize(cube) for cube in cubes], 200
+        list_cubes = []
+        for cube in cubes:
+            cube_formated = Serializer.serialize(cube)
+            not_done = 0
+            if cube.composite_function_schema_id != 'IDENTITY':
+                parts = get_cube_parts(cube.id)
+                data_cube = '_'.join(parts[:3])
+                activities = self.services.get_activities_by_datacube(data_cube)
+                not_done = len(list(filter(lambda i: i['mystatus'] == 'NOTDONE', activities)))
 
-    @classmethod
-    def get_cube(cls, cube_name: str):
+            parts = get_cube_parts(cube.id)
+            data_cube_identity = '_'.join(parts[:2])
+            activities = self.services.get_activities_by_datacube(data_cube_identity)
+            not_done_identity = len(list(filter(lambda i: i['mystatus'] == 'NOTDONE', activities)))
+
+            sum_not_done = not_done + not_done_identity
+            cube_formated['finished'] = sum_not_done == 0
+            list_cubes.append(cube_formated)
+
+        return list_cubes, 200
+
+    def get_cube(self, cube_name: str):
         collection = Collection.query().filter(Collection.id == cube_name).first()
 
         if collection is None or not collection.is_cube:
@@ -394,8 +423,7 @@ class CubeBusiness:
 
         return dump_collection, 200
 
-    @classmethod
-    def list_tiles_cube(cls, cube_name: str):
+    def list_tiles_cube(self, cube_name: str):
         cube = Collection.query().filter(Collection.id == cube_name).first()
 
         if cube is None or not cube.is_cube:
@@ -411,15 +439,13 @@ class CubeBusiness:
 
         return [feature[0] for feature in features], 200
 
-    @classmethod
-    def list_grs_schemas(cls):
+    def list_grs_schemas(self):
         """Retrieve a list of available Grid Schema on Brazil Data Cube database."""
         schemas = GrsSchema.query().all()
 
         return [Serializer.serialize(schema) for schema in schemas], 200
 
-    @classmethod
-    def get_grs_schema(cls, grs_id):
+    def get_grs_schema(self, grs_id):
         """Retrieves a Grid Schema definition with tiles associated."""
         schema = GrsSchema.query().filter(GrsSchema.id == grs_id).first()
 
@@ -436,8 +462,7 @@ class CubeBusiness:
 
         return dump_grs, 200
 
-    @classmethod
-    def list_temporal_composition(cls):
+    def list_temporal_composition(self):
         """Retrieve a list of available Temporal Composition Schemas on Brazil Data Cube database."""
         schemas = TemporalCompositionSchema.query().all()
 
@@ -461,8 +486,7 @@ class CubeBusiness:
 
         return 'Temporal Composition Schema created with successfully', 201
         
-    @classmethod
-    def list_composite_functions(cls):
+    def list_composite_functions(self):
         """Retrieve a list of available Composite Functions on Brazil Data Cube database."""
         schemas = CompositeFunctionSchema.query().all()
 
@@ -474,8 +498,7 @@ class CubeBusiness:
 
         return buckets, 200
 
-    @classmethod
-    def list_raster_size(cls):
+    def list_raster_size(self):
         """Retrieve a list of available Raster Size Schemas on Brazil Data Cube database."""
         schemas = RasterSizeSchema.query().all()
 

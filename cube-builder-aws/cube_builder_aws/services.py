@@ -153,6 +153,15 @@ class CubeServices:
 
         return self.get_all_items(expression)
 
+    def get_activities_by_datacube(self, data_cube: str):
+        """List all activities used to build a data cube.
+
+        Args:
+            data_cube - Data cube name
+        """
+        expression = Key('data_cube').eq(data_cube)
+        return self.get_all_items(expression)
+
     def put_activity(self, activity):
         self.activitiesTable.put_item(
             Item={
@@ -383,4 +392,4 @@ class CubeServices:
         )
 
     def list_repositories(self):
-        return self.S3client.list_buckets()['Buckets']
+        return [bucket['Name'] for bucket in self.S3client.list_buckets()['Buckets']]
