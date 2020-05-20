@@ -29,6 +29,8 @@ def create():
 
 def process():
     item = {
+        'url_stac': {"type": "string", "empty": False, "required": True},
+        'bucket': {"type": "string", "empty": False, "required": True},
         'datacube': {"type": "string", "empty": False, "required": True},
         'tiles': {"type": "string", "empty": False, "required": True},
         'collections': {"type": "string", "empty": False, "required": True},

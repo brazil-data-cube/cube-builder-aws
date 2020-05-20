@@ -177,7 +177,7 @@ request:
           description: size (Y) in degrees of each tile (in degrees)
         bbox:
           type: string
-          description: bounding box of area (in lnglat)
+          description: bounding box of area (in lnglat) - (W, N, E, S)
 
     raster_size:
       type: object

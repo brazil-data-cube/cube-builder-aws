@@ -16,10 +16,10 @@ from .services import CubeServices
 
 class CubeBusiness:
 
-    def __init__(self):
+    def __init__(self, url_stac=None, bucket=None):
         self.score = {}
 
-        self.services = CubeServices()
+        self.services = CubeServices(url_stac, bucket)
 
     def create_cube(self, params):
         params['composite_function_list'] = ['IDENTITY', 'STK', 'MED']
@@ -464,5 +464,18 @@ class CubeBusiness:
     def list_composite_functions(cls):
         """Retrieve a list of available Composite Functions on Brazil Data Cube database."""
         schemas = CompositeFunctionSchema.query().all()
+
+        return [Serializer.serialize(schema) for schema in schemas], 200
+
+    def list_buckets(self):
+        """Retrieve a list of available bucket in aws account."""
+        buckets = self.services.list_repositories()
+
+        return buckets, 200
+
+    @classmethod
+    def list_raster_size(cls):
+        """Retrieve a list of available Raster Size Schemas on Brazil Data Cube database."""
+        schemas = RasterSizeSchema.query().all()
 
         return [Serializer.serialize(schema) for schema in schemas], 200
