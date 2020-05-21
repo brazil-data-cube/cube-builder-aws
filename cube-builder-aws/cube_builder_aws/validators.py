@@ -94,9 +94,19 @@ def list_cube_items_form():
             required=False,
             coerce=to_bbox
         ),
+        tiles=dict(type='string', empty=False, required=False),
         start=dict(type='string', empty=False, required=False),
         end=dict(type='string', empty=False, required=False),
         page=dict(type='integer', empty=False, required=True, default=1, coerce=int),
+    )
+
+
+def list_timeline_form():
+    return dict(
+        start=dict(type='string', empty=False, required=False),
+        end=dict(type='string', empty=False, required=False),
+        schema=dict(type='string', empty=False, required=False),
+        step=dict(type='integer', empty=False, required=True, default=1, coerce=int),
     )
 
 
