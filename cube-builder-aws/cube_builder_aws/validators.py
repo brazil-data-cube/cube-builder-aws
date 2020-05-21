@@ -32,7 +32,7 @@ def process():
         'url_stac': {"type": "string", "empty": False, "required": True},
         'bucket': {"type": "string", "empty": False, "required": True},
         'datacube': {"type": "string", "empty": False, "required": True},
-        'tiles': {"type": "string", "empty": False, "required": True},
+        'tiles': {"type": "list", "empty": False, "required": True},
         'collections': {"type": "string", "empty": False, "required": True},
         'start_date': {"type": "date", "coerce": to_date, "empty": False, "required": True},
         'end_date': {"type": "date", "coerce": to_date, "empty": True, "required": False}
@@ -54,7 +54,7 @@ def grs():
 def raster_size():
     item = {
         'grs_schema': {"type": "string", "empty": False, "required": True},
-        'resolution': {"type": "string", "empty": False, "required": True},
+        'resolution': {"type": "integer", "empty": False, "required": True},
         'chunk_size_x': {"type": "float", "empty": False, "required": True},
         'chunk_size_y': {"type": "float", "empty": False, "required": True}
     }
