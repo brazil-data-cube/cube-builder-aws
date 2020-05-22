@@ -34,6 +34,7 @@ def process():
         'datacube': {"type": "string", "empty": False, "required": True},
         'tiles': {"type": "list", "empty": False, "required": True},
         'collections': {"type": "string", "empty": False, "required": True},
+        'satellite': {"type": "string", "empty": False, "required": True},
         'start_date': {"type": "date", "coerce": to_date, "empty": False, "required": True},
         'end_date': {"type": "date", "coerce": to_date, "empty": True, "required": False}
     }
@@ -97,6 +98,13 @@ def list_cube_items_form():
         start=dict(type='string', empty=False, required=False),
         end=dict(type='string', empty=False, required=False),
         page=dict(type='integer', empty=False, required=True, default=1, coerce=int),
+    )
+
+
+def bucket():
+    return dict(
+        name=dict(type='string', empty=False, required=False),
+        requester_pay=dict(type='boolean', empty=False, required=False, default=True)
     )
 
 
