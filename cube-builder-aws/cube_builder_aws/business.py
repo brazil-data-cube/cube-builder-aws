@@ -386,20 +386,24 @@ class CubeBusiness:
         for cube in cubes:
             cube_formated = Serializer.serialize(cube)
             not_done = 0
+            sum_acts = 0
             if cube.composite_function_schema_id != 'IDENTITY':
                 parts = get_cube_parts(cube.id)
                 data_cube = '_'.join(parts[:3])
                 activities = self.services.get_activities_by_datacube(data_cube)
                 not_done = len(list(filter(lambda i: i['mystatus'] == 'NOTDONE', activities)))
+                sum_acts += len(activities)
 
             parts = get_cube_parts(cube.id)
             data_cube_identity = '_'.join(parts[:2])
             activities = self.services.get_activities_by_datacube(data_cube_identity)
             not_done_identity = len(list(filter(lambda i: i['mystatus'] == 'NOTDONE', activities)))
+            sum_acts += len(activities)
 
-            sum_not_done = not_done + not_done_identity
-            cube_formated['finished'] = sum_not_done == 0
-            list_cubes.append(cube_formated)
+            if sum_acts > 0:
+                sum_not_done = not_done + not_done_identity
+                cube_formated['finished'] = sum_not_done == 0
+                list_cubes.append(cube_formated)
 
         return list_cubes, 200
 
