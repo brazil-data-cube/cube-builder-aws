@@ -7,10 +7,10 @@ from sqlalchemy.sql import functions as db_functions
 
 from bdc_db.models.base_sql import BaseModel, db
 from bdc_db.models import Asset, Collection, Band, CollectionItem, Tile, \
-    GrsSchema, RasterSizeSchema, TemporalCompositionSchema, CompositeFunctionSchema
+    GrsSchema, RasterSizeSchema, TemporalCompositionSchema, CompositeFunctionSchema, CollectionTile
 
 from .utils.serializer import Serializer
-from .utils.builder import get_date, get_cube_id, get_cube_parts
+from .utils.builder import get_date, get_cube_id, get_cube_parts, decode_periods
 from .maestro import orchestrate, prepare_merge, \
     merge_warped, solo, blend, publish
 from .services import CubeServices
@@ -414,6 +414,12 @@ class CubeBusiness:
             func.max(CollectionItem.composite_end).cast(sqlalchemy.String)
         ).filter(CollectionItem.collection_id == collection.id).first()
 
+        temporal_composition = dict(
+            schema=collection.temporal_composition_schema.temporal_schema,
+            unit=collection.temporal_composition_schema.temporal_composite_unit,
+            step=collection.temporal_composition_schema.temporal_composite_t
+        )
+
         bands = Band.query().filter(Band.collection_id == cube_name).all()
 
         if temporal is None:
@@ -422,6 +428,7 @@ class CubeBusiness:
         dump_collection = Serializer.serialize(collection)
         dump_collection['temporal'] = temporal
         dump_collection['bands'] = [Serializer.serialize(b) for b in bands]
+        dump_collection['temporal_composition'] = temporal_composition
 
         return dump_collection, 200
 
@@ -522,7 +529,7 @@ class CubeBusiness:
         return result, 200
 
     def list_cube_items(self, data_cube: str, bbox: str = None, start: str = None,
-                        end: str = None, page: int = 1, per_page: int = 10):
+                        end: str = None, tiles: str = None, page: int = 1, per_page: int = 10):
         cube = Collection.query().filter(Collection.id == data_cube).first()
 
         if cube is None:
@@ -540,6 +547,12 @@ class CubeBusiness:
         if end:
             where.append(CollectionItem.composite_end <= end)
 
+        if tiles:
+            tiles = tiles.split(',') if isinstance(tiles, str) else tiles
+            where.append(
+                Tile.id.in_(tiles)
+            )
+
         if bbox:
             xmin, ymin, xmax, ymax = [float(coord) for coord in bbox.split(',')]
             where.append(
@@ -555,14 +568,8 @@ class CubeBusiness:
         result = []
 
         for item in paginator.items:
-            assets = db.session.query(
-                db_functions.concat('s3://', Asset.url).label('url'),
-                Band.name.label('band')
-            ).filter(Asset.collection_item_id == item.id, Asset.band_id == Band.id).all()
-
             obj = Serializer.serialize(item)
             obj['quicklook'] = item.quicklook
-            obj['assets'] = [dict(url=asset.url, band=asset.band) for asset in assets]
 
             result.append(obj)
 
@@ -582,3 +589,38 @@ class CubeBusiness:
             return 'Bucket {} already exists.'.format(name), 409
 
         return 'Bucket created with successfully', 201
+
+    def list_timeline(self, schema: str, step: int, start: str = None, end: str = None):
+        """Generate data cube periods using temporal composition schema.
+
+        Args:
+            schema: Temporal Schema (M, A)
+            step: Temporal Step
+            start: Start date offset. Default is '2016-01-01'.
+            end: End data offset. Default is '2019-12-31'
+
+        Returns:
+            List of periods between start/last date
+        """
+        start_date = start or '2016-01-01'
+        last_date = end or '2019-12-31'
+
+        total_periods = decode_periods(schema, start_date, last_date, int(step))
+
+        periods = set()
+
+        for period_array in total_periods.values():
+            for period in period_array:
+                date = period.split('_')[0]
+
+                periods.add(date)
+
+        return sorted(list(periods)), 200
+
+    def list_cube_items_tiles(self, cube: str):
+        tiles = db.session.query(CollectionItem.tile_id)\
+            .filter(CollectionItem.collection_id == cube)\
+            .group_by(CollectionItem.tile_id)\
+            .all()
+
+        return [t.tile_id for t in tiles], 200

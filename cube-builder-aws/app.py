@@ -219,6 +219,25 @@ def craete_bucket():
     return jsonify(message), status
 
 
+@app.route('/timeline', methods=['GET'])
+def list_timeline():
+    data, status = validate(request.args.to_dict(), 'list_timeline_form')
+
+    if status is False:
+        return jsonify(json.dumps(data)), 400
+
+    message, status_code = business.list_timeline(**data)
+
+    return jsonify(message), status_code
+
+
+@app.route('/cubes/<cube_id>/items/tiles', methods=['GET'])
+def list_items_tiles(cube_id):
+    message, status_code = business.list_cube_items_tiles(cube_id)
+
+    return jsonify(message), status_code
+
+
 #########################################
 # REQUEST -> from SQS trigger or Kinesis
 #########################################
