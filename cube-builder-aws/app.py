@@ -208,6 +208,17 @@ def list_cube_items(cube_id):
     return jsonify(message), status_code
 
 
+@app.route("/create-bucket", methods=["POST"])
+def craete_bucket():
+    # validate params
+    data, status = validate(request.json, 'bucket')
+    if status is False:
+        return jsonify(json.dumps(data)), 400
+
+    message, status = business.create_bucket(**data)
+    return jsonify(message), status
+
+
 #########################################
 # REQUEST -> from SQS trigger or Kinesis
 #########################################

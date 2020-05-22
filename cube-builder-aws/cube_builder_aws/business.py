@@ -171,7 +171,7 @@ class CubeBusiness:
 
     def start_process(self, params):
         cube_id = get_cube_id(params['datacube'], 'MED')
-        tiles = params['tiles'].split(',')
+        tiles = params['tiles']
         start_date = datetime.strptime(params['start_date'], '%Y-%m-%d').strftime('%Y-%m-%d')
         end_date = datetime.strptime(params['end_date'], '%Y-%m-%d').strftime('%Y-%m-%d') \
             if params.get('end_date') else datetime.now().strftime('%Y-%m-%d')
@@ -194,7 +194,7 @@ class CubeBusiness:
         self.score['items'] = orchestrate(params['datacube'], cube_infos, tiles, start_date, end_date)
 
         # prepare merge
-        prepare_merge(self, params['datacube'], params['collections'].split(','), bands_list,
+        prepare_merge(self, params['datacube'], params['collections'].split(','), params['satellite'], bands_list,
             cube_infos.bands_quicklook, bands[0].resolution_x, bands[0].resolution_y, bands[0].fill,
             cube_infos.raster_size_schemas.raster_size_x, cube_infos.raster_size_schemas.raster_size_y,
             cube_infos.raster_size_schemas.chunk_size_x, cube_infos.grs_schema.crs)
@@ -364,7 +364,8 @@ class CubeBusiness:
             raster_schema.raster_size_y = raster_size_y
             raster_schema.chunk_size_x = chunk_size_x
             raster_schema.chunk_size_y = chunk_size_y
-            raster_schema.save()
+            db.session.commit()
+            return 'Schema created with successfully', 201
 
         RasterSizeSchema(
             id=raster_schema_id,
@@ -572,3 +573,12 @@ class CubeBusiness:
             total_items=paginator.total,
             total_pages=paginator.pages
         ), 200
+
+    def create_bucket(self, name, requester_pay):
+        service = self.services
+
+        status = service.create_bucket(name, requester_pay)
+        if not status:
+            return 'Bucket {} already exists.'.format(name), 409
+
+        return 'Bucket created with successfully', 201
