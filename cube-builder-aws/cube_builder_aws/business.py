@@ -171,7 +171,7 @@ class CubeBusiness:
 
     def start_process(self, params):
         cube_id = get_cube_id(params['datacube'], 'MED')
-        tiles = params['tiles'].split(',')
+        tiles = params['tiles']
         start_date = datetime.strptime(params['start_date'], '%Y-%m-%d').strftime('%Y-%m-%d')
         end_date = datetime.strptime(params['end_date'], '%Y-%m-%d').strftime('%Y-%m-%d') \
             if params.get('end_date') else datetime.now().strftime('%Y-%m-%d')
@@ -194,7 +194,7 @@ class CubeBusiness:
         self.score['items'] = orchestrate(params['datacube'], cube_infos, tiles, start_date, end_date)
 
         # prepare merge
-        prepare_merge(self, params['datacube'], params['collections'].split(','), bands_list,
+        prepare_merge(self, params['datacube'], params['collections'].split(','), params['satellite'], bands_list,
             cube_infos.bands_quicklook, bands[0].resolution_x, bands[0].resolution_y, bands[0].fill,
             cube_infos.raster_size_schemas.raster_size_x, cube_infos.raster_size_schemas.raster_size_y,
             cube_infos.raster_size_schemas.chunk_size_x, cube_infos.grs_schema.crs)
@@ -364,7 +364,8 @@ class CubeBusiness:
             raster_schema.raster_size_y = raster_size_y
             raster_schema.chunk_size_x = chunk_size_x
             raster_schema.chunk_size_y = chunk_size_y
-            raster_schema.save()
+            db.session.commit()
+            return 'Schema created with successfully', 201
 
         RasterSizeSchema(
             id=raster_schema_id,
@@ -385,20 +386,24 @@ class CubeBusiness:
         for cube in cubes:
             cube_formated = Serializer.serialize(cube)
             not_done = 0
+            sum_acts = 0
             if cube.composite_function_schema_id != 'IDENTITY':
                 parts = get_cube_parts(cube.id)
                 data_cube = '_'.join(parts[:3])
                 activities = self.services.get_activities_by_datacube(data_cube)
                 not_done = len(list(filter(lambda i: i['mystatus'] == 'NOTDONE', activities)))
+                sum_acts += len(activities)
 
             parts = get_cube_parts(cube.id)
             data_cube_identity = '_'.join(parts[:2])
             activities = self.services.get_activities_by_datacube(data_cube_identity)
             not_done_identity = len(list(filter(lambda i: i['mystatus'] == 'NOTDONE', activities)))
+            sum_acts += len(activities)
 
-            sum_not_done = not_done + not_done_identity
-            cube_formated['finished'] = sum_not_done == 0
-            list_cubes.append(cube_formated)
+            if sum_acts > 0:
+                sum_not_done = not_done + not_done_identity
+                cube_formated['finished'] = sum_not_done == 0
+                list_cubes.append(cube_formated)
 
         return list_cubes, 200
 
@@ -579,6 +584,15 @@ class CubeBusiness:
             total_items=paginator.total,
             total_pages=paginator.pages
         ), 200
+
+    def create_bucket(self, name, requester_pay):
+        service = self.services
+
+        status = service.create_bucket(name, requester_pay)
+        if not status:
+            return 'Bucket {} already exists.'.format(name), 409
+
+        return 'Bucket created with successfully', 201
 
     def list_timeline(self, schema: str, step: int, start: str = None, end: str = None):
         """Generate data cube periods using temporal composition schema.

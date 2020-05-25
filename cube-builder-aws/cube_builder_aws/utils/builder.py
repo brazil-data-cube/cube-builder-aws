@@ -169,12 +169,12 @@ def getMaskStats(mask):
 
 
 ############################
-def getMask(raster, dataset):
+def getMask(raster, satellite):
     # Output Cloud Mask codes
     # 0 - fill
     # 1 - clear data
     # 0 - cloud
-	if 'LC8SR' in dataset:
+	if satellite == 'LANDSAT':
 		# Input pixel_qa codes
 		fill = 1 				# warped images have 0 as fill area
 		terrain = 2					# 0000 0000 0000 0010
@@ -207,7 +207,7 @@ def getMask(raster, dataset):
 		# Code the output image rastercm as the output codes
 		rastercm = (2*notcleararea + cleararea).astype(numpy.uint16)  # .astype(numpy.uint8)
 
-	elif dataset == 'MOD13Q1' or dataset == 'MYD13Q1':
+	elif satellite == 'MODIS':
 		# MOD13Q1 Pixel Reliability !!!!!!!!!!!!!!!!!!!!
         # Note that 1 was added to this image in downloadModis because of warping
         # Rank/Key Summary QA 		Description
@@ -220,7 +220,7 @@ def getMask(raster, dataset):
 		lut = numpy.array([0, 1, 1, 2, 2], dtype=numpy.uint8)
 		rastercm = numpy.take(lut, raster+1).astype(numpy.uint8)
 
-	elif 'S2SR' in dataset:
+	elif satellite == 'SENTINEL-2':
 		# S2 sen2cor - The generated classification map is specified as follows:
         # Label Classification
         #  0		NO_DATA
@@ -239,7 +239,7 @@ def getMask(raster, dataset):
 		lut = numpy.array([0,0,2,2,1,1,1,2,2,2,1, 1],dtype=numpy.uint8)
 		rastercm = numpy.take(lut,raster).astype(numpy.uint8)
 
-	elif dataset == 'CB4_AWFI' or dataset == 'CB4_MUX':
+	elif 'CBERS' in satellite:
 		# Key Summary        QA Description
         #   0 Fill/No Data - Not Processed
         # 127 Good Data    - Use with confidence
@@ -383,3 +383,15 @@ def get_cube_parts(datacube: str) -> List[str]:
         raise ValueError('Invalid data cube name. "{}"'.format(datacube))
 
     return cube_fragments
+
+
+#############################
+def get_resolution_by_satellite(satellite):
+    resolutions = {
+        'CBERS-4-MUX': '20',
+        'CBERS-4-WFI': '64',
+        'MODIS': '231',
+        'LANDSAT': '30',
+        'SENTINEL-2': '10',
+    }
+    return resolutions[satellite]

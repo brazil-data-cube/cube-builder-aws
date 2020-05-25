@@ -353,6 +353,26 @@ class CubeServices:
     
     ## ----------------------
     # S3
+    def create_bucket(self, name, requester_pay=True):
+        try:
+            # Create a bucket with public access
+            response = self.S3client.create_bucket(
+                ACL='public-read',
+                Bucket=name
+            )
+            if requester_pay:
+                response = self.S3client.put_bucket_request_payment(
+                    Bucket=name,
+                    RequestPaymentConfiguration={
+                        'Payer': 'Requester'
+                    }
+                )
+            assert response['ResponseMetadata']['HTTPStatusCode'] == 200
+            return True
+        except ClientError:
+            return False
+        return True
+
     def s3_file_exists(self, bucket_name=None, key=''):
         try:
             if not bucket_name:

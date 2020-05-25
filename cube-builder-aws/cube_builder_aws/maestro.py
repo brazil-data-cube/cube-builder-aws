@@ -16,7 +16,7 @@ from bdc_db.models import CollectionTile, CollectionItem, Tile, \
     Collection, Asset, Band
 
 from .utils.builder import decode_periods, encode_key, \
-    getMaskStats, getMask, generateQLook, get_cube_id
+    getMaskStats, getMask, generateQLook, get_cube_id, get_resolution_by_satellite
 
 
 def orchestrate(datacube, cube_infos, tiles, start_date, end_date):
@@ -146,7 +146,7 @@ def next_step(services, activity):
 ###############################
 # MERGE
 ###############################
-def prepare_merge(self, datacube, datasets, bands, quicklook, resx, resy, nodata, numcol, numlin, block_size, crs):
+def prepare_merge(self, datacube, datasets, satellite, bands, quicklook, resx, resy, nodata, numcol, numlin, block_size, crs):
     services = self.services
 
     # Build the basics of the merge activity
@@ -155,6 +155,7 @@ def prepare_merge(self, datacube, datasets, bands, quicklook, resx, resy, nodata
     activity['datacube_orig_name'] = datacube
     activity['datacube'] = get_cube_id(datacube)
     activity['datasets'] = datasets
+    activity['satellite'] = satellite
     activity['bands'] = bands
     activity['quicklook'] = quicklook
     activity['resx'] = resx
@@ -228,19 +229,8 @@ def prepare_merge(self, datacube, datasets, bands, quicklook, resx, resy, nodata
                 for dataset in self.score['items'][tileid]['periods'][periodkey]['scenes'][band]:
                     activity['dataset'] = dataset
 
-                    # get resolution by dataset
-                    if 'LC8SR' in dataset:
-                        activity['resolution'] = '30'
-                    elif dataset == 'CBERS-4_AWFI':
-                        activity['resolution'] = '64'
-                    elif dataset == 'CBERS-4_MUX':
-                        activity['resolution'] = '20'
-                    elif 'S2SR' in dataset:
-                        activity['resolution'] = '10'
-                    elif dataset == 'MOD13Q1':
-                        activity['resolution'] = '231'
-                    elif dataset == 'MYD13Q1':
-                        activity['resolution'] = '231'
+                    # get resolution by satellite
+                    activity['resolution'] = get_resolution_by_satellite(activity['satellite'])
 
                     # For all dates
                     for date in self.score['items'][tileid]['periods'][periodkey]['scenes'][band][dataset]:
@@ -289,6 +279,7 @@ def merge_warped(self, activity):
     activity['mystart'] = mystart
     activity['mystatus'] = 'DONE'
     dataset = activity.get('dataset')
+    satellite = activity.get('satellite')
 
     # If ARDfile already exists, update activitiesTable and chech if this merge is the last one for the mosaic
     if services.s3_file_exists(bucket_name=bucket_name, key=key):
@@ -351,12 +342,12 @@ def merge_warped(self, activity):
                 
                 if src.profile['nodata'] is not None:
                     source_nodata = src.profile['nodata']
-                elif 'LC8SR' in dataset:
+                elif satellite == 'LANDSAT':
                     if band != 'quality':
                         source_nodata = nodata
                     else:
                         source_nodata = 1
-                elif 'CBERS' in dataset and band != 'quality':
+                elif 'CBERS' in satellite and band != 'quality':
                     source_nodata = nodata
 
                 kwargs.update({
@@ -393,7 +384,7 @@ def merge_warped(self, activity):
     efficacy = 0
     cloudratio = 100
     if activity['band'] == 'quality':
-        raster_merge, efficacy, cloudratio = getMask(raster_merge, dataset)
+        raster_merge, efficacy, cloudratio = getMask(raster_merge, satellite)
         template.update({'dtype': 'uint16'})
 
     # Save merged image on S3
@@ -433,7 +424,7 @@ def next_blend(services, mergeactivity):
     blendactivity = {}	
     blendactivity['action'] = 'blend'
     blendactivity['datacube'] = mergeactivity['datacube_orig_name']
-    for key in ['datasets','bands','quicklook','xmin','ymax','srs','tileid','start','end','dirname','nodata','bucket_name']:
+    for key in ['datasets','satellite', 'bands','quicklook','xmin','ymax','srs','tileid','start','end','dirname','nodata','bucket_name']:
         blendactivity[key] = mergeactivity[key]
     blendactivity['totalInstancesToBeDone'] = len(blendactivity['bands'])-1
     
@@ -530,6 +521,7 @@ def fill_blend(services, mergeactivity, blendactivity):
             blendactivity['scenes'][datedataset]['efficacy'] = item['efficacy']
             blendactivity['scenes'][datedataset]['date'] = activity['date']
             blendactivity['scenes'][datedataset]['dataset'] = activity['dataset']
+            blendactivity['scenes'][datedataset]['satellite'] = activity['satellite']
             blendactivity['scenes'][datedataset]['cloudratio'] = item['cloudratio']
             blendactivity['scenes'][datedataset]['raster_size_x'] = activity.get('raster_size_x')
             blendactivity['scenes'][datedataset]['raster_size_y'] = activity.get('raster_size_y')
@@ -732,7 +724,7 @@ def blend(self, activity):
 def next_publish(services, blendactivity):
     # Fill the publish activity from blend activity
     publishactivity = {}
-    for key in ['datacube','datasets','bands','quicklook','xmin','ymax','srs','tileid','start','end', \
+    for key in ['datacube','satellite','datasets','bands','quicklook','xmin','ymax','srs','tileid','start','end', \
         'dirname', 'cloudratio', 'raster_size_x', 'raster_size_y', 'chunk_size_x', 'chunk_size_y', 'bucket_name']:
         publishactivity[key] = blendactivity.get(key)
     publishactivity['action'] = 'publish'
@@ -759,6 +751,7 @@ def next_publish(services, blendactivity):
                 publishactivity['scenes'][datedataset]['ARDfiles']['quality'] = scene['ARDfiles']['quality']
                 publishactivity['scenes'][datedataset]['date'] = scene['date']
                 publishactivity['scenes'][datedataset]['dataset'] = scene['dataset']
+                publishactivity['scenes'][datedataset]['satellite'] = scene['satellite']
                 publishactivity['scenes'][datedataset]['cloudratio'] = scene['cloudratio']
                 publishactivity['scenes'][datedataset]['raster_size_x'] = scene.get('raster_size_x')
                 publishactivity['scenes'][datedataset]['raster_size_y'] = scene.get('raster_size_y')

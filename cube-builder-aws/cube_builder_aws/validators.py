@@ -21,9 +21,9 @@ def create():
         'temporal_schema': {"type": "string", "empty": False, "required": True},
         'bands_quicklook': {"type": "list", "empty": False, "required": True},
         'bands': {"type": "list", "empty": False, "required": True},
-        'license': {"type": "string", "empty": False, "required": True},
+        'license': {"type": "string", "empty": True, "required": False},
         'oauth_scope': {"type": "string", "empty": True, "required": False},
-        'description': {"type": "string", "empty": False, "required": True}
+        'description': {"type": "string", "empty": True, "required": False}
     }
     return item
 
@@ -32,8 +32,9 @@ def process():
         'url_stac': {"type": "string", "empty": False, "required": True},
         'bucket': {"type": "string", "empty": False, "required": True},
         'datacube': {"type": "string", "empty": False, "required": True},
-        'tiles': {"type": "string", "empty": False, "required": True},
+        'tiles': {"type": "list", "empty": False, "required": True},
         'collections': {"type": "string", "empty": False, "required": True},
+        'satellite': {"type": "string", "empty": False, "required": True},
         'start_date': {"type": "date", "coerce": to_date, "empty": False, "required": True},
         'end_date': {"type": "date", "coerce": to_date, "empty": True, "required": False}
     }
@@ -54,7 +55,7 @@ def grs():
 def raster_size():
     item = {
         'grs_schema': {"type": "string", "empty": False, "required": True},
-        'resolution': {"type": "string", "empty": False, "required": True},
+        'resolution': {"type": "integer", "empty": False, "required": True},
         'chunk_size_x': {"type": "float", "empty": False, "required": True},
         'chunk_size_y': {"type": "float", "empty": False, "required": True}
     }
@@ -101,12 +102,19 @@ def list_cube_items_form():
     )
 
 
+def bucket():
+    return dict(
+        name=dict(type='string', empty=False, required=False),
+        requester_pay=dict(type='boolean', empty=False, required=False, default=True)
+    )
+
+
 def list_timeline_form():
     return dict(
         start=dict(type='string', empty=False, required=False),
         end=dict(type='string', empty=False, required=False),
         schema=dict(type='string', empty=False, required=False),
-        step=dict(type='integer', empty=False, required=True, default=1, coerce=int),
+        step=dict(type='integer', empty=False, required=True, default=1, coerce=int)
     )
 
 
