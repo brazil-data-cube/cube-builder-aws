@@ -3,13 +3,14 @@ import rasterio
 from datetime import datetime
 from geoalchemy2 import func
 import sqlalchemy
+from sqlalchemy.sql import functions as db_functions
 
 from bdc_db.models.base_sql import BaseModel, db
-from bdc_db.models import Collection, Band, CollectionTile, CollectionItem, Tile, \
-    GrsSchema, RasterSizeSchema, TemporalCompositionSchema, CompositeFunctionSchema
+from bdc_db.models import Asset, Collection, Band, CollectionItem, Tile, \
+    GrsSchema, RasterSizeSchema, TemporalCompositionSchema, CompositeFunctionSchema, CollectionTile
 
 from .utils.serializer import Serializer
-from .utils.builder import get_date, get_cube_id, get_cube_parts
+from .utils.builder import get_date, get_cube_id, get_cube_parts, decode_periods
 from .maestro import orchestrate, prepare_merge, \
     merge_warped, solo, blend, publish
 from .services import CubeServices
@@ -412,6 +413,12 @@ class CubeBusiness:
             func.max(CollectionItem.composite_end).cast(sqlalchemy.String)
         ).filter(CollectionItem.collection_id == collection.id).first()
 
+        temporal_composition = dict(
+            schema=collection.temporal_composition_schema.temporal_schema,
+            unit=collection.temporal_composition_schema.temporal_composite_unit,
+            step=collection.temporal_composition_schema.temporal_composite_t
+        )
+
         bands = Band.query().filter(Band.collection_id == cube_name).all()
 
         if temporal is None:
@@ -420,6 +427,7 @@ class CubeBusiness:
         dump_collection = Serializer.serialize(collection)
         dump_collection['temporal'] = temporal
         dump_collection['bands'] = [Serializer.serialize(b) for b in bands]
+        dump_collection['temporal_composition'] = temporal_composition
 
         return dump_collection, 200
 
@@ -518,3 +526,91 @@ class CubeBusiness:
         result = validate_merges(items)
 
         return result, 200
+
+    def list_cube_items(self, data_cube: str, bbox: str = None, start: str = None,
+                        end: str = None, tiles: str = None, page: int = 1, per_page: int = 10):
+        cube = Collection.query().filter(Collection.id == data_cube).first()
+
+        if cube is None:
+            return 'Cube "{}" not found.'.format(data_cube), 404
+
+        where = [
+            CollectionItem.collection_id == data_cube,
+            Tile.grs_schema_id == cube.grs_schema_id,
+            Tile.id == CollectionItem.tile_id
+        ]
+
+        if start:
+            where.append(CollectionItem.composite_start >= start)
+
+        if end:
+            where.append(CollectionItem.composite_end <= end)
+
+        if tiles:
+            tiles = tiles.split(',') if isinstance(tiles, str) else tiles
+            where.append(
+                Tile.id.in_(tiles)
+            )
+
+        if bbox:
+            xmin, ymin, xmax, ymax = [float(coord) for coord in bbox.split(',')]
+            where.append(
+                func.ST_Intersects(
+                    func.ST_SetSRID(Tile.geom_wgs84, 4326), func.ST_MakeEnvelope(xmin, ymin, xmax, ymax, 4326)
+                )
+            )
+
+        paginator = db.session.query(CollectionItem).filter(
+            *where
+        ).order_by(CollectionItem.item_date.desc()).paginate(int(page), int(per_page), error_out=False)
+
+        result = []
+
+        for item in paginator.items:
+            obj = Serializer.serialize(item)
+            obj['quicklook'] = item.quicklook
+
+            result.append(obj)
+
+        return dict(
+            items=result,
+            page=page,
+            per_page=page,
+            total_items=paginator.total,
+            total_pages=paginator.pages
+        ), 200
+
+    def list_timeline(self, schema: str, step: int, start: str = None, end: str = None):
+        """Generate data cube periods using temporal composition schema.
+
+        Args:
+            schema: Temporal Schema (M, A)
+            step: Temporal Step
+            start: Start date offset. Default is '2016-01-01'.
+            end: End data offset. Default is '2019-12-31'
+
+        Returns:
+            List of periods between start/last date
+        """
+        start_date = start or '2016-01-01'
+        last_date = end or '2019-12-31'
+
+        total_periods = decode_periods(schema, start_date, last_date, int(step))
+
+        periods = set()
+
+        for period_array in total_periods.values():
+            for period in period_array:
+                date = period.split('_')[0]
+
+                periods.add(date)
+
+        return sorted(list(periods)), 200
+
+    def list_cube_items_tiles(self, cube: str):
+        tiles = db.session.query(CollectionItem.tile_id)\
+            .filter(CollectionItem.collection_id == cube)\
+            .group_by(CollectionItem.tile_id)\
+            .all()
+
+        return [t.tile_id for t in tiles], 200
