@@ -293,20 +293,23 @@ def merge_warped(self, activity):
         if services.s3_file_exists(bucket_name=bucket_name, key=key):
             efficacy = 0
             cloudratio = 100
-            if activity['band'] == 'quality':
+            try:
                 with rasterio.open('{}{}'.format(prefix, key)) as src:
-                    mask = src.read(1)
-                    cloudratio, efficacy = getMaskStats(mask)
+                    values = src.read(1)
+                    if activity['band'] == 'quality':
+                        cloudratio, efficacy = getMaskStats(values)
 
-            # Update entry in DynamoDB
-            activity['myend'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            activity['efficacy'] = '{}'.format(int(efficacy))
-            activity['cloudratio'] = '{}'.format(int(cloudratio))
-            services.put_item_kinesis(activity)
+                # Update entry in DynamoDB
+                activity['myend'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                activity['efficacy'] = '{}'.format(int(efficacy))
+                activity['cloudratio'] = '{}'.format(int(cloudratio))
+                services.put_item_kinesis(activity)
 
-            key = '{}activities/{}{}.json'.format(activity['dirname'], activity['dynamoKey'], activity['date'])
-            services.save_file_S3(bucket_name=bucket_name, key=key, activity=activity)
-            return
+                key = '{}activities/{}{}.json'.format(activity['dirname'], activity['dynamoKey'], activity['date'])
+                services.save_file_S3(bucket_name=bucket_name, key=key, activity=activity)
+                return
+            except:
+                _ = services.delete_file_S3(bucket_name=bucket_name, key=key)
 
         # Lets warp and merge
         resx = int(activity['resx'])

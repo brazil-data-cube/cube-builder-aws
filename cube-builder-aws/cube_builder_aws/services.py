@@ -390,6 +390,15 @@ class CubeServices:
             return False
         return True
 
+    def delete_file_S3(self, bucket_name=None, key=''):
+        try:
+            if not bucket_name:
+                bucket_name = self.bucket_name
+            self.S3client.delete_object(Bucket=bucket_name, Key=key)
+        except ClientError:
+            return False
+        return True
+
     def save_file_S3(self, bucket_name=None, key='', activity={}):
         if not bucket_name:
             bucket_name = self.bucket_name
