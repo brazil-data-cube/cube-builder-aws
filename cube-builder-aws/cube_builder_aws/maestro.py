@@ -885,67 +885,58 @@ def publish(self, activity):
             general_scene_id = '{}_{}_{}_{}'.format(
                 cube_id, activity['tileid'], activity['start'], activity['end'])
 
-            # delete collection_items and assets if exists
-            assets = Asset.query().filter(
-                Asset.collection_item_id == general_scene_id
-            ).all()
-            for asset in assets:
-                db.session().delete(asset)
-                db.session().commit()
+            with db.session.begin_nested():
+                # delete collection_items and assets if exists
+                Asset.query().filter(Asset.collection_item_id == general_scene_id).delete()
+                CollectionItem.query().filter(CollectionItem.id == general_scene_id).delete()
 
-            coll_item = CollectionItem.query().filter(
-                CollectionItem.id == general_scene_id
-            ).first()
-            if coll_item:
-                db.session().delete(coll_item)
-                db.session().commit()
-
-            # insert 'collection_item'
-            range_date = '{}_{}'.format(activity['start'], activity['end'])
-            png_name = '{}.png'.format(general_scene_id)
-            dirname_ql = activity['dirname'].replace(
-                '{}/'.format(warped_cube), '{}/'.format(cube_id))
-            s3_pngname = os.path.join(dirname_ql, range_date, png_name)
-            CollectionItem(
-                id=general_scene_id,
-                collection_id=cube_id,
-                grs_schema_id=cube.grs_schema_id,
-                tile_id=activity['tileid'],
-                item_date=activity['start'],
-                composite_start=activity['start'],
-                composite_end=activity['end'],
-                quicklook='{}/{}'.format(bucket_name, s3_pngname),
-                cloud_cover=activity['cloudratio'],
-                scene_type=function,
-                compressed_file=None
-            ).save()
-
-            # insert 'assets'
-            bands_by_cube = Band.query().filter(
-                Band.collection_id == cube_id
-            ).all()
-            for band in activity['bands']:
-                if band == 'quality': 
-                    continue
-                band_id = list(filter(lambda b: str(b.common_name) == band, bands_by_cube))
-                if not band_id:
-                    raise Exception('band {} not found!'.format(band))
-
-                Asset(
+                # insert 'collection_item'
+                range_date = '{}_{}'.format(activity['start'], activity['end'])
+                png_name = '{}.png'.format(general_scene_id)
+                dirname_ql = activity['dirname'].replace(
+                    '{}/'.format(warped_cube), '{}/'.format(cube_id))
+                s3_pngname = os.path.join(dirname_ql, range_date, png_name)
+                CollectionItem(
+                    id=general_scene_id,
                     collection_id=cube_id,
-                    band_id=band_id[0].id,
                     grs_schema_id=cube.grs_schema_id,
                     tile_id=activity['tileid'],
-                    collection_item_id=general_scene_id,
-                    url='{}/{}'.format(bucket_name, activity['blended'][band][function + 'file']),
-                    source=None,
-                    raster_size_x=activity['raster_size_x'],
-                    raster_size_y=activity['raster_size_y'],
-                    raster_size_t=1,
-                    chunk_size_x=activity['chunk_size_x'],
-                    chunk_size_y=activity['chunk_size_y'],
-                    chunk_size_t=1
-                ).save()
+                    item_date=activity['start'],
+                    composite_start=activity['start'],
+                    composite_end=activity['end'],
+                    quicklook='{}/{}'.format(bucket_name, s3_pngname),
+                    cloud_cover=activity['cloudratio'],
+                    scene_type=function,
+                    compressed_file=None
+                ).save(commit=False)
+
+                # insert 'assets'
+                bands_by_cube = Band.query().filter(
+                    Band.collection_id == cube_id
+                ).all()
+                for band in activity['bands']:
+                    if band == 'quality': 
+                        continue
+                    band_id = list(filter(lambda b: str(b.common_name) == band, bands_by_cube))
+                    if not band_id:
+                        raise Exception('band {} not found!'.format(band))
+
+                    Asset(
+                        collection_id=cube_id,
+                        band_id=band_id[0].id,
+                        grs_schema_id=cube.grs_schema_id,
+                        tile_id=activity['tileid'],
+                        collection_item_id=general_scene_id,
+                        url='{}/{}'.format(bucket_name, activity['blended'][band][function + 'file']),
+                        source=None,
+                        raster_size_x=activity['raster_size_x'],
+                        raster_size_y=activity['raster_size_y'],
+                        raster_size_t=1,
+                        chunk_size_x=activity['chunk_size_x'],
+                        chunk_size_y=activity['chunk_size_y'],
+                        chunk_size_t=1
+                    ).save(commit=False)
+            db.session.commit()
 
         # Register all ARD scenes - WARPED Collection
         for datedataset in activity['scenes']:
@@ -961,67 +952,58 @@ def publish(self, activity):
             general_scene_id = '{}_{}_{}'.format(
                 cube_id, activity['tileid'], str(scene['date'])[0:10])
 
-            # delete 'assets' and 'collection_items' if exists
-            assets = Asset.query().filter(
-                Asset.collection_item_id == general_scene_id
-            ).all()
-            for asset in assets:
-                db.session().delete(asset)
-                db.session().commit()
+            with db.session.begin_nested():
+                # delete 'assets' and 'collection_items' if exists
+                Asset.query().filter(Asset.collection_item_id == general_scene_id).delete()
+                CollectionItem.query().filter(CollectionItem.id == general_scene_id).delete()
 
-            coll_item = CollectionItem.query().filter(
-                CollectionItem.id == general_scene_id
-            ).first()
-            if coll_item:
-                db.session().delete(coll_item)
-                db.session().commit()
-
-            # insert 'collection_item'
-            pngname = '{}.png'.format(general_scene_id)
-            s3pngname = os.path.join(activity['dirname'], str(scene['date'])[0:10], pngname)
-            CollectionItem(
-                id=general_scene_id,
-                collection_id=cube_id,
-                grs_schema_id=cube.grs_schema_id,
-                tile_id=activity['tileid'],
-                item_date=scene['date'],
-                composite_start=scene['date'],
-                composite_end=scene['date'],
-                quicklook='{}/{}'.format(bucket_name, s3pngname),
-                cloud_cover=int(scene['cloudratio']),
-                scene_type='WARPED',
-                compressed_file=None
-            ).save()
-
-            # insert 'assets'
-            bands_by_cube = Band.query().filter(
-                Band.collection_id == cube_id
-            ).all()
-            for band in activity['bands']:
-                if band not in scene['ARDfiles']:
-                    raise Exception('publish - problem - band {} not in scene[files]'.format(band))
-                band_id = list(filter(lambda b: str(b.common_name) == band, bands_by_cube))
-                if not band_id:
-                    raise Exception('band {} not found!'.format(band))
-                
-                raster_size_x = scene['raster_size_x'] if scene.get('raster_size_x') else activity.get('raster_size_x')
-                raster_size_y = scene['raster_size_y'] if scene.get('raster_size_y') else activity.get('raster_size_y')
-                block_size = scene['block_size'] if scene.get('block_size') else activity.get('block_size')
-                Asset(
+                # insert 'collection_item'
+                pngname = '{}.png'.format(general_scene_id)
+                s3pngname = os.path.join(activity['dirname'], str(scene['date'])[0:10], pngname)
+                CollectionItem(
+                    id=general_scene_id,
                     collection_id=cube_id,
-                    band_id=band_id[0].id,
                     grs_schema_id=cube.grs_schema_id,
                     tile_id=activity['tileid'],
-                    collection_item_id=general_scene_id,
-                    url='{}/{}'.format(bucket_name, os.path.join(activity['dirname'], str(scene['date'])[0:10], scene['ARDfiles'][band])),
-                    source=None,
-                    raster_size_x=raster_size_x,
-                    raster_size_y=raster_size_y,
-                    raster_size_t=1,
-                    chunk_size_x=block_size,
-                    chunk_size_y=block_size,
-                    chunk_size_t=1
-                ).save()
+                    item_date=scene['date'],
+                    composite_start=scene['date'],
+                    composite_end=scene['date'],
+                    quicklook='{}/{}'.format(bucket_name, s3pngname),
+                    cloud_cover=int(scene['cloudratio']),
+                    scene_type='WARPED',
+                    compressed_file=None
+                ).save(commit=False)
+
+                # insert 'assets'
+                bands_by_cube = Band.query().filter(
+                    Band.collection_id == cube_id
+                ).all()
+                for band in activity['bands']:
+                    if band not in scene['ARDfiles']:
+                        raise Exception('publish - problem - band {} not in scene[files]'.format(band))
+                    band_id = list(filter(lambda b: str(b.common_name) == band, bands_by_cube))
+                    if not band_id:
+                        raise Exception('band {} not found!'.format(band))
+                    
+                    raster_size_x = scene['raster_size_x'] if scene.get('raster_size_x') else activity.get('raster_size_x')
+                    raster_size_y = scene['raster_size_y'] if scene.get('raster_size_y') else activity.get('raster_size_y')
+                    block_size = scene['block_size'] if scene.get('block_size') else activity.get('block_size')
+                    Asset(
+                        collection_id=cube_id,
+                        band_id=band_id[0].id,
+                        grs_schema_id=cube.grs_schema_id,
+                        tile_id=activity['tileid'],
+                        collection_item_id=general_scene_id,
+                        url='{}/{}'.format(bucket_name, os.path.join(activity['dirname'], str(scene['date'])[0:10], scene['ARDfiles'][band])),
+                        source=None,
+                        raster_size_x=raster_size_x,
+                        raster_size_y=raster_size_y,
+                        raster_size_t=1,
+                        chunk_size_x=block_size,
+                        chunk_size_y=block_size,
+                        chunk_size_t=1
+                    ).save(commit=False)
+            db.session.commit()
 
         # Update status and end time in DynamoDB
         activity['myend'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
