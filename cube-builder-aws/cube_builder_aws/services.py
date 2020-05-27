@@ -131,6 +131,14 @@ class CubeServices:
             Key=query
         )
 
+    def get_cube_meta(self, cube,):
+        filters = Key('data_cube').eq(cube) & Key('id').begins_with('merge')
+
+        return self.activitiesTable.scan(
+            FilterExpression=filters,
+            Limit=1
+        )
+
     def get_all_items(self, filters):
         response = self.activitiesTable.scan(
             FilterExpression=filters,

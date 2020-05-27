@@ -8,10 +8,10 @@
 
 import json
 import rasterio
+import sqlalchemy
 from datetime import datetime
 from geoalchemy2 import func
-import sqlalchemy
-from sqlalchemy.sql import functions as db_functions
+from werkzeug.exceptions import NotFound
 
 from bdc_db.models.base_sql import BaseModel, db
 from bdc_db.models import Asset, Collection, Band, CollectionItem, Tile, \
@@ -30,6 +30,16 @@ class CubeBusiness:
         self.score = {}
 
         self.services = CubeServices(url_stac, bucket)
+
+    @staticmethod
+    def get_cube_or_404(cube_name: str):
+        """Try to get a data cube from database, otherwise raises 404."""
+        cube = Collection.query().filter(Collection.id == cube_name, Collection.is_cube.is_(True)).first()
+
+        if cube is None:
+            raise NotFound('Cube "{}" not found.'.format(cube_name))
+
+        return cube
 
     def create_cube(self, params):
         params['composite_function_list'] = ['IDENTITY', 'STK', 'MED']
@@ -427,11 +437,7 @@ class CubeBusiness:
         return list_cubes, 200
 
     def get_cube(self, cube_name: str):
-        collection = Collection.query().filter(Collection.id == cube_name).first()
-
-        if collection is None or not collection.is_cube:
-            return 'Cube "{}" not found.'.format(cube_name), 404
-
+        collection = CubeBusiness.get_cube_or_404(cube_name)
         temporal = db.session.query(
             func.min(CollectionItem.composite_start).cast(sqlalchemy.String),
             func.max(CollectionItem.composite_end).cast(sqlalchemy.String)
@@ -456,10 +462,7 @@ class CubeBusiness:
         return dump_collection, 200
 
     def list_tiles_cube(self, cube_name: str):
-        cube = Collection.query().filter(Collection.id == cube_name).first()
-
-        if cube is None or not cube.is_cube:
-            return 'Cube "{}" not found.'.format(cube_name), 404
+        cube = CubeBusiness.get_cube_or_404(cube_name)
 
         features = db.session.query(
                 func.ST_AsGeoJSON(func.ST_SetSRID(Tile.geom_wgs84, 4326), 6, 3).cast(sqlalchemy.JSON)
@@ -553,10 +556,7 @@ class CubeBusiness:
 
     def list_cube_items(self, data_cube: str, bbox: str = None, start: str = None,
                         end: str = None, tiles: str = None, page: int = 1, per_page: int = 10):
-        cube = Collection.query().filter(Collection.id == data_cube).first()
-
-        if cube is None:
-            return 'Cube "{}" not found.'.format(data_cube), 404
+        cube = CubeBusiness.get_cube_or_404(data_cube)
 
         where = [
             CollectionItem.collection_id == data_cube,
@@ -641,9 +641,38 @@ class CubeBusiness:
         return sorted(list(periods)), 200
 
     def list_cube_items_tiles(self, cube: str):
+        """Retrieve the tiles which data cube is generated."""
         tiles = db.session.query(CollectionItem.tile_id)\
             .filter(CollectionItem.collection_id == cube)\
             .group_by(CollectionItem.tile_id)\
             .all()
 
         return [t.tile_id for t in tiles], 200
+
+    def get_cube_meta(self, cube_name: str):
+        """Retrieve the data cube metadata used to build a data cube items.
+
+        The metadata includes:
+        - STAC provider url
+        - Collection used to generate.
+
+        Note:
+            When there is no data cube item generated yet, returns 406.
+        """
+        cube = CubeBusiness.get_cube_or_404(cube_name)
+
+        identity_cube = '_'.join(cube.id.split('_')[:2])
+
+        item = self.services.get_cube_meta(identity_cube)
+
+        if item is None or len(item['Items']) == 0:
+            return 'There is no data cube activity', 406
+
+        activity = json.loads(item['Items'][0]['activity'])
+
+        return dict(
+            url_stac=activity['url_stac'],
+            collections=','.join(activity['datasets']),
+            bucket=activity['bucket_name'],
+            satellite=activity['satellite'],
+        ), 200
