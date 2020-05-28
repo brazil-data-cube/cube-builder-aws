@@ -50,20 +50,13 @@ provider:
         - sqs:ListQueues
       Resource:
         - Fn::GetAtt:
-          - cubeBuilderQueue
+          - cubeBuilderQueueMerge
           - Arn
-
-    - Effect: "Allow"
-      Action:
-        - sqs:SendMessage
-        - sqs:ReceiveMessage
-        - sqs:DeleteMessage
-        - sqs:GetQueueAttributes
-        - sqs:GetQueueUrl
-        - sqs:ListQueues
-      Resource:
         - Fn::GetAtt:
-          - cubeBuilderQueueDLQ
+          - cubeBuilderQueueBlend
+          - Arn
+        - Fn::GetAtt:
+          - cubeBuilderQueuePublish
           - Arn
           
     - Effect: "Allow"
@@ -83,13 +76,14 @@ package:
     - package-lock.json
     - cube_builder_aws/__pycache__/**
     - cube_builder_aws/utils/__pycache__/**
-    - cube_builder_aws/.env
+    - example.env
+    - .env
 
 functions:
   app:
     handler: wsgi.handler
     timeout: 720
-    memorySize: 512
+    memorySize: 256
     events:
       - http: 
           path: /
@@ -118,7 +112,19 @@ functions:
               - X-Amz-Security-Token
               - X-Amz-User-Agent
 
-  app_stream: 
+  app_merge: 
+    handler: app.continue_process
+    timeout: 360
+    memorySize: 1536
+    events:
+      - sqs:
+          batchSize: 1
+          arn:
+            Fn::GetAtt:
+              - cubeBuilderQueueMerge
+              - Arn
+
+  app_blend: 
     handler: app.continue_process
     timeout: 720
     memorySize: 3008
@@ -127,7 +133,19 @@ functions:
           batchSize: 1
           arn:
             Fn::GetAtt:
-              - cubeBuilderQueue
+              - cubeBuilderQueueBlend
+              - Arn
+
+  app_publish: 
+    handler: app.continue_process
+    timeout: 360
+    memorySize: 256
+    events:
+      - sqs:
+          batchSize: 1
+          arn:
+            Fn::GetAtt:
+              - cubeBuilderQueuePublish
               - Arn
       - stream:
           type: kinesis
@@ -139,23 +157,23 @@ functions:
 
 resources:
   Resources:
-    cubeBuilderQueue:
+    cubeBuilderQueueMerge:
       Type: AWS::SQS::Queue
       Properties:
-        QueueName: ${self:service}-${self:provider.stage}-queue
-        VisibilityTimeout: 720
-        RedrivePolicy:
-          deadLetterTargetArn:
-            Fn::GetAtt:
-              - cubeBuilderQueueDLQ
-              - Arn
-          maxReceiveCount: 1
+        QueueName: ${self:service}-${self:provider.stage}-queue-merge
+        VisibilityTimeout: 360
 
-    cubeBuilderQueueDLQ:
+    cubeBuilderQueueBlend:
       Type: AWS::SQS::Queue
       Properties:
-        VisibilityTimeout: 500
-        QueueName: ${self:service}-${self:provider.stage}-queueDLQ
+        QueueName: ${self:service}-${self:provider.stage}-queue-blend
+        VisibilityTimeout: 720
+
+    cubeBuilderQueuePublish:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:service}-${self:provider.stage}-queue-publish
+        VisibilityTimeout: 360
 
     cubeBuilderKinesis:
       Type: AWS::Kinesis::Stream
