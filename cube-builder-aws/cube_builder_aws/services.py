@@ -37,7 +37,7 @@ class CubeServices:
         self.Kinesisclient = session.client('kinesis')
         self.dynamoDBResource = session.resource('dynamodb')
 
-        self.QueueUrl = None
+        self.QueueUrl = {}
         self.bucket_name = bucket
 
         # ---------------------------
@@ -215,21 +215,22 @@ class CubeServices:
     ## ----------------------
     # SQS
     def get_queue_url(self):
-        if self.QueueUrl is not None:
-        	return True
-        response = self.SQSclient.list_queues()
-        q_exists = False
-        if 'QueueUrls' in response:
-        	for qurl in response['QueueUrls']:
-        		if qurl.find(QUEUE_NAME) != -1:
-        			if qurl.find('DLQ') == -1:
-        				q_exists = True
-        				self.QueueUrl = qurl
-        if not q_exists:
-        	self.create_queue(True)
+        for action in ['merge', 'blend', 'publish']:
+            queue = '{}-{}'.format(QUEUE_NAME, action)
+            if self.QueueUrl.get(action, None) is not None:
+                continue
+            response = self.SQSclient.list_queues()
+            q_exists = False
+            if 'QueueUrls' in response:
+                for qurl in response['QueueUrls']:
+                    if qurl.find(queue) != -1:
+                        q_exists = True
+                        self.QueueUrl[action] = qurl
+            if not q_exists:
+                self.create_queue(True, action)
         return True
 
-    def create_queue(self, create_mapping = False):
+    def create_queue(self, create_mapping = False, action = ''):
         """
         As the influx of messages to a queue increases, AWS Lambda automatically scales up 
         polling activity until the number of concurrent function executions reaches 1000, 
@@ -243,49 +244,29 @@ class CubeServices:
         65 lambdas will run concurrently in the second minute... so on
 		"""
         # Create a SQS for this experiment
+        queue = '{}-{}'.format(QUEUE_NAME, action)
         response = self.SQSclient.create_queue(
-            QueueName=QUEUE_NAME,
-        	Attributes={'VisibilityTimeout': '500'}
+            QueueName=queue,
+            Attributes={'VisibilityTimeout': '500'}
         )
-        self.QueueUrl = response['QueueUrl']
+        self.QueueUrl[action] = response['QueueUrl']
         # Get attributes
-        attributes = self.SQSclient.get_queue_attributes(QueueUrl=self.QueueUrl, AttributeNames=['All',])
+        attributes = self.SQSclient.get_queue_attributes(QueueUrl=self.QueueUrl[action], AttributeNames=['All',])
         QueueArn = attributes['Attributes']['QueueArn']
 
-        # Create a DLQ for this experiment
-        response = self.SQSclient.create_queue(QueueName=QUEUE_NAME+'DLQ',
-        	Attributes={
-        		'VisibilityTimeout': '500'
-        		}
-        	)
-        DLQueueUrl = response['QueueUrl']
-        # Get attributes of DLQ
-        attributes = self.SQSclient.get_queue_attributes(QueueUrl=DLQueueUrl, AttributeNames=['All',])
-        DLQueueArn = attributes['Attributes']['QueueArn']
-        redrive_policy = {
-        	'deadLetterTargetArn': DLQueueArn,
-        	'maxReceiveCount': '1'
-        }
-
-        # Configure queue to send messages to dead letter queue
-        self.SQSclient.set_queue_attributes(
-        	QueueUrl=self.QueueUrl,
-        	Attributes={
-        		'RedrivePolicy': json.dumps(redrive_policy)
-        	}
-        )
         # Create Source Mapping to Maestro from queue
         if create_mapping:
-        	response = self.LAMBDAclient.create_event_source_mapping(
-        		EventSourceArn=QueueArn,
-        		FunctionName=LAMBDA_FUNCTION_NAME,
-        		Enabled=True,
-        		BatchSize=1
-        	)
+            response = self.LAMBDAclient.create_event_source_mapping(
+                EventSourceArn=QueueArn,
+                FunctionName=LAMBDA_FUNCTION_NAME,
+                Enabled=True,
+                BatchSize=1
+            )
 
     def send_to_sqs(self, activity):
         if self.get_queue_url():
-            self.SQSclient.send_message(QueueUrl=self.QueueUrl, MessageBody=json.dumps(activity))
+            action = activity['action']
+            self.SQSclient.send_message(QueueUrl=self.QueueUrl[action], MessageBody=json.dumps(activity))
 
     
     ## ----------------------
