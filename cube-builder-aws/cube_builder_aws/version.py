@@ -1,4 +1,3 @@
-
 #
 # This file is part of Cube Builder AWS.
 # Copyright (C) 2019-2020 INPE.

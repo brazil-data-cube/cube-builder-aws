@@ -42,7 +42,7 @@ Create initial database structure to catalog the cubes to be generated
 Deploy Lambda service
 ---------------------
 
-** set environment with your information in *../../bdc-scripts/serverless.yml*
+** create file *.env* based on *example.env* in cube-builder-aws folder. Then set the environment variables with your information in *.env*
 
 then:
 

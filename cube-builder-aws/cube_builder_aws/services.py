@@ -1,3 +1,11 @@
+#
+# This file is part of Python Module for Cube Builder AWS.
+# Copyright (C) 2019-2020 INPE.
+#
+# Cube Builder AWS is free software; you can redistribute it and/or modify it
+# under the terms of the MIT License; see LICENSE file for more details.
+#
+
 import json
 import base64
 import boto3
@@ -378,6 +386,15 @@ class CubeServices:
             if not bucket_name:
                 bucket_name = self.bucket_name
             self.S3client.head_object(Bucket=bucket_name, Key=key)
+        except ClientError:
+            return False
+        return True
+
+    def delete_file_S3(self, bucket_name=None, key=''):
+        try:
+            if not bucket_name:
+                bucket_name = self.bucket_name
+            self.S3client.delete_object(Bucket=bucket_name, Key=key)
         except ClientError:
             return False
         return True

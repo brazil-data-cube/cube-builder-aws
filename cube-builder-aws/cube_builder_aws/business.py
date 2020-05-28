@@ -1,3 +1,11 @@
+#
+# This file is part of Python Module for Cube Builder AWS.
+# Copyright (C) 2019-2020 INPE.
+#
+# Cube Builder AWS is free software; you can redistribute it and/or modify it
+# under the terms of the MIT License; see LICENSE file for more details.
+#
+
 import json
 import rasterio
 from datetime import datetime
@@ -98,19 +106,24 @@ class CubeBusiness:
         # STATUS
         acts_datacube = []
         not_done_datacube = 0
+        error_datacube = 0
         if is_irregular:
             acts_datacube = self.services.get_activities_by_datacube(datacube)
             not_done_datacube = len(list(filter(lambda i: i['mystatus'] == 'NOTDONE', acts_datacube)))
+            error_datacube = len(list(filter(lambda i: i['mystatus'] == 'ERROR', acts_datacube)))
         acts_irregular = self.services.get_activities_by_datacube(irregular_datacube)
         not_done_irregular = len(list(filter(lambda i: i['mystatus'] == 'NOTDONE', acts_irregular)))
+        error_irregular = len(list(filter(lambda i: i['mystatus'] == 'ERROR', acts_irregular)))
 
         activities = acts_irregular + acts_datacube
+        errors = error_irregular + error_datacube
         not_done = not_done_irregular + not_done_datacube
-        if not_done:
+        if (not_done + errors):
             return dict(
                 finished = False,
-                done = len(activities) - not_done,
-                not_done = not_done
+                done = len(activities) - (not_done + errors),
+                not_done = not_done,
+                error = errors
             ), 200
 
         # TIME
@@ -387,22 +400,28 @@ class CubeBusiness:
             cube_formated = Serializer.serialize(cube)
             not_done = 0
             sum_acts = 0
+            error = 0
             if cube.composite_function_schema_id != 'IDENTITY':
                 parts = get_cube_parts(cube.id)
                 data_cube = '_'.join(parts[:3])
                 activities = self.services.get_activities_by_datacube(data_cube)
                 not_done = len(list(filter(lambda i: i['mystatus'] == 'NOTDONE', activities)))
+                error = len(list(filter(lambda i: i['mystatus'] == 'ERROR', activities)))
                 sum_acts += len(activities)
 
             parts = get_cube_parts(cube.id)
             data_cube_identity = '_'.join(parts[:2])
             activities = self.services.get_activities_by_datacube(data_cube_identity)
             not_done_identity = len(list(filter(lambda i: i['mystatus'] == 'NOTDONE', activities)))
+            error_identity = len(list(filter(lambda i: i['mystatus'] == 'ERROR', activities)))
             sum_acts += len(activities)
 
             if sum_acts > 0:
                 sum_not_done = not_done + not_done_identity
-                cube_formated['finished'] = sum_not_done == 0
+                sum_errors = error + error_identity
+                cube_formated['finished'] = (sum_not_done + sum_errors) == 0
+                cube_formated['status'] = 'Error' if sum_errors > 0 else 'Finished' \
+                    if cube_formated['finished'] == True else 'Pending'
                 list_cubes.append(cube_formated)
 
         return list_cubes, 200

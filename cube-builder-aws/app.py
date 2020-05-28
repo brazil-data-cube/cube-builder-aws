@@ -1,4 +1,10 @@
-# app.py
+#
+# This file is part of Python Module for Cube Builder AWS.
+# Copyright (C) 2019-2020 INPE.
+#
+# Cube Builder AWS is free software; you can redistribute it and/or modify it
+# under the terms of the MIT License; see LICENSE file for more details.
+#
 
 try:
     import unzip_requirements
@@ -162,7 +168,6 @@ def list_temporal_composition():
 
 @app.route("/create-temporal-composition", methods=["POST"])
 def craete_temporal_composition():
-    # validate params
     data, status = validate(request.json, 'temporal_composition')
     if status is False:
         return jsonify(json.dumps(data)), 400
