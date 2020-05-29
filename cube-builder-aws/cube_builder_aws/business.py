@@ -11,11 +11,11 @@ import rasterio
 import sqlalchemy
 from datetime import datetime
 from geoalchemy2 import func
-from werkzeug.exceptions import NotFound
+from werkzeug.exceptions import BadRequest, NotFound
 
 from bdc_db.models.base_sql import BaseModel, db
-from bdc_db.models import Asset, Collection, Band, CollectionItem, Tile, \
-    GrsSchema, RasterSizeSchema, TemporalCompositionSchema, CompositeFunctionSchema, CollectionTile
+from bdc_db.models import Collection, Band, CollectionItem, Tile, \
+    GrsSchema, RasterSizeSchema, TemporalCompositionSchema, CompositeFunctionSchema
 
 from .utils.serializer import Serializer
 from .utils.builder import get_date, get_cube_id, get_cube_parts, decode_periods
@@ -220,7 +220,7 @@ class CubeBusiness:
         prepare_merge(self, params['datacube'], params['collections'].split(','), params['satellite'], bands_list,
             cube_infos.bands_quicklook, bands[0].resolution_x, bands[0].resolution_y, bands[0].fill,
             cube_infos.raster_size_schemas.raster_size_x, cube_infos.raster_size_schemas.raster_size_y,
-            cube_infos.raster_size_schemas.chunk_size_x, cube_infos.grs_schema.crs)
+            cube_infos.raster_size_schemas.chunk_size_x, cube_infos.grs_schema.crs, params.get('force'))
 
         return 'Succesfully', 201
 
@@ -657,7 +657,7 @@ class CubeBusiness:
         - Collection used to generate.
 
         Note:
-            When there is no data cube item generated yet, returns 406.
+            When there is no data cube item generated yet, raises BadRequest.
         """
         cube = CubeBusiness.get_cube_or_404(cube_name)
 
@@ -666,7 +666,7 @@ class CubeBusiness:
         item = self.services.get_cube_meta(identity_cube)
 
         if item is None or len(item['Items']) == 0:
-            return 'There is no data cube activity', 406
+            raise BadRequest('There is no data cube activity')
 
         activity = json.loads(item['Items'][0]['activity'])
 
