@@ -19,6 +19,7 @@ from flask import Flask, request, jsonify
 from flask_redoc import Redoc
 from flask_cors import CORS
 from bdc_db import BDCDatabase
+from werkzeug.exceptions import HTTPException
 from config import USER, PASSWORD, HOST, DBNAME
 
 from cube_builder_aws.business import CubeBusiness
@@ -50,6 +51,17 @@ CORS(app)
 BDCDatabase(app)
 business = CubeBusiness()
 _ = Redoc('./spec/openapi.yaml', app)
+
+
+@app.errorhandler(HTTPException)
+def handle_exception(e):
+    """Return JSON instead of HTML for HTTP errors."""
+    # start with the correct headers and status code from the error
+    response = e.get_response()
+    # Set Error description as body data.
+    response.data = json.dumps(e.description)
+    response.content_type = "application/json"
+    return response
 
 
 #########################################
@@ -239,6 +251,14 @@ def list_timeline():
 @app.route('/cubes/<cube_id>/items/tiles', methods=['GET'])
 def list_items_tiles(cube_id):
     message, status_code = business.list_cube_items_tiles(cube_id)
+
+    return jsonify(message), status_code
+
+
+@app.route('/cubes/<cube_id>/meta', methods=['GET'])
+def get_cube_meta(cube_id: str):
+    """Retrieve the meta information of a data cube such STAC provider used, collection, etc."""
+    message, status_code = business.get_cube_meta(cube_id)
 
     return jsonify(message), status_code
 

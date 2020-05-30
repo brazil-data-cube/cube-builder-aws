@@ -131,6 +131,14 @@ class CubeServices:
             Key=query
         )
 
+    def get_cube_meta(self, cube,):
+        filters = Key('data_cube').eq(cube) & Key('id').begins_with('merge')
+
+        return self.activitiesTable.scan(
+            FilterExpression=filters,
+            Limit=1
+        )
+
     def get_all_items(self, filters):
         response = self.activitiesTable.scan(
             FilterExpression=filters,
@@ -202,6 +210,17 @@ class CubeServices:
             }
         )
         return True
+
+    def remove_control_by_key(self, key: str):
+        try:
+            self.activitiesControlTable.delete_item(
+                Key=dict(
+                    id=key
+                )
+            )
+            return True
+        except:
+            return False
 
     def update_control_table(self, Key, UpdateExpression, ExpressionAttributeNames, ExpressionAttributeValues, ReturnValues):
         return self.activitiesControlTable.update_item(
