@@ -403,3 +403,15 @@ def get_resolution_by_satellite(satellite):
         'SENTINEL-2': '10',
     }
     return resolutions[satellite]
+
+
+#############################
+def revisit_by_satellite(satellite):
+    resolutions = {
+        'CBERS-4-MUX': 26,
+        'CBERS-4-WFI': 6,
+        'MODIS': 2,
+        'LANDSAT': 16,
+        'SENTINEL-2': 5,
+    }
+    return resolutions[satellite]

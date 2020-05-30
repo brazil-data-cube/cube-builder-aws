@@ -18,11 +18,11 @@ from bdc_db.models import Asset, Collection, Band, CollectionItem, Tile, \
     GrsSchema, RasterSizeSchema, TemporalCompositionSchema, CompositeFunctionSchema, CollectionTile
 
 from .utils.serializer import Serializer
-from .utils.builder import get_date, get_cube_id, get_cube_parts, decode_periods
+from .utils.builder import get_date, get_cube_id, get_cube_parts, decode_periods, revisit_by_satellite
+from .utils.image import validate_merges
 from .maestro import orchestrate, prepare_merge, \
     merge_warped, solo, blend, publish
 from .services import CubeServices
-from .utils.image import validate_merges
 
 class CubeBusiness:
 
@@ -647,3 +647,68 @@ class CubeBusiness:
             .all()
 
         return [t.tile_id for t in tiles], 200
+
+    def estimate_cost(self, satellite, resolution, grid, start_date, last_date,
+                        quantity_bands, quantity_tiles, t_schema, t_step):
+        """ compute STORAGE :: """
+        tile = db.session() \
+            .query(
+                Tile, func.ST_Xmin(Tile.geom), func.ST_Xmax(Tile.geom),
+                func.ST_Ymin(Tile.geom), func.ST_Ymax(Tile.geom)
+            ).filter(
+                Tile.grs_schema_id == grid
+            ).first()
+        if not tile:
+            'GRS not found!', 404
+        raster_size_x = int(round((tile[2]-tile[1])/int(resolution),0))
+        raster_size_y = int(round((tile[4]-tile[3])/int(resolution),0))
+        size_tile = (((raster_size_x * raster_size_y) * 2) / 1024) / 1024
+        
+        periods = decode_periods(t_schema, start_date, last_date, int(t_step))
+        len_periods = len(periods.keys()) if t_schema == 'M' else sum([len(p) for p in periods.values()])
+
+        cube_size = size_tile * quantity_bands * quantity_tiles * len_periods
+        # with COG and compress = +50%
+        cube_size = (cube_size * 1.5) / 1024 # in GB
+        cubes_size = cube_size * 2
+        price_cubes_storage = cubes_size * 0.024 # in U$
+
+        # irregular cube
+        revisit_by_sat = revisit_by_satellite(satellite)
+        start_date = datetime.strptime(start_date, '%Y-%m-%d')
+        last_date = datetime.strptime(last_date, '%Y-%m-%d')
+        scenes = ((last_date - start_date).days) / revisit_by_sat
+        irregular_cube_size = (size_tile * quantity_bands * quantity_tiles * scenes) / 1024 # in GB
+        price_irregular_cube_storage = irregular_cube_size * 0.024 # in U$
+
+        """ compute PROCESSING :: """
+        quantity_merges = quantity_bands * quantity_tiles * scenes
+        quantity_blends = quantity_bands * quantity_tiles * len_periods
+        quantity_publish = len_periods
+
+        # cost
+        # merge (100 req (1536MB, 90000ms) => 0.23)
+        cost_merges = (quantity_merges / 100) * 0.23
+        # blend (100 req (3072MB, 240000ms) => 1.20)
+        cost_blends = (quantity_blends / 100) * 1.20
+        # publish (100 req (256MB, 60000ms) => 0.03)
+        cost_publish = (quantity_publish / 100) * 0.03
+
+        return dict(
+            storage=dict(
+                size_cubes=int(cubes_size),
+                price_cubes=int(price_cubes_storage),
+                size_irregular_cube=int(irregular_cube_size),
+                price_irregular_cube=int(price_irregular_cube_storage)
+            ),
+            build=dict(
+                quantity_merges=int(quantity_merges),
+                quantity_blends=int(quantity_blends),
+                quantity_publish=int(quantity_publish),
+                collection_items_irregular=int((quantity_tiles * scenes)),
+                collection_items=int((quantity_tiles * len_periods) * 2),
+                price_merges=int(cost_merges),
+                price_blends=int(cost_blends),
+                price_publish=int(cost_publish)
+            )
+        ), 200
