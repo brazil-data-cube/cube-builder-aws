@@ -127,6 +127,20 @@ def list_timeline_form():
     )
 
 
+def estimate_cost():
+    return dict(
+        start_date=dict(type='date', empty=False, required=True, coerce=to_date),
+        last_date=dict(type='date', empty=False, required=True, coerce=to_date),
+        satellite=dict(type='string', empty=False, required=True),
+        resolution=dict(type='integer', empty=False, required=True),
+        grid=dict(type='string', empty=False, required=True),
+        quantity_bands=dict(type='integer', empty=False, required=True),
+        quantity_tiles=dict(type='integer', empty=False, required=True),
+        t_schema=dict(type='string', empty=False, required=False),
+        t_step=dict(type='integer', empty=False, required=True, default=1, coerce=int)
+    )
+
+
 def validate(data, type_schema):
     schema = eval('{}()'.format(type_schema))
 

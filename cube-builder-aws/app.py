@@ -263,6 +263,17 @@ def get_cube_meta(cube_id: str):
     return jsonify(message), status_code
 
 
+@app.route('/estimate-cost',methods=["POST"])
+def estimate_cost():
+    # validate params
+    data, status = validate(request.json, 'estimate_cost')
+    if status is False:
+        return jsonify(json.dumps(data)), 400
+
+    message, status = business.estimate_cost(**data)
+    return jsonify(message), status
+
+
 #########################################
 # REQUEST -> from SQS trigger or Kinesis
 #########################################
