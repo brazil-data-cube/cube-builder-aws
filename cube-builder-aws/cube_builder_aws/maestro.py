@@ -13,7 +13,6 @@ import rasterio
 
 from datetime import datetime
 from geoalchemy2 import func
-from sqlalchemy import or_ 
 from rasterio.transform import Affine 
 from rasterio.warp import reproject, Resampling, transform
 from rasterio.merge import merge 
@@ -154,7 +153,8 @@ def next_step(services, activity):
 ###############################
 # MERGE
 ###############################
-def prepare_merge(self, datacube, datasets, satellite, bands, quicklook, resx, resy, nodata, numcol, numlin, block_size, crs):
+def prepare_merge(self, datacube, datasets, satellite, bands, quicklook, resx,
+                  resy, nodata, numcol, numlin, block_size, crs, force=False):
     services = self.services
 
     # Build the basics of the merge activity
@@ -195,10 +195,19 @@ def prepare_merge(self, datacube, datasets, satellite, bands, quicklook, resx, r
             activity['end'] = self.score['items'][tileid]['periods'][periodkey]['composite_end']
             activity['dirname'] = self.score['items'][tileid]['periods'][periodkey]['dirname']
 
+            # When force is True, we must rebuild the merge
+            if force:
+                merge_control_key = encode_key(activity, ['action', 'datacube', 'tileid', 'start', 'end'])
+                blend_control_key = 'blend{}_1M{}'.format(activity['datacube'],
+                                                          encode_key(activity, ['tileid', 'start', 'end']))
+                self.services.remove_control_by_key(merge_control_key)
+                self.services.remove_control_by_key(blend_control_key)
+
             # Search all images
             self.score['items'][tileid]['periods'][periodkey]['scenes'] = services.search_STAC(activity)
 
-            # Evaluate the number of dates, the number of scenes for each date and the total amount merges that will be done
+            # Evaluate the number of dates, the number of scenes for each date and
+            # the total amount merges that will be done
             number_of_datasets_dates = 0
             band = activity['bands'][0]
             list_dates = []
@@ -261,20 +270,23 @@ def prepare_merge(self, datacube, datasets, satellite, bands, quicklook, resx, r
                         # Check if we have already done and no need to do it again
                         response = services.get_activity_item({'id': activity['dynamoKey'], 'sk': activity['sk'] })
                         if 'Item' in response:
-                            if response['Item']['mystatus'] == 'DONE' \
-                                and services.s3_file_exists(key=activity['ARDfile']):
+                            if not force and response['Item']['mystatus'] == 'DONE' \
+                                    and services.s3_file_exists(key=activity['ARDfile']):
                                 next_step(services, activity)
                                 continue
-                        else:
-                            activity['mystatus'] = 'NOTDONE'
-                            activity['mystart'] = 'SSSS-SS-SS'
-                            activity['myend'] = 'EEEE-EE-EE'
-                            activity['efficacy'] = '0'
-                            activity['cloudratio'] = '100'
 
-                            # Send to queue to activate merge lambda
-                            services.put_item_kinesis(activity)
-                            services.send_to_sqs(activity)
+                        # Re-schedule a merge-warped
+                        activity['mystatus'] = 'NOTDONE'
+                        activity['mystart'] = 'SSSS-SS-SS'
+                        activity['myend'] = 'EEEE-EE-EE'
+                        activity['efficacy'] = '0'
+                        activity['cloudratio'] = '100'
+                        activity['force'] = force
+
+                        # Send to queue to activate merge lambda
+                        services.put_item_kinesis(activity)
+                        services.send_to_sqs(activity)
+
 
 def merge_warped(self, activity):
     print('==> start MERGE')
@@ -288,9 +300,12 @@ def merge_warped(self, activity):
     activity['mystatus'] = 'DONE'
     satellite = activity.get('satellite')
 
+    # Flag to force merge generation without cache
+    force = activity.pop('force', False)
+
     try:
         # If ARDfile already exists, update activitiesTable and chech if this merge is the last one for the mosaic
-        if services.s3_file_exists(bucket_name=bucket_name, key=key):
+        if not force and services.s3_file_exists(bucket_name=bucket_name, key=key):
             efficacy = 0
             cloudratio = 100
             try:

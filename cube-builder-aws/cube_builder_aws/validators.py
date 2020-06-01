@@ -44,7 +44,8 @@ def process():
         'collections': {"type": "string", "empty": False, "required": True},
         'satellite': {"type": "string", "empty": False, "required": True},
         'start_date': {"type": "date", "coerce": to_date, "empty": False, "required": True},
-        'end_date': {"type": "date", "coerce": to_date, "empty": True, "required": False}
+        'end_date': {"type": "date", "coerce": to_date, "empty": True, "required": False},
+        'force': {'type': 'boolean', 'required': False, 'default': False}
     }
     return item
 
