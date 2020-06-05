@@ -136,7 +136,6 @@ class CubeServices:
 
         return self.activitiesTable.scan(
             FilterExpression=filters,
-            Limit=1
         )
 
     def get_all_items(self, filters):
