@@ -13,15 +13,16 @@ import rasterio
 
 from datetime import datetime
 from geoalchemy2 import func
-from rasterio.transform import Affine 
+from rasterio.transform import Affine
 from rasterio.warp import reproject, Resampling, transform
-from rasterio.merge import merge 
+from rasterio.merge import merge
 from rasterio.io import MemoryFile
 
 from bdc_db.models.base_sql import BaseModel, db
 from bdc_db.models import CollectionTile, CollectionItem, Tile, \
     Collection, Asset, Band
 
+from .logger import logger
 from .utils.builder import decode_periods, encode_key, \
     getMaskStats, getMask, generateQLook, get_cube_id, get_resolution_by_satellite
 
@@ -148,7 +149,7 @@ def next_step(services, activity):
                 next_blend(services, activity)
             elif activity['action'] == 'blend':
                 next_publish(services, activity)
-          
+
 
 ###############################
 # MERGE
@@ -176,13 +177,10 @@ def prepare_merge(self, datacube, datasets, satellite, bands, quicklook, resx,
     activity['bucket_name'] = services.bucket_name
     activity['url_stac'] = services.url_stac
 
+    logger.info('prepare merge - Score {} items'.format(self.score['items']))
+
     # For all tiles
     for tileid in self.score['items']:
-        if len(self.score['items']) != 1:
-            self.params['tileid'] = tileid
-            services.send_to_sqs(self.params)
-            continue
-
         activity['tileid'] = tileid
         # GET bounding box - tile ID
         activity['bbox'] = self.score['items'][tileid]['bbox']
@@ -289,7 +287,7 @@ def prepare_merge(self, datacube, datasets, satellite, bands, quicklook, resx,
 
 
 def merge_warped(self, activity):
-    print('==> start MERGE')
+    logger.info('==> start MERGE')
     services = self.services
     key = activity['ARDfile']
     bucket_name = activity['bucket_name']
@@ -335,7 +333,7 @@ def merge_warped(self, activity):
         numlin = int(activity['numlin'])
         block_size = int(activity['block_size'])
         nodata = int(activity['nodata']) if 'nodata' in activity else -9999
-        transform = Affine(resx, 0, xmin, 0, -resy, ymax) 
+        transform = Affine(resx, 0, xmin, 0, -resy, ymax)
 
         # Quality band is resampled by nearest, other are bilinear
         band = activity['band']
@@ -346,7 +344,7 @@ def merge_warped(self, activity):
             raster_merge = numpy.zeros((numlin, numcol,), dtype=numpy.uint16)
             raster_mask = numpy.ones((numlin, numcol,), dtype=numpy.uint16)
             nodata = 0
-        else: 
+        else:
             resampling = Resampling.bilinear
             raster = numpy.zeros((numlin, numcol,), dtype=numpy.int16)
             raster_merge = numpy.full((numlin, numcol,), fill_value=nodata, dtype=numpy.int16)
@@ -355,17 +353,17 @@ def merge_warped(self, activity):
         template = None
         for url in activity['links']:
             with rasterio.Env(CPL_CURL_VERBOSE=False):
-                with rasterio.open(url) as src: 
-                    kwargs = src.meta.copy() 
-                    kwargs.update({ 
-                        'crs': activity['srs'], 
-                        'transform': transform, 
-                        'width': numcol, 
+                with rasterio.open(url) as src:
+                    kwargs = src.meta.copy()
+                    kwargs.update({
+                        'crs': activity['srs'],
+                        'transform': transform,
+                        'width': numcol,
                         'height': numlin
                     })
 
                     source_nodata = 0
-                    
+
                     if src.profile['nodata'] is not None:
                         source_nodata = src.profile['nodata']
                     elif satellite == 'LANDSAT':
@@ -380,17 +378,17 @@ def merge_warped(self, activity):
                         'nodata': source_nodata
                     })
 
-                    with MemoryFile() as memfile: 
-                        with memfile.open(**kwargs) as dst: 
+                    with MemoryFile() as memfile:
+                        with memfile.open(**kwargs) as dst:
                             reproject(
-                                source=rasterio.band(src, 1), 
-                                destination=raster, 
-                                src_transform=src.transform, 
-                                src_crs=src.crs, 
-                                dst_transform=transform, 
-                                dst_crs=activity['srs'], 
-                                src_nodata=source_nodata, 
-                                dst_nodata=nodata, 
+                                source=rasterio.band(src, 1),
+                                destination=raster,
+                                src_transform=src.transform,
+                                src_crs=src.crs,
+                                dst_transform=transform,
+                                dst_crs=activity['srs'],
+                                src_nodata=source_nodata,
+                                dst_nodata=nodata,
                                 resampling=resampling)
 
                             if band != 'quality':
@@ -421,7 +419,7 @@ def merge_warped(self, activity):
                 'interleave': 'pixel',
                 'blockxsize': block_size,
                 'blockysize': block_size
-            })  
+            })
             with memfile.open(**template) as riodataset:
                 riodataset.nodata = nodata
                 riodataset.write_band(1, raster_merge)
@@ -457,13 +455,13 @@ def merge_warped(self, activity):
 ###############################
 def next_blend(services, mergeactivity):
     # Fill the blendactivity from mergeactivity
-    blendactivity = {}	
+    blendactivity = {}
     blendactivity['action'] = 'blend'
     blendactivity['datacube'] = mergeactivity['datacube_orig_name']
     for key in ['datasets','satellite', 'bands','quicklook','xmin','ymax','srs','tileid','start','end','dirname','nodata','bucket_name']:
         blendactivity[key] = mergeactivity[key]
     blendactivity['totalInstancesToBeDone'] = len(blendactivity['bands'])-1
-    
+
     # Create  dynamoKey for the blendactivity record
     blendactivity['dynamoKey'] = encode_key(blendactivity, ['action','datacube','tileid','start','end'])
 
@@ -492,7 +490,7 @@ def next_blend(services, mergeactivity):
         blendactivity['mylaunch'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         services.put_item_kinesis(blendactivity)
         return False
-        
+
     # Fill the blendactivity fields with data for the other bands from the DynamoDB merge records (quality band is not a blend entry in DynamoDB)
     for band in blendactivity['bands']:
         if band == 'quality': continue
@@ -521,13 +519,13 @@ def next_blend(services, mergeactivity):
         blendactivity['efficacy'] = '0'
         blendactivity['cloudratio'] = '100'
         blendactivity['mylaunch'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        
+
         # Create an entry in dynamoDB for each band blend activity (quality band is not an entry in DynamoDB)
         key = '{}activities/{}.json'.format(blendactivity['dirname'], blendactivity['dynamoKey'])
         services.save_file_S3(bucket_name=blendactivity['bucket_name'], key=key, activity=blendactivity)
         services.put_item_kinesis(blendactivity)
         services.send_to_sqs(blendactivity)
-        
+
         # Leave room for next band in blendactivity
         for datedataset in blendactivity['scenes']:
             if band in blendactivity['scenes'][datedataset]['ARDfiles']:
@@ -539,7 +537,7 @@ def fill_blend(services, mergeactivity, blendactivity):
     band = blendactivity['band']
     blendactivity['instancesToBeDone'] = 0
 
-    # Query dynamoDB to get all merged 
+    # Query dynamoDB to get all merged
     items = []
     for date in mergeactivity['list_dates']:
         mergeactivity['date_formated'] = date
@@ -569,7 +567,7 @@ def fill_blend(services, mergeactivity, blendactivity):
             blendactivity['scenes'][datedataset]['ARDfiles'] = {}
         basename = os.path.basename(activity['ARDfile'])
         blendactivity['scenes'][datedataset]['ARDfiles'][band] = basename
-    
+
     blendactivity['instancesToBeDone'] += len(items)
     if band != 'quality':
         for function in ['MED', 'STK']:
@@ -579,7 +577,7 @@ def fill_blend(services, mergeactivity, blendactivity):
     return True
 
 def blend(self, activity):
-    print('==> start BLEND')
+    logger.info('==> start BLEND')
     services = self.services
 
     activity['mystart'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -669,7 +667,7 @@ def blend(self, activity):
                 services.put_item_kinesis(activity)
                 return
 
-        # Build the raster to store the output images.		
+        # Build the raster to store the output images.
         width = profile['width']
         height = profile['height']
 
@@ -686,12 +684,12 @@ def blend(self, activity):
         with MemoryFile() as medianfile:
             with medianfile.open(**profile) as mediandataset:
                 for _, window in tilelist:
-                    # Build the stack to store all images as a masked array. At this stage the array will contain the masked data	
+                    # Build the stack to store all images as a masked array. At this stage the array will contain the masked data
                     stackMA = numpy.ma.zeros((numscenes, window.height, window.width), dtype=numpy.int16)
 
                     notdonemask = numpy.ones(shape=(window.height,window.width),dtype=numpy.bool_)
 
-                    # For all pair (quality,band) scenes 
+                    # For all pair (quality,band) scenes
                     for order in range(numscenes):
                         ssrc = bandlist[order]
                         msrc = masklist[order]
@@ -708,7 +706,7 @@ def blend(self, activity):
                         # Evaluate the STACK image
                         # Pixels that have been already been filled by previous rasters will be masked in the current raster
                         mask_raster[window.row_off : window.row_off+window.height, window.col_off : window.col_off+window.width] *= bmask.astype(profile['dtype'])
-                        
+
                         raster[raster == nodata] = 0
                         todomask = notdonemask * numpy.invert(bmask)
                         notdonemask = notdonemask * bmask
@@ -790,7 +788,7 @@ def next_publish(services, blendactivity):
         publishactivity[key] = blendactivity.get(key)
     publishactivity['action'] = 'publish'
 
-    # Create  dynamoKey for the publish activity 
+    # Create  dynamoKey for the publish activity
     publishactivity['dynamoKey'] = encode_key(publishactivity, ['action','datacube','tileid','start','end'])
 
     # Get information from blended bands
@@ -833,13 +831,13 @@ def next_publish(services, blendactivity):
     publishactivity['cloudratio'] = '100'
     publishactivity['instancesToBeDone'] = len(publishactivity['bands']) - 1
     publishactivity['totalInstancesToBeDone'] = 1
-    
+
     # Launch activity
     services.put_item_kinesis(publishactivity)
     services.send_to_sqs(publishactivity)
 
 def publish(self, activity):
-    print('==> start PUBLISH')
+    logger.info('==> start PUBLISH')
     services = self.services
     bucket_name = activity['bucket_name']
     prefix = services.get_s3_prefix(bucket_name)
@@ -849,7 +847,7 @@ def publish(self, activity):
     try:
         warped_cube = '_'.join(activity['datacube'].split('_')[0:2])
 
-        # Generate quicklooks for CUBES (MEDIAN, STACK ...) 
+        # Generate quicklooks for CUBES (MEDIAN, STACK ...)
         qlbands = activity['quicklook'].split(',')
         for function in ['MED', 'STK']:
             cube_id = get_cube_id(activity['datacube'], function)
@@ -930,7 +928,7 @@ def publish(self, activity):
                     Band.collection_id == cube_id
                 ).all()
                 for band in activity['bands']:
-                    if band == 'quality': 
+                    if band == 'quality':
                         continue
                     band_id = list(filter(lambda b: str(b.common_name) == band, bands_by_cube))
                     if not band_id:
@@ -999,7 +997,7 @@ def publish(self, activity):
                     band_id = list(filter(lambda b: str(b.common_name) == band, bands_by_cube))
                     if not band_id:
                         raise Exception('band {} not found!'.format(band))
-                    
+
                     raster_size_x = scene['raster_size_x'] if scene.get('raster_size_x') else activity.get('raster_size_x')
                     raster_size_y = scene['raster_size_y'] if scene.get('raster_size_y') else activity.get('raster_size_y')
                     block_size = scene['block_size'] if scene.get('block_size') else activity.get('block_size')
