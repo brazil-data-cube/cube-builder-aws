@@ -25,7 +25,7 @@ from config import USER, PASSWORD, HOST, DBNAME
 from cube_builder_aws.business import CubeBusiness
 from cube_builder_aws.validators import validate
 from cube_builder_aws.version import __version__
-
+from cube_builder_aws.logger import logger
 
 class ImprovedJSONEncoder(json.JSONEncoder):
     def default(self, o):
@@ -57,11 +57,21 @@ _ = Redoc('./spec/openapi.yaml', app)
 def handle_exception(e):
     """Return JSON instead of HTML for HTTP errors."""
     # start with the correct headers and status code from the error
+    logger.error(str(e), exc_info=True)
     response = e.get_response()
     # Set Error description as body data.
     response.data = json.dumps(e.description)
     response.content_type = "application/json"
     return response
+
+
+@app.errorhandler(Exception)
+def handle_exception(e):
+    """Return JSON instead of HTML for HTTP errors."""
+    # start with the correct headers and status code from the error
+    logger.error(str(e), exc_info=True)
+
+    return jsonify(str(e)), 500
 
 
 #########################################

@@ -17,6 +17,7 @@ from bdc_db.models.base_sql import BaseModel, db
 from bdc_db.models import Collection, Band, CollectionItem, Tile, \
     GrsSchema, RasterSizeSchema, TemporalCompositionSchema, CompositeFunctionSchema
 
+from .logger import logger
 from .utils.serializer import Serializer
 from .utils.builder import get_date, get_cube_id, get_cube_parts, decode_periods, revisit_by_satellite
 from .utils.image import validate_merges
@@ -267,7 +268,7 @@ class CubeBusiness:
         numtilesy = int(180./degreesy)
         hBase = numtilesx/2
         vBase = numtilesy/2
-        print('genwrs - hBase {} vBase {}'.format(hBase,vBase))
+        logger.info('genwrs - hBase {} vBase {}'.format(hBase,vBase))
 
         # Tile size in meters (dx,dy) at center of system (argsmeridian,0.)
         src_crs = '+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs'
@@ -520,7 +521,7 @@ class CubeBusiness:
         ).save()
 
         return 'Temporal Composition Schema created with successfully', 201
-        
+
     def list_composite_functions(self):
         """Retrieve a list of available Composite Functions on Brazil Data Cube database."""
         schemas = CompositeFunctionSchema.query().all()
@@ -676,7 +677,7 @@ class CubeBusiness:
             bucket=activity['bucket_name'],
             satellite=activity['satellite'],
         ), 200
-        
+
     def estimate_cost(self, satellite, resolution, grid, start_date, last_date,
                         quantity_bands, quantity_tiles, t_schema, t_step):
         """ compute STORAGE :: """
@@ -692,7 +693,7 @@ class CubeBusiness:
         raster_size_x = int(round((tile[2]-tile[1])/int(resolution),0))
         raster_size_y = int(round((tile[4]-tile[3])/int(resolution),0))
         size_tile = (((raster_size_x * raster_size_y) * 2) / 1024) / 1024
-        
+
         periods = decode_periods(t_schema, start_date, last_date, int(t_step))
         len_periods = len(periods.keys()) if t_schema == 'M' else sum([len(p) for p in periods.values()])
 
