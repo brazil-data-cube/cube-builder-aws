@@ -13,9 +13,9 @@ import rasterio
 
 from datetime import datetime
 from geoalchemy2 import func
-from rasterio.transform import Affine
+from rasterio.transform import Affine 
 from rasterio.warp import reproject, Resampling, transform
-from rasterio.merge import merge
+from rasterio.merge import merge 
 from rasterio.io import MemoryFile
 
 from bdc_db.models.base_sql import BaseModel, db
@@ -454,7 +454,7 @@ def merge_warped(self, activity):
 # BLEND
 ###############################
 def next_blend(services, mergeactivity):
-    # Fill the blendactivity from mergeactivity
+    # Fill the blend activity from merge activity
     blendactivity = {}
     blendactivity['action'] = 'blend'
     blendactivity['datacube'] = mergeactivity['datacube_orig_name']
@@ -493,7 +493,8 @@ def next_blend(services, mergeactivity):
 
     # Fill the blendactivity fields with data for the other bands from the DynamoDB merge records (quality band is not a blend entry in DynamoDB)
     for band in blendactivity['bands']:
-        if band == 'quality': continue
+        if band == 'quality' or not blendactivity['datacube'].endswith('STK'):
+            continue
 
         mergeactivity['band'] = band
         blendactivity['band'] = band
@@ -606,8 +607,7 @@ def blend(self, activity):
             prefix + activity['dirname'],
             activity['scenes'][keys[0]]['date'],
             activity['scenes'][keys[0]]['ARDfiles'][band])
-        tilelist = []
-        profile = None
+
         with rasterio.open(filename) as src:
             profile = src.profile
             profile.update({
@@ -684,7 +684,8 @@ def blend(self, activity):
         with MemoryFile() as medianfile:
             with medianfile.open(**profile) as mediandataset:
                 for _, window in tilelist:
-                    # Build the stack to store all images as a masked array. At this stage the array will contain the masked data
+                    # Build the stack to store all images as a masked array.
+                    # At this stage the array will contain the masked data
                     stackMA = numpy.ma.zeros((numscenes, window.height, window.width), dtype=numpy.int16)
 
                     notdonemask = numpy.ones(shape=(window.height,window.width),dtype=numpy.bool_)
@@ -704,7 +705,8 @@ def blend(self, activity):
                         stackMA[order] = numpy.ma.masked_where(bmask, raster)
 
                         # Evaluate the STACK image
-                        # Pixels that have been already been filled by previous rasters will be masked in the current raster
+                        # Pixels that have been already been filled by previous
+                        # rasters will be masked in the current raster
                         mask_raster[window.row_off : window.row_off+window.height, window.col_off : window.col_off+window.width] *= bmask.astype(profile['dtype'])
 
                         raster[raster == nodata] = 0
@@ -928,7 +930,7 @@ def publish(self, activity):
                     Band.collection_id == cube_id
                 ).all()
                 for band in activity['bands']:
-                    if band == 'quality':
+                    if band == 'quality' and function != 'STK':
                         continue
                     band_id = list(filter(lambda b: str(b.common_name) == band, bands_by_cube))
                     if not band_id:
