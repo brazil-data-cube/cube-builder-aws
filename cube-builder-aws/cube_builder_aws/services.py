@@ -348,8 +348,8 @@ class CubeServices:
                         scene['date'] = date
                         scene['band'] = band
                         scene['link'] = band_obj['href']
-                        if dataset == 'MOD13Q1' and band == 'quality':
-                            scene['link'] = scene['link'].replace('quality','reliability')
+                        if dataset == 'MOD13Q1' and band == activity['quality_band']:
+                            scene['link'] = scene['link'].replace(activity['quality_band'],'reliability')
 
                         # TODO: verify if scene['link'] exist 
 

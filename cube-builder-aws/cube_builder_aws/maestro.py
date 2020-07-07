@@ -155,7 +155,8 @@ def next_step(services, activity):
 # MERGE
 ###############################
 def prepare_merge(self, datacube, datasets, satellite, bands, quicklook, resx,
-                  resy, nodata, numcol, numlin, block_size, crs, force=False):
+                  resy, nodata, numcol, numlin, block_size, crs, 
+                  quality_band, force=False):
     services = self.services
 
     # Build the basics of the merge activity
@@ -176,6 +177,7 @@ def prepare_merge(self, datacube, datasets, satellite, bands, quicklook, resx,
     activity['srs'] = crs
     activity['bucket_name'] = services.bucket_name
     activity['url_stac'] = services.url_stac
+    activity['quality_band'] = quality_band
 
     logger.info('prepare merge - Score {} items'.format(self.score['items']))
 
@@ -309,7 +311,7 @@ def merge_warped(self, activity):
             try:
                 with rasterio.open('{}{}'.format(prefix, key)) as src:
                     values = src.read(1)
-                    if activity['band'] == 'quality':
+                    if activity['band'] == activity['quality_band']:
                         cloudratio, efficacy = getMaskStats(values)
 
                 # Update entry in DynamoDB
@@ -337,7 +339,7 @@ def merge_warped(self, activity):
 
         # Quality band is resampled by nearest, other are bilinear
         band = activity['band']
-        if band == 'quality':
+        if band == activity['quality_band']:
             resampling = Resampling.nearest
 
             raster = numpy.zeros((numlin, numcol,), dtype=numpy.uint16)
@@ -367,11 +369,11 @@ def merge_warped(self, activity):
                     if src.profile['nodata'] is not None:
                         source_nodata = src.profile['nodata']
                     elif satellite == 'LANDSAT':
-                        if band != 'quality':
+                        if band != activity['quality_band']:
                             source_nodata = nodata
                         else:
                             source_nodata = 1
-                    elif 'CBERS' in satellite and band != 'quality':
+                    elif 'CBERS' in satellite and band != activity['quality_band']:
                         source_nodata = nodata
 
                     kwargs.update({
@@ -391,7 +393,7 @@ def merge_warped(self, activity):
                                 dst_nodata=nodata,
                                 resampling=resampling)
 
-                            if band != 'quality':
+                            if band != activity['quality_band']:
                                 valid_data_scene = raster[raster != nodata]
                                 raster_merge[raster != nodata] = valid_data_scene.reshape(numpy.size(valid_data_scene))
                             else:
@@ -400,14 +402,14 @@ def merge_warped(self, activity):
 
                             if template is None:
                                 template = dst.profile
-                                if band != 'quality':
+                                if band != activity['quality_band']:
                                     template['dtype'] = 'int16'
                                     template['nodata'] = nodata
 
         # Evaluate cloud cover and efficacy if band is quality
         efficacy = 0
         cloudratio = 100
-        if activity['band'] == 'quality':
+        if activity['band'] == activity['quality_band']:
             raster_merge, efficacy, cloudratio = getMask(raster_merge, satellite)
             template.update({'dtype': 'uint16'})
 
@@ -458,7 +460,8 @@ def next_blend(services, mergeactivity):
     blendactivity = {}
     blendactivity['action'] = 'blend'
     blendactivity['datacube'] = mergeactivity['datacube_orig_name']
-    for key in ['datasets','satellite', 'bands','quicklook','xmin','ymax','srs','tileid','start','end','dirname','nodata','bucket_name']:
+    for key in ['datasets','satellite', 'bands','quicklook','xmin','ymax','srs',
+                'tileid','start','end','dirname','nodata','bucket_name', 'quality_band']:
         blendactivity[key] = mergeactivity[key]
     blendactivity['totalInstancesToBeDone'] = len(blendactivity['bands'])-1
 
@@ -467,8 +470,8 @@ def next_blend(services, mergeactivity):
 
     # Fill the blendactivity fields with data for quality band from the DynamoDB merge records
     blendactivity['scenes'] = {}
-    blendactivity['band'] = 'quality'
-    mergeactivity['band'] = 'quality'
+    blendactivity['band'] = mergeactivity['quality_band']
+    mergeactivity['band'] = mergeactivity['quality_band']
     _ = fill_blend(services, mergeactivity, blendactivity)
 
     # Reset mycount in  activitiesControlTable
@@ -493,7 +496,7 @@ def next_blend(services, mergeactivity):
 
     # Fill the blendactivity fields with data for the other bands from the DynamoDB merge records (quality band is not a blend entry in DynamoDB)
     for band in blendactivity['bands']:
-        if band == 'quality': continue
+        if band == blendactivity['quality_band']: continue
 
         mergeactivity['band'] = band
         blendactivity['band'] = band
@@ -569,7 +572,7 @@ def fill_blend(services, mergeactivity, blendactivity):
         blendactivity['scenes'][datedataset]['ARDfiles'][band] = basename
 
     blendactivity['instancesToBeDone'] += len(items)
-    if band != 'quality':
+    if band != blendactivity['quality_band']:
         for function in ['MED', 'STK']:
             cube_id = '{}_{}'.format(blendactivity['datacube'], function)
             blendactivity['{}file'.format(function)] = '{0}/{1}/{2}_{3}/{0}_{1}_{2}_{3}_{4}.tif'.format(
@@ -639,7 +642,7 @@ def blend(self, activity):
             filename = os.path.join(
                 prefix + activity['dirname'],
                 scene['date'],
-                scene['ARDfiles']['quality'])
+                scene['ARDfiles'][activity['quality_band']])
             try:
                 masklist.append(rasterio.open(filename))
             except:
@@ -722,7 +725,7 @@ def blend(self, activity):
 
                 stack_raster[mask_raster.astype(numpy.bool_)] = nodata
 
-                if band != 'quality':
+                if band != activity['quality_band']:
                     mediandataset.nodata = nodata
                 mediandataset.build_overviews([2, 4, 8, 16, 32, 64], Resampling.nearest)
                 mediandataset.update_tags(ns='rio_overview', resampling='nearest')
@@ -754,7 +757,7 @@ def blend(self, activity):
         # Create and upload the STACK dataset
         with MemoryFile() as memfile:
             with memfile.open(**profile) as ds_stack:
-                if band != 'quality':
+                if band != activity['quality_band']:
                     ds_stack.nodata = nodata
                 ds_stack.write_band(1, stack_raster)
                 ds_stack.build_overviews([2, 4, 8, 16, 32, 64], Resampling.nearest)
@@ -784,7 +787,8 @@ def next_publish(services, blendactivity):
     # Fill the publish activity from blend activity
     publishactivity = {}
     for key in ['datacube','satellite','datasets','bands','quicklook','xmin','ymax','srs','tileid','start','end', \
-        'dirname', 'cloudratio', 'raster_size_x', 'raster_size_y', 'chunk_size_x', 'chunk_size_y', 'bucket_name']:
+        'dirname', 'cloudratio', 'raster_size_x', 'raster_size_y', 'chunk_size_x', 'chunk_size_y', 'bucket_name',
+        'quality_band']:
         publishactivity[key] = blendactivity.get(key)
     publishactivity['action'] = 'publish'
 
@@ -807,7 +811,7 @@ def next_publish(services, blendactivity):
             scene = activity['scenes'][datedataset]
             if datedataset not in publishactivity['scenes']:
                 publishactivity['scenes'][datedataset] = {'ARDfiles' : {}}
-                publishactivity['scenes'][datedataset]['ARDfiles']['quality'] = scene['ARDfiles']['quality']
+                publishactivity['scenes'][datedataset]['ARDfiles'][publishactivity['quality_band']] = scene['ARDfiles'][publishactivity['quality_band']]
                 publishactivity['scenes'][datedataset]['date'] = scene['date']
                 publishactivity['scenes'][datedataset]['dataset'] = scene['dataset']
                 publishactivity['scenes'][datedataset]['satellite'] = scene['satellite']
@@ -928,7 +932,7 @@ def publish(self, activity):
                     Band.collection_id == cube_id
                 ).all()
                 for band in activity['bands']:
-                    if band == 'quality':
+                    if band == activity['quality_band']:
                         continue
                     band_id = list(filter(lambda b: str(b.common_name) == band, bands_by_cube))
                     if not band_id:

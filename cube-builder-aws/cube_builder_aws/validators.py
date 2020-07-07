@@ -29,6 +29,7 @@ def create():
         'temporal_schema': {"type": "string", "empty": False, "required": True},
         'bands_quicklook': {"type": "list", "empty": False, "required": True},
         'bands': {"type": "list", "empty": False, "required": True},
+        'quality_band': {"type": "string", "empty": False, "required": True},
         'license': {"type": "string", "empty": True, "required": False},
         'oauth_scope': {"type": "string", "empty": True, "required": False},
         'description': {"type": "string", "empty": True, "required": False}

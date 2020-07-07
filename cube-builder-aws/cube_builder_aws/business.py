@@ -82,10 +82,10 @@ class CubeBusiness:
                 band = band.strip()
 
                 if (band == 'cnc' and cube.composite_function_schema_id == 'IDENTITY') or \
-                    (band =='quality' and cube.composite_function_schema_id != 'IDENTITY'):
+                    (band == params['quality_band'] and cube.composite_function_schema_id != 'IDENTITY'):
                     continue
 
-                is_not_cloud = band != 'quality' and band != 'cnc'
+                is_not_cloud = band != params['quality_band'] and band != 'cnc'
                 bands.append(Band(
                     name=band,
                     collection_id=cube.id,
@@ -261,7 +261,7 @@ class CubeBusiness:
         if projection == 'aea':
             tilesrsp4 = "+proj=aea +lat_1=10 +lat_2=-40 +lat_0=0 +lon_0={} +x_0=0 +y_0=0 +ellps=WGS84 +datum=WGS84 +units=m +no_defs".format(meridian)
         elif projection == 'sinu':
-            tilesrsp4 = "+proj=sinu +lon_0={0} +x_0=0 +y_0=0 +a=6371007.181 +b=6371007.181 +units=m +no_defs".format(0.)
+            tilesrsp4 = "+proj=sinu +lon_0={0} +x_0=0 +y_0=0 +a=6371007.181 +b=6371007.181 +units=m +no_defs".format(meridian)
 
         # Number of tiles and base tile
         numtilesx = int(360./degreesx)
