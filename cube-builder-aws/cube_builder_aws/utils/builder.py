@@ -163,8 +163,8 @@ def encode_key(activity, keylist):
 ############################
 def getMaskStats(mask):
     totpix   = mask.size
-    clearpix = numpy.count_nonzero(mask == 1)
-    cloudpix = numpy.count_nonzero(mask == 2)
+    clearpix = numpy.count_nonzero(mask <= 1)
+    cloudpix = numpy.count_nonzero(mask >= 2)
     imagearea = clearpix + cloudpix
 
     cloud_ratio = 100
@@ -206,6 +206,7 @@ def getMask(raster, satellite):
     Returns:
         Tuple containing formatted quality raster, efficacy and cloud ratio, respectively
     """
+    rastercm = raster
     if satellite == 'MODIS':
         # MOD13Q1 Pixel Reliability !!!!!!!!!!!!!!!!!!!!
         # Note that 1 was added to this image in downloadModis because of warping
@@ -215,7 +216,7 @@ def getMask(raster, satellite):
         # 1 		Marginal data 	Useful, but look at other QA information
         # 2 		Snow/Ice 		Target covered with snow/ice
         # 3 		Cloudy 			Target not visible, covered with cloud
-        lut = numpy.array([255, 0, 0, 2, 2], dtype=numpy.uint8)
+        lut = numpy.array([255, 0, 0, 2, 4], dtype=numpy.uint8)
         rastercm = numpy.take(lut, raster+1).astype(numpy.uint8)
 
     elif 'CBERS' in satellite:
@@ -230,14 +231,7 @@ def getMask(raster, satellite):
         lut[255] = 4
         rastercm = numpy.take(lut, raster).astype(numpy.uint8)
 
-    totpix   = rastercm.size
-    clearpix = numpy.count_nonzero(rastercm==1)
-    cloudpix = numpy.count_nonzero(rastercm==2)
-    imagearea = clearpix+cloudpix
-    cloudratio = 100
-    if imagearea != 0:
-        cloudratio = round(100.*cloudpix/imagearea,1)
-    efficacy = round(100.*clearpix/totpix,2)
+    efficacy, cloudratio = getMaskStats(rastercm)
 
     return rastercm.astype(numpy.uint16), efficacy, cloudratio
 
