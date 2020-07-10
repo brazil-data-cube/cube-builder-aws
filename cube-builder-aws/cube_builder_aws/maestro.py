@@ -966,11 +966,7 @@ def publish(self, activity):
                     Band.collection_id == cube_id
                 ).all()
                 for band in activity['bands']:
-<<<<<<< HEAD
-                    if band == activity['quality_band']:
-=======
                     if band == activity['quality_band'] and function != 'STK':
->>>>>>> a5a4b6d802de4c26ffcfd134caa349f03a66ecac
                         continue
                     band_id = list(filter(lambda b: str(b.common_name) == band, bands_by_cube))
                     if not band_id:
