@@ -16,7 +16,6 @@ numpy==1.18.0
 rasterio==1.1.2
 requests==2.22.0
 numpngw==0.0.8
-scipy==1.4.1
 python-dateutil>=2.8,<3
 flask-redoc==0.1.0
 shapely==1.7.0

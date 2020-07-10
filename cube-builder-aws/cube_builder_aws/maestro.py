@@ -13,9 +13,9 @@ import rasterio
 
 from datetime import datetime
 from geoalchemy2 import func
-from rasterio.transform import Affine
+from rasterio.transform import Affine 
 from rasterio.warp import reproject, Resampling, transform
-from rasterio.merge import merge
+from rasterio.merge import merge 
 from rasterio.io import MemoryFile
 
 from bdc_db.models.base_sql import BaseModel, db
@@ -456,7 +456,7 @@ def merge_warped(self, activity):
 # BLEND
 ###############################
 def next_blend(services, mergeactivity):
-    # Fill the blendactivity from mergeactivity
+    # Fill the blend activity from merge activity
     blendactivity = {}
     blendactivity['action'] = 'blend'
     blendactivity['datacube'] = mergeactivity['datacube_orig_name']
@@ -496,7 +496,8 @@ def next_blend(services, mergeactivity):
 
     # Fill the blendactivity fields with data for the other bands from the DynamoDB merge records (quality band is not a blend entry in DynamoDB)
     for band in blendactivity['bands']:
-        if band == blendactivity['quality_band']: continue
+        if band == blendactivity['quality_band'] or not blendactivity['datacube'].endswith('STK'):
+            continue
 
         mergeactivity['band'] = band
         blendactivity['band'] = band
@@ -609,8 +610,7 @@ def blend(self, activity):
             prefix + activity['dirname'],
             activity['scenes'][keys[0]]['date'],
             activity['scenes'][keys[0]]['ARDfiles'][band])
-        tilelist = []
-        profile = None
+
         with rasterio.open(filename) as src:
             profile = src.profile
             profile.update({
@@ -675,8 +675,7 @@ def blend(self, activity):
         height = profile['height']
 
         # STACK will be generated in memory
-        stack_raster = numpy.zeros((height,width), dtype=profile['dtype'])
-        mask_raster = numpy.ones((height,width), dtype=profile['dtype'])
+        stack_raster = numpy.full((height, width), dtype=profile['dtype'], fill_value=nodata)
 
         # create file to save count no cloud
         build_cnc = activity['bands'][0] == band
@@ -687,10 +686,14 @@ def blend(self, activity):
         with MemoryFile() as medianfile:
             with medianfile.open(**profile) as mediandataset:
                 for _, window in tilelist:
-                    # Build the stack to store all images as a masked array. At this stage the array will contain the masked data
+                    # Build the stack to store all images as a masked array.
+                    # At this stage the array will contain the masked data
                     stackMA = numpy.ma.zeros((numscenes, window.height, window.width), dtype=numpy.int16)
 
                     notdonemask = numpy.ones(shape=(window.height,window.width),dtype=numpy.bool_)
+
+                    row_offset = window.row_off + window.height
+                    col_offset = window.col_off + window.width
 
                     # For all pair (quality,band) scenes
                     for order in range(numscenes):
@@ -698,22 +701,55 @@ def blend(self, activity):
                         msrc = masklist[order]
                         raster = ssrc.read(1, window=window)
                         mask = msrc.read(1, window=window)
-                        mask[mask != 1] = 0
+                        # Mask valid data (0 and 1) as True
+                        mask[mask < 2] = 1
+                        # Mask cloud/snow/shadow/no-data as False
+                        mask[mask >= 2] = 0
+                        # Ensure that Raster nodata value (-9999 maybe) is set to False
+                        mask[raster == nodata] = 0
 
+                        # Create an inverse mask value in order to pass to numpy masked array
                         # True => nodata
                         bmask = numpy.invert(mask.astype(numpy.bool_))
 
                         # Use the mask to mark the fill (0) and cloudy (2) pixels
                         stackMA[order] = numpy.ma.masked_where(bmask, raster)
 
-                        # Evaluate the STACK image
-                        # Pixels that have been already been filled by previous rasters will be masked in the current raster
-                        mask_raster[window.row_off : window.row_off+window.height, window.col_off : window.col_off+window.width] *= bmask.astype(profile['dtype'])
+                        # Find all no data in destination STACK image
+                        stack_raster_where_nodata = numpy.where(
+                            stack_raster[window.row_off: row_offset, window.col_off: col_offset] == nodata
+                        )
 
-                        raster[raster == nodata] = 0
+                        # Turns into a 1-dimension
+                        stack_raster_nodata_pos = numpy.ravel_multi_index(stack_raster_where_nodata,
+                                                                          stack_raster[window.row_off: row_offset,
+                                                                          window.col_off: col_offset].shape)
+
+                        # Find all valid/cloud in destination STACK image
+                        raster_where_data = numpy.where(raster != nodata)
+                        raster_data_pos = numpy.ravel_multi_index(raster_where_data, raster.shape)
+
+                        # Match stack nodata values with observation
+                        # stack_raster_where_nodata && raster_where_data
+                        intersect_ravel = numpy.intersect1d(stack_raster_nodata_pos, raster_data_pos)
+
+                        if len(intersect_ravel):
+                            where_intersec = numpy.unravel_index(intersect_ravel, raster.shape)
+                            stack_raster[window.row_off: row_offset, window.col_off: col_offset][where_intersec] = \
+                            raster[where_intersec]
+
+                        # Identify what is needed to stack, based in Array 2d bool
                         todomask = notdonemask * numpy.invert(bmask)
+
+                        # Find all positions where valid data matches.
+                        clear_not_done_pixels = numpy.where(numpy.logical_and(todomask, mask.astype(numpy.bool)))
+
+                        # Override the STACK Raster with valid data.
+                        stack_raster[window.row_off: row_offset, window.col_off: col_offset][clear_not_done_pixels] = \
+                        raster[clear_not_done_pixels]
+
+                        # Update what was done.
                         notdonemask = notdonemask * bmask
-                        stack_raster[window.row_off : window.row_off+window.height, window.col_off : window.col_off+window.width] += (todomask * raster.astype(profile['dtype']))
 
                     median_raster = numpy.ma.median(stackMA, axis=0).data
                     median_raster[notdonemask.astype(numpy.bool_)] = nodata
@@ -722,8 +758,6 @@ def blend(self, activity):
                     if build_cnc:
                         count_raster = numpy.ma.count(stackMA, axis=0)
                         count_cloud_dataset.write(count_raster.astype(profile['dtype']), window=window, indexes=1)
-
-                stack_raster[mask_raster.astype(numpy.bool_)] = nodata
 
                 if band != activity['quality_band']:
                     mediandataset.nodata = nodata
@@ -932,7 +966,11 @@ def publish(self, activity):
                     Band.collection_id == cube_id
                 ).all()
                 for band in activity['bands']:
+<<<<<<< HEAD
                     if band == activity['quality_band']:
+=======
+                    if band == activity['quality_band'] and function != 'STK':
+>>>>>>> a5a4b6d802de4c26ffcfd134caa349f03a66ecac
                         continue
                     band_id = list(filter(lambda b: str(b.common_name) == band, bands_by_cube))
                     if not band_id:
