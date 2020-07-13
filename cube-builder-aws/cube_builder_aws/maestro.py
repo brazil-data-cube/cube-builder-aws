@@ -27,37 +27,37 @@ from .utils.builder import decode_periods, encode_key, \
     getMaskStats, getMask, generateQLook, get_cube_id, get_resolution_by_satellite
 
 
-def orchestrate(datacube, cube_infos, tiles, start_date, end_date):
+def orchestrate(datacube, cube_infos, tiles, start_date, end_date, functions):
     # create collection_tiles
     tiles_by_grs = db.session() \
-        .query(Tile, func.ST_AsText(func.ST_BoundingDiagonal(Tile.geom_wgs84))) \
+        .query(Tile, 
+            (func.ST_XMin(Tile.geom)).label('min_x'),
+            (func.ST_YMax(Tile.geom)).label('max_y'),
+            (func.ST_XMax(Tile.geom) - func.ST_XMin(Tile.geom)).label('dist_x'),
+            (func.ST_YMax(Tile.geom) - func.ST_YMin(Tile.geom)).label('dist_y'),
+            (func.ST_AsText(func.ST_BoundingDiagonal(func.ST_Force2D(Tile.geom_wgs84)))).label('bbox')) \
         .filter(
             Tile.grs_schema_id == cube_infos.grs_schema_id,
             Tile.id.in_(tiles)
         ).all()
 
     collection_tiles = []
-    tiles = list(set(tiles))
     tiles_infos = {}
-    for tile in tiles:
-        # verify tile exists
-        tile_info = list(filter(lambda t: t[0].id == tile, tiles_by_grs))
-        if not tile_info:
-            return 'tile ({}) not found in GRS ({})'.format(tile, cube_infos.grs_schema_id), 404
-
-        tiles_infos[tile] = tile_info[0]
-        for function in ['IDENTITY', 'STK', 'MED']:
+    for tile in tiles_by_grs:
+        tile_id = tile.Tile.id
+        tiles_infos[tile_id] = tile
+        for function in functions:
             cube_id = get_cube_id(datacube, function)
             collection_tile = CollectionTile.query().filter(
                 CollectionTile.collection_id == cube_id,
                 CollectionTile.grs_schema_id == cube_infos.grs_schema_id,
-                CollectionTile.tile_id == tile
+                CollectionTile.tile_id == tile_id
             ).first()
             if not collection_tile:
                 collection_tiles.append(CollectionTile(
                     collection_id=cube_id,
                     grs_schema_id=cube_infos.grs_schema_id,
-                    tile_id=tile
+                    tile_id=tile_id
                 ))
     BaseModel.save_all(collection_tiles)
 
@@ -86,35 +86,32 @@ def orchestrate(datacube, cube_infos, tiles, start_date, end_date):
             if start_date is not None and p_startdate < start_date : continue
             if end_date is not None and p_enddate > end_date : continue
 
-            for tile in tiles:
-                bbox = tiles_infos[tile][1].replace('LINESTRING(', '') \
-                    .replace('LINESTRING Z (', '') \
-                    .replace(')', '') \
-                    .replace(' ', ',') \
-                    .split(',')
-                if len(bbox) != 4:
-                    del bbox[2]
-                    del bbox[-1]
+            for tile in tiles_by_grs:
+                tile_id = tile.Tile.id
+                bbox = tile.bbox
+                bbox_formated = bbox[bbox.find('(') + 1:bbox.find(')')].replace(' ', ',')
 
-                items[tile] = items.get(tile, {})
-                items[tile]['bbox'] = ','.join(bbox)
-                items[tile]['xmin'] = tiles_infos[tile][0].min_x
-                items[tile]['ymax'] = tiles_infos[tile][0].max_y
-                items[tile]['periods'] = items[tile].get('periods', {})
+                items[tile_id] = items.get(tile_id, {})
+                items[tile_id]['bbox'] = bbox_formated
+                items[tile_id]['xmin'] = tile.min_x
+                items[tile_id]['ymax'] = tile.max_y
+                items[tile_id]['dist_x'] = tile.dist_x
+                items[tile_id]['dist_y'] = tile.dist_y
+                items[tile_id]['periods'] = items[tile_id].get('periods', {})
 
-                item_id = '{}_{}_{}'.format(cube_infos.id, tile, p_basedate)
+                item_id = '{}_{}_{}'.format(cube_infos.id, tile_id, p_basedate)
                 if item_id not in items_id:
                     items_id.append(item_id)
                     if not list(filter(lambda c_i: c_i.id == item_id, collections_items)):
-                        items[tile]['periods'][periodkey] = {
+                        items[tile_id]['periods'][periodkey] = {
                             'collection': cube_infos.id,
                             'grs_schema_id': cube_infos.grs_schema_id,
-                            'tile_id': tile,
+                            'tile_id': tile_id,
                             'item_date': p_basedate,
                             'id': item_id,
                             'composite_start': p_startdate,
                             'composite_end': p_enddate,
-                            'dirname': '{}/{}/'.format(get_cube_id(datacube), tile)
+                            'dirname': '{}/{}/'.format(get_cube_id(datacube), tile_id)
                         }
     return items
 
@@ -154,9 +151,8 @@ def next_step(services, activity):
 ###############################
 # MERGE
 ###############################
-def prepare_merge(self, datacube, datasets, satellite, bands, quicklook, resx,
-                  resy, nodata, numcol, numlin, block_size, crs, 
-                  quality_band, force=False):
+def prepare_merge(self, datacube, datasets, satellite, bands, indices, quicklook, resx,
+                  resy, nodata, block_size, crs, quality_band, functions, force=False):
     services = self.services
 
     # Build the basics of the merge activity
@@ -167,17 +163,17 @@ def prepare_merge(self, datacube, datasets, satellite, bands, quicklook, resx,
     activity['datasets'] = datasets
     activity['satellite'] = satellite
     activity['bands'] = bands
+    activity['indices'] = indices
     activity['quicklook'] = quicklook
     activity['resx'] = resx
     activity['resy'] = resy
-    activity['numcol'] = numcol
-    activity['numlin'] = numlin
     activity['nodata'] = nodata
     activity['block_size'] = block_size
     activity['srs'] = crs
     activity['bucket_name'] = services.bucket_name
     activity['url_stac'] = services.url_stac
     activity['quality_band'] = quality_band
+    activity['functions'] = functions
 
     logger.info('prepare merge - Score {} items'.format(self.score['items']))
 
@@ -188,6 +184,8 @@ def prepare_merge(self, datacube, datasets, satellite, bands, quicklook, resx,
         activity['bbox'] = self.score['items'][tileid]['bbox']
         activity['xmin'] = self.score['items'][tileid]['xmin']
         activity['ymax'] = self.score['items'][tileid]['ymax']
+        activity['dist_x'] = self.score['items'][tileid]['dist_x']
+        activity['disty'] = self.score['items'][tileid]['disty']
 
         # For all periods
         for periodkey in self.score['items'][tileid]['periods']:
@@ -327,15 +325,24 @@ def merge_warped(self, activity):
                 _ = services.delete_file_S3(bucket_name=bucket_name, key=key)
 
         # Lets warp and merge
-        resx = int(activity['resx'])
-        resy = int(activity['resy'])
-        xmin = float(activity['xmin'])
-        ymax = float(activity['ymax'])
-        numcol = int(activity['numcol'])
-        numlin = int(activity['numlin'])
-        block_size = int(activity['block_size'])
-        nodata = int(activity['nodata']) if 'nodata' in activity else -9999
-        transform = Affine(resx, 0, xmin, 0, -resy, ymax)
+        resx = activity['resx']
+        resy = activity['resy']
+        xmin = activity['xmin']
+        ymax = activity['ymax']
+        dist_x = activity['dist_x']
+        dist_y = activity['dist_y']
+        block_size = activity['block_size']
+        nodata = activity['nodata'] if 'nodata' in activity else -9999
+
+        num_pixel_x = round(dist_x / resx)
+        num_pixel_y = round(dist_y / resy)
+        new_res_x = dist_x / num_pixel_x
+        new_res_y = dist_y / num_pixel_y
+
+        numcol = num_pixel_x
+        numlin = num_pixel_y
+
+        transform = Affine(new_res_x, 0, xmin, 0, -new_res_y, ymax)
 
         # Quality band is resampled by nearest, other are bilinear
         band = activity['band']
@@ -431,11 +438,13 @@ def merge_warped(self, activity):
 
         # Update entry in DynamoDB
         activity['myend'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        activity['efficacy'] = '{}'.format(int(efficacy))
-        activity['cloudratio'] = '{}'.format(int(cloudratio))
-        activity['raster_size_x'] = '{}'.format(numcol)
-        activity['raster_size_y'] = '{}'.format(numlin)
-        activity['block_size'] = '{}'.format(block_size)
+        activity['efficacy'] = int(efficacy)
+        activity['cloudratio'] = int(cloudratio)
+        activity['raster_size_x'] = numcol
+        activity['raster_size_y'] = numlin
+        activity['new_resolution_x'] = new_res_x
+        activity['new_resolution_y'] = new_res_y
+        activity['block_size'] = block_size
         services.put_item_kinesis(activity)
 
         key = '{}activities/{}{}.json'.format(activity['dirname'], activity['dynamoKey'], activity['date'])
@@ -460,10 +469,10 @@ def next_blend(services, mergeactivity):
     blendactivity = {}
     blendactivity['action'] = 'blend'
     blendactivity['datacube'] = mergeactivity['datacube_orig_name']
-    for key in ['datasets','satellite', 'bands','quicklook','xmin','ymax','srs',
+    for key in ['datasets','satellite', 'bands','quicklook','srs','functions',
                 'tileid','start','end','dirname','nodata','bucket_name', 'quality_band']:
         blendactivity[key] = mergeactivity[key]
-    blendactivity['totalInstancesToBeDone'] = len(blendactivity['bands'])-1
+    blendactivity['totalInstancesToBeDone'] = len(blendactivity['bands']) - 1
 
     # Create  dynamoKey for the blendactivity record
     blendactivity['dynamoKey'] = encode_key(blendactivity, ['action','datacube','tileid','start','end'])
@@ -509,12 +518,17 @@ def next_blend(services, mergeactivity):
 
         if 'Item' in response \
                 and response['Item']['mystatus'] == 'DONE' \
-                and response['Item']['instancesToBeDone'] == blendactivity['instancesToBeDone'] \
-                and services.s3_file_exists(bucket_name=mergeactivity['bucket_name'], key=blendactivity['MEDfile']) \
-                and services.s3_file_exists(bucket_name=mergeactivity['bucket_name'], key=blendactivity['STKfile']):
-            blendactivity['mystatus'] = 'DONE'
-            next_step(services, blendactivity)
-            continue
+                and response['Item']['instancesToBeDone'] == blendactivity['instancesToBeDone']:
+
+            exists = True
+            for func in blendactivity['functions']:
+                if func == 'IDENTITY': continue
+                if not services.s3_file_exists(bucket_name=mergeactivity['bucket_name'], key=blendactivity['{}file'.format(func)]):
+                    exists = False
+            if exists:
+                blendactivity['mystatus'] = 'DONE'
+                next_step(services, blendactivity)
+                continue
 
         # Blend has not been performed, do it
         blendactivity['mystatus'] = 'NOTDONE'
@@ -574,7 +588,7 @@ def fill_blend(services, mergeactivity, blendactivity):
 
     blendactivity['instancesToBeDone'] += len(items)
     if band != blendactivity['quality_band']:
-        for function in ['MED', 'STK']:
+        for function in blendactivity['functions']:
             cube_id = '{}_{}'.format(blendactivity['datacube'], function)
             blendactivity['{}file'.format(function)] = '{0}/{1}/{2}_{3}/{0}_{1}_{2}_{3}_{4}.tif'.format(
                 cube_id, blendactivity['tileid'], blendactivity['start'], blendactivity['end'], band)
@@ -764,7 +778,8 @@ def blend(self, activity):
                 mediandataset.build_overviews([2, 4, 8, 16, 32, 64], Resampling.nearest)
                 mediandataset.update_tags(ns='rio_overview', resampling='nearest')
 
-            services.upload_fileobj_S3(medianfile, activity['MEDfile'], {'ACL': 'public-read'}, bucket_name=bucket_name)
+            if 'MED' in activity['functions']:
+                services.upload_fileobj_S3(medianfile, activity['MEDfile'], {'ACL': 'public-read'}, bucket_name=bucket_name)
 
         # Close all input dataset
         for order in range(numscenes):
@@ -789,14 +804,15 @@ def blend(self, activity):
             os.remove(cloud_cloud_file)
 
         # Create and upload the STACK dataset
-        with MemoryFile() as memfile:
-            with memfile.open(**profile) as ds_stack:
-                if band != activity['quality_band']:
-                    ds_stack.nodata = nodata
-                ds_stack.write_band(1, stack_raster)
-                ds_stack.build_overviews([2, 4, 8, 16, 32, 64], Resampling.nearest)
-                ds_stack.update_tags(ns='rio_overview', resampling='nearest')
-            services.upload_fileobj_S3(memfile, activity['STKfile'], {'ACL': 'public-read'}, bucket_name=bucket_name)
+        if 'STK' in activity['functions']:
+            with MemoryFile() as memfile:
+                with memfile.open(**profile) as ds_stack:
+                    if band != activity['quality_band']:
+                        ds_stack.nodata = nodata
+                    ds_stack.write_band(1, stack_raster)
+                    ds_stack.build_overviews([2, 4, 8, 16, 32, 64], Resampling.nearest)
+                    ds_stack.update_tags(ns='rio_overview', resampling='nearest')
+                services.upload_fileobj_S3(memfile, activity['STKfile'], {'ACL': 'public-read'}, bucket_name=bucket_name)
 
         # Update status and end time in DynamoDB
         activity['myend'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -820,9 +836,9 @@ def blend(self, activity):
 def next_publish(services, blendactivity):
     # Fill the publish activity from blend activity
     publishactivity = {}
-    for key in ['datacube','satellite','datasets','bands','quicklook','xmin','ymax','srs','tileid','start','end', \
+    for key in ['datacube','satellite','datasets','bands','quicklook','tileid','start','end', \
         'dirname', 'cloudratio', 'raster_size_x', 'raster_size_y', 'chunk_size_x', 'chunk_size_y', 'bucket_name',
-        'quality_band']:
+        'quality_band', 'functions']:
         publishactivity[key] = blendactivity.get(key)
     publishactivity['action'] = 'publish'
 
@@ -857,8 +873,10 @@ def next_publish(services, blendactivity):
 
         # Get blended files
         publishactivity['blended'][band] = {}
-        publishactivity['blended'][band]['MEDfile'] = activity['MEDfile']
-        publishactivity['blended'][band]['STKfile'] = activity['STKfile']
+        for func in publishactivity['functions']:
+            if func == 'IDENTITY': continue
+            key_file = '{}file'.format(func)
+            publishactivity['blended'][band][key_file] = activity[key_file]
 
     publishactivity['sk'] = 'ALLBANDS'
     publishactivity['mystatus'] = 'NOTDONE'
@@ -887,7 +905,9 @@ def publish(self, activity):
 
         # Generate quicklooks for CUBES (MEDIAN, STACK ...)
         qlbands = activity['quicklook'].split(',')
-        for function in ['MED', 'STK']:
+        for function in activity['functions']:
+            if func == 'IDENTITY': continue
+
             cube_id = get_cube_id(activity['datacube'], function)
             general_scene_id = '{}_{}_{}_{}'.format(
                 cube_id, activity['tileid'], activity['start'], activity['end'])
@@ -925,7 +945,9 @@ def publish(self, activity):
             os.remove(pngname)
 
         # register collection_items and assets in DB (MEDIAN, STACK ...)
-        for function in ['MED', 'STK']:
+        for function in activity['functions']:
+            if func == 'IDENTITY': continue
+
             cube_id = '{}_{}'.format(activity['datacube'], function)
             cube = Collection.query().filter(
                 Collection.id == cube_id
