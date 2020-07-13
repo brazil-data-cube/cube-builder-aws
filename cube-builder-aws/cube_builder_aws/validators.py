@@ -22,11 +22,14 @@ def to_bbox(s):
     return bbox
 
 
-def indice_band():
+def index_band():
     return dict(
-        name=dict(type='string', empty=False, required=True),
-        common_name=dict(type='string', empty=False, required=True),
-        dtype=dict(type='string', empty=False, required=True, allowed=['int16', 'Uint16'])
+        type="dict",
+        schema=dict(
+            name=dict(type='string', empty=False, required=True),
+            common_name=dict(type='string', empty=False, required=True),
+            dtype=dict(type='string', empty=False, required=True, allowed=['int16', 'Uint16'])
+        )
     )
 
 
@@ -37,9 +40,9 @@ def create():
         resolution=dict(type='string', empty=False, required=True),
         temporal_schema=dict(type='string', empty=False, required=True),
         bands_quicklook=dict(type='list', empty=False, required=True),
-        composite_function=dict(type='string', empty=False, required=True, allowed=['IDENTITY', 'STK', 'MED']),
-        bands=dict(type='list', empty=False, required=True, schema=indice_band()),
-        indices=dict(type='list', empty=True, required=False, schema=indice_band()),
+        composite_function=dict(type='list', empty=False, required=True, allowed=['IDENTITY', 'STK', 'MED']),
+        bands=dict(type='list', empty=False, required=True, schema=index_band()),
+        indexes=dict(type='list', empty=True, required=False, schema=index_band()),
         quality_band=dict(type='string', empty=True, required=False),
         license=dict(type='string', empty=True, required=False),
         oauth_scope=dict(type='string', empty=True, required=False),
@@ -49,9 +52,9 @@ def create():
 
 def process():
     item = {
+        'process_id': {"type": "string", "empty": False, "required": True},
         'url_stac': {"type": "string", "empty": False, "required": True},
         'bucket': {"type": "string", "empty": False, "required": True},
-        'datacube': {"type": "string", "empty": False, "required": True},
         'tiles': {"type": "list", "empty": False, "required": True},
         'collections': {"type": "string", "empty": False, "required": True},
         'satellite': {"type": "string", "empty": False, "required": True},

@@ -151,7 +151,7 @@ def next_step(services, activity):
 ###############################
 # MERGE
 ###############################
-def prepare_merge(self, datacube, datasets, satellite, bands, indices, quicklook, resx,
+def prepare_merge(self, datacube, datasets, satellite, bands, indexes, quicklook, resx,
                   resy, nodata, block_size, crs, quality_band, functions, force=False):
     services = self.services
 
@@ -163,7 +163,7 @@ def prepare_merge(self, datacube, datasets, satellite, bands, indices, quicklook
     activity['datasets'] = datasets
     activity['satellite'] = satellite
     activity['bands'] = bands
-    activity['indices'] = indices
+    activity['indexes'] = indexes
     activity['quicklook'] = quicklook
     activity['resx'] = resx
     activity['resy'] = resy

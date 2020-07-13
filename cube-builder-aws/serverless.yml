@@ -31,6 +31,7 @@ provider:
     KINESIS_NAME: ${self:service}-${self:provider.stage}-kinesis
     DYNAMO_TB_ACTIVITY: ${self:service}-${self:provider.stage}-act
     DBNAME_TB_CONTROL: ${self:service}-${self:provider.stage}-actControl
+    DBNAME_TB_PROCESS: ${self:service}-${self:provider.stage}-process
     KEY_ID: ${env:KEY_ID}
     SECRET_KEY: ${env:SECRET_KEY}
     RDS_HOST: ${env:RDS_HOST}

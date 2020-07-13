@@ -21,7 +21,7 @@ from bdc_db.models import Collection, Band, CollectionItem, Tile, \
 
 from .logger import logger
 from .utils.serializer import Serializer
-from .utils.builder import get_date, get_cube_id, get_cube_parts, decode_periods, revisit_by_satellite
+from .utils.builder import get_date, get_cube_id, get_cube_parts, decode_periods, revisit_by_satellite, generate_hash_md5
 from .utils.image import validate_merges
 from .maestro import orchestrate, prepare_merge, \
     merge_warped, solo, blend, publish
@@ -79,17 +79,17 @@ class CubeBusiness:
         for cube in cubes:
             # save bands
             for band in params['bands']:
-                band = band.strip()
+                band['name'] = band['name'].strip()
 
                 bands.append(Band(
-                    name=indice['name'],
+                    name=band['name'],
                     collection_id=cube.id,
-                    min=0 if indice['dtype'] == 'int16' else 0,
-                    max=10000 if indice['dtype'] == 'int16' else 255,
-                    fill=-9999 if indice['dtype'] == 'int16' else 0,
-                    scale=0.0001 if indice['dtype'] == 'int16' else 1,
-                    data_type=indice['dtype'],
-                    common_name=indice['common_name'],
+                    min=0 if band['dtype'] == 'int16' else 0,
+                    max=10000 if band['dtype'] == 'int16' else 255,
+                    fill=-9999 if band['dtype'] == 'int16' else 0,
+                    scale=0.0001 if band['dtype'] == 'int16' else 1,
+                    data_type=band['dtype'],
+                    common_name=band['common_name'],
                     resolution_x=params['resolution'],
                     resolution_y=params['resolution'],
                     resolution_unit='m',
@@ -97,22 +97,22 @@ class CubeBusiness:
                     mime_type='image/tiff'
                 ))
 
-            # save all indices
-            for indice in params['indices']:
-                indice['name'] = indice['name'].strip()
+            # save all indexes
+            for index in params['indexes']:
+                index['name'] = index['name'].strip()
 
-                if (cube.composite_function_schema_id == 'IDENTITY' and (indice['name'] == 'CLEAROB' or indice['name'] == 'TOTALOB')):
+                if (cube.composite_function_schema_id == 'IDENTITY' and (index['name'] == 'CLEAROB' or index['name'] == 'TOTALOB')):
                     continue
 
                 bands.append(Band(
-                    name=indice['name'],
+                    name=index['name'],
                     collection_id=cube.id,
-                    min=0 if indice['dtype'] == 'int16' else 0,
-                    max=10000 if indice['dtype'] == 'int16' else 255,
-                    fill=-9999 if indice['dtype'] == 'int16' else 0,
-                    scale=0.0001 if indice['dtype'] == 'int16' else 1,
-                    data_type=indice['dtype'],
-                    common_name=indice['common_name'],
+                    min=0 if index['dtype'] == 'int16' else 0,
+                    max=10000 if index['dtype'] == 'int16' else 255,
+                    fill=-9999 if index['dtype'] == 'int16' else 0,
+                    scale=0.0001 if index['dtype'] == 'int16' else 1,
+                    data_type=index['dtype'],
+                    common_name=index['common_name'],
                     resolution_x=params['resolution'],
                     resolution_y=params['resolution'],
                     resolution_unit='m',
@@ -121,7 +121,18 @@ class CubeBusiness:
                 ))
         BaseModel.save_all(bands)
 
-        return cubes_serealized, 201
+        # set infos in process table (dynamoDB)
+        process_id = generate_hash_md5('{}-{}'.format(params['datacube'], datetime.now()))
+        params['indexes'] = [index['name'].strip() for index in params['indexes']]
+        self.services.put_process_table(
+            key=process_id,
+            infos=params
+        )
+
+        return dict(
+            cubes=cubes_serealized,
+            process_id=process_id
+        ), 201
 
     def get_cube_status(self, datacube):
         datacube_request = datacube
@@ -212,10 +223,20 @@ class CubeBusiness:
         ), 200
 
     def start_process(self, params):
-        # TODO: get function by dynamoDB
-        functions = ['IDENTITY', 'MED', 'STK']
+        response = self.services.get_process_by_id(params['process_id'])
+        if 'Items' not in response or len(response['Items']) == 0:
+            raise NotFound('Process ID not found!')
+
+        # get process infos by dynameDB
+        process_info = response['Items'][0]
+        functions = process_info['functions']
+        indexes_list = process_info['indexes']
+        quality_band = process_info['quality_band']
+
+        # get one function if != IDENTITY
+        base_function = [func for func in functions if func != 'IDENTITY'][0]
         
-        cube_id = get_cube_id(params['datacube'], 'STK')
+        cube_id = get_cube_id(params['datacube'], base_function)
         tiles = params['tiles']
         start_date = datetime.strptime(params['start_date'], '%Y-%m-%d').strftime('%Y-%m-%d')
         end_date = datetime.strptime(params['end_date'], '%Y-%m-%d').strftime('%Y-%m-%d') \
@@ -228,17 +249,13 @@ class CubeBusiness:
         if not cube_infos:
             return 'Cube not found!', 404
 
-        # get indices list
-        # TODO: get indices list by dynamoDB
-        indices_list = ['NDVI', 'EVI', 'CLEAROB', 'TOTALOB']
-
         # get bands list
         bands = Band.query().filter(
             Band.collection_id == get_cube_id(params['datacube'])
         ).all()
         bands_list = []
         for band in bands:
-            if band.name.upper() not in indices_list:
+            if band.name.upper() not in indexes_list:
                 bands_list.append(band.name)
 
         # items => old mosaic
@@ -247,8 +264,8 @@ class CubeBusiness:
 
         # prepare merge
         prepare_merge(self, params['datacube'], params['collections'].split(','), params['satellite'], bands_list,
-            indices_list, cube_infos.bands_quicklook, bands[0].resolution_x, bands[0].resolution_y, bands[0].fill,
-            cube_infos.raster_size_schemas.chunk_size_x, cube_infos.grs_schema.crs, 'quality', functions, 
+            indexes_list, cube_infos.bands_quicklook, bands[0].resolution_x, bands[0].resolution_y, bands[0].fill,
+            cube_infos.raster_size_schemas.chunk_size_x, cube_infos.grs_schema.crs, quality_band, functions, 
             params.get('force'))
 
         return 'Succesfully', 201
