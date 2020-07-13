@@ -21,19 +21,30 @@ def to_bbox(s):
         return None
     return bbox
 
+
+def indice_band():
+    return dict(
+        name=dict(type='string', empty=False, required=True),
+        common_name=dict(type='string', empty=False, required=True),
+        dtype=dict(type='string', empty=False, required=True, allowed=['int16', 'Uint16'])
+    )
+
+
 def create():
-    item = {
-        'datacube': {"type": "string", "empty": False, "required": True},
-        'grs': {"type": "string", "empty": False, "required": True},
-        'resolution': {"type": "integer", "empty": False, "required": True},
-        'temporal_schema': {"type": "string", "empty": False, "required": True},
-        'bands_quicklook': {"type": "list", "empty": False, "required": True},
-        'bands': {"type": "list", "empty": False, "required": True},
-        'quality_band': {"type": "string", "empty": False, "required": True},
-        'license': {"type": "string", "empty": True, "required": False},
-        'oauth_scope': {"type": "string", "empty": True, "required": False},
-        'description': {"type": "string", "empty": True, "required": False}
-    }
+    item = dict(
+        datacube=dict(type='string', empty=False, required=True),
+        grs=dict(type='string', empty=False, required=True),
+        resolution=dict(type='string', empty=False, required=True),
+        temporal_schema=dict(type='string', empty=False, required=True),
+        bands_quicklook=dict(type='list', empty=False, required=True),
+        composite_function=dict(type='string', empty=False, required=True, allowed=['IDENTITY', 'STK', 'MED']),
+        bands=dict(type='list', empty=False, required=True, schema=indice_band()),
+        indices=dict(type='list', empty=True, required=False, schema=indice_band()),
+        quality_band=dict(type='string', empty=True, required=False),
+        license=dict(type='string', empty=True, required=False),
+        oauth_scope=dict(type='string', empty=True, required=False),
+        description=dict(type='string', empty=True, required=False)
+    )
     return item
 
 def process():

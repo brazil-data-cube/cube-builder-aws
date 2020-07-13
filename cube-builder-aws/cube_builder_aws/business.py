@@ -45,13 +45,11 @@ class CubeBusiness:
         return cube
 
     def create_cube(self, params):
-        params['composite_function_list'] = ['IDENTITY', 'STK', 'MED']
-
         # generate cubes metadata
         cubes_db = Collection.query().filter().all()
         cubes = []
         cubes_serealized = []
-        for composite_function in params['composite_function_list']:
+        for composite_function in params['composite_function']:
             c_function_id = composite_function.upper()
             raster_size_id = '{}-{}'.format(params['grs'], int(params['resolution']))
             cube_id = get_cube_id(params['datacube'], c_function_id)
@@ -83,20 +81,38 @@ class CubeBusiness:
             for band in params['bands']:
                 band = band.strip()
 
-                if (band == 'cnc' and cube.composite_function_schema_id == 'IDENTITY') or \
-                    (band == params['quality_band'] and cube.composite_function_schema_id != 'IDENTITY'):
+                bands.append(Band(
+                    name=indice['name'],
+                    collection_id=cube.id,
+                    min=0 if indice['dtype'] == 'int16' else 0,
+                    max=10000 if indice['dtype'] == 'int16' else 255,
+                    fill=-9999 if indice['dtype'] == 'int16' else 0,
+                    scale=0.0001 if indice['dtype'] == 'int16' else 1,
+                    data_type=indice['dtype'],
+                    common_name=indice['common_name'],
+                    resolution_x=params['resolution'],
+                    resolution_y=params['resolution'],
+                    resolution_unit='m',
+                    description='',
+                    mime_type='image/tiff'
+                ))
+
+            # save all indices
+            for indice in params['indices']:
+                indice['name'] = indice['name'].strip()
+
+                if (cube.composite_function_schema_id == 'IDENTITY' and (indice['name'] == 'CLEAROB' or indice['name'] == 'TOTALOB')):
                     continue
 
-                is_not_cloud = band != params['quality_band'] and band != 'cnc'
                 bands.append(Band(
-                    name=band,
+                    name=indice['name'],
                     collection_id=cube.id,
-                    min=0 if is_not_cloud else 0,
-                    max=10000 if is_not_cloud else 255,
-                    fill=-9999 if is_not_cloud else 0,
-                    scale=0.0001 if is_not_cloud else 1,
-                    data_type='int16' if is_not_cloud else 'Uint16',
-                    common_name=band,
+                    min=0 if indice['dtype'] == 'int16' else 0,
+                    max=10000 if indice['dtype'] == 'int16' else 255,
+                    fill=-9999 if indice['dtype'] == 'int16' else 0,
+                    scale=0.0001 if indice['dtype'] == 'int16' else 1,
+                    data_type=indice['dtype'],
+                    common_name=indice['common_name'],
                     resolution_x=params['resolution'],
                     resolution_y=params['resolution'],
                     resolution_unit='m',
@@ -196,7 +212,10 @@ class CubeBusiness:
         ), 200
 
     def start_process(self, params):
-        cube_id = get_cube_id(params['datacube'], 'MED')
+        # TODO: get function by dynamoDB
+        functions = ['IDENTITY', 'MED', 'STK']
+        
+        cube_id = get_cube_id(params['datacube'], 'STK')
         tiles = params['tiles']
         start_date = datetime.strptime(params['start_date'], '%Y-%m-%d').strftime('%Y-%m-%d')
         end_date = datetime.strptime(params['end_date'], '%Y-%m-%d').strftime('%Y-%m-%d') \
@@ -209,21 +228,28 @@ class CubeBusiness:
         if not cube_infos:
             return 'Cube not found!', 404
 
+        # get indices list
+        # TODO: get indices list by dynamoDB
+        indices_list = ['NDVI', 'EVI', 'CLEAROB', 'TOTALOB']
+
         # get bands list
         bands = Band.query().filter(
             Band.collection_id == get_cube_id(params['datacube'])
         ).all()
-        bands_list = [band.name for band in bands]
+        bands_list = []
+        for band in bands:
+            if band.name.upper() not in indices_list:
+                bands_list.append(band.name)
 
         # items => old mosaic
         # orchestrate
-        self.score['items'] = orchestrate(params['datacube'], cube_infos, tiles, start_date, end_date)
+        self.score['items'] = orchestrate(params['datacube'], cube_infos, tiles, start_date, end_date, functions)
 
         # prepare merge
         prepare_merge(self, params['datacube'], params['collections'].split(','), params['satellite'], bands_list,
-            cube_infos.bands_quicklook, bands[0].resolution_x, bands[0].resolution_y, bands[0].fill,
-            cube_infos.raster_size_schemas.raster_size_x, cube_infos.raster_size_schemas.raster_size_y,
-            cube_infos.raster_size_schemas.chunk_size_x, cube_infos.grs_schema.crs, params.get('force'))
+            indices_list, cube_infos.bands_quicklook, bands[0].resolution_x, bands[0].resolution_y, bands[0].fill,
+            cube_infos.raster_size_schemas.chunk_size_x, cube_infos.grs_schema.crs, 'quality', functions, 
+            params.get('force'))
 
         return 'Succesfully', 201
 
@@ -251,7 +277,7 @@ class CubeBusiness:
             }),
         }
 
-    def create_grs(self, name, description, projection, meridian, degrees_x, degrees_y, bbox):
+    def create_grs(self, name, description, projection, meridian, degreesx, degreesy, bbox):
         bbox = bbox.split(',')
         bbox_obj = {
             "w": float(bbox[0]),
@@ -259,23 +285,23 @@ class CubeBusiness:
             "e": float(bbox[2]),
             "s": float(bbox[3])
         }
-        tile_srs_p4 = "+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs"
+        tile_srs_p4 = "+proj=longlat +ellps=GRS80 +datum=GRS80 +no_defs"
         if projection == 'aea':
-            tile_srs_p4 = "+proj=aea +lat_1=10 +lat_2=-40 +lat_0=0 +lon_0={} +x_0=0 +y_0=0 +ellps=WGS84 +datum=WGS84 +units=m +no_defs".format(meridian)
+            tile_srs_p4 = "+proj=aea +lat_1=10 +lat_2=-40 +lat_0=0 +lon_0={} +x_0=0 +y_0=0 +ellps=GRS80 +datum=GRS80 +units=m +no_defs".format(meridian)
         elif projection == 'sinu':
             tile_srs_p4 = "+proj=sinu +lon_0={} +x_0=0 +y_0=0 +a=6371007.181 +b=6371007.181 +units=m +no_defs".format(meridian)
 
         # Number of tiles and base tile
-        num_tiles_x = int(360./degrees_x)
-        num_tiles_y = int(180./degrees_y)
+        num_tiles_x = int(360./degreesx)
+        num_tiles_y = int(180./degreesy)
         h_base = num_tiles_x/2
         v_base = num_tiles_y/2
 
         # Tile size in meters (dx,dy) at center of system (argsmeridian,0.)
-        src_crs = '+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs'
+        src_crs = '+proj=longlat +ellps=GRS80 +datum=GRS80 +no_defs'
         dst_crs = tile_srs_p4
-        xs = [(meridian - degrees_x/2), (meridian + degrees_x/2), meridian, meridian, 0.]
-        ys = [0., 0., -degrees_y/2, degrees_y/2, 0.]
+        xs = [(meridian - degreesx/2), (meridian + degreesx/2), meridian, meridian, 0.]
+        ys = [0., 0., -degreesy/2, degreesy/2, 0.]
         out = rasterio.warp.transform(src_crs, dst_crs, xs, ys, zs=None)
         x1 = out[0][0]
         x2 = out[0][1]
@@ -316,7 +342,7 @@ class CubeBusiness:
             ).save()
 
         tiles = []
-        dst_crs = '+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs'
+        dst_crs = '+proj=longlat +ellps=GRS80 +datum=GRS80 +no_defs'
         src_crs = tile_srs_p4
         for ix in range(hMin, hMax+1):
             x1 = xMin + ix*dx
@@ -337,31 +363,29 @@ class CubeBusiness:
                 LL_lon = out[0][3]
                 LL_lat = out[1][3]
 
-                poly_wgs84 = Polygon(
-                    [
-                        (UL_lon, UL_lat),
-                        (UR_lon, UR_lat),
-                        (LR_lon, LR_lat),
-                        (LL_lon, LL_lat),
-                        (UL_lon, UL_lat)
-                    ]
-                )
                 poly_wgs84 = from_shape(
-                    poly_wgs84, 
-                    srid=4326
+                    Polygon(
+                        [
+                            (UL_lon, UL_lat),
+                            (UR_lon, UR_lat),
+                            (LR_lon, LR_lat),
+                            (LL_lon, LL_lat),
+                            (UL_lon, UL_lat)
+                        ]
+                    ), 
+                    srid=4674
                 )
 
-                poly_aea = Polygon(
-                    [
-                        (x1, y2),
-                        (x2, y2),
-                        (x2, y1),
-                        (x1, y1),
-                        (x1, y2)
-                    ]
-                )
                 poly_aea = from_shape(
-                    poly_aea, 
+                    Polygon(
+                        [
+                            (x1, y2),
+                            (x2, y2),
+                            (x2, y1),
+                            (x1, y1),
+                            (x1, y2)
+                        ]
+                    ), 
                     srid=0
                 )
 
@@ -372,7 +396,7 @@ class CubeBusiness:
                     geom_wgs84=poly_wgs84,
                     geom=poly_aea
                 ))
-
+        
         BaseModel.save_all(tiles)
         return 'Grid {} created with successfully'.format(name), 201
 
