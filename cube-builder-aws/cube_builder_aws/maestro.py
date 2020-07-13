@@ -691,11 +691,11 @@ def blend(self, activity):
         # STACK will be generated in memory
         stack_raster = numpy.full((height, width), dtype=profile['dtype'], fill_value=nodata)
 
-        # create file to save count no cloud
-        build_cnc = activity['bands'][0] == band
-        if build_cnc:
-            cloud_cloud_file = '/tmp/cnc.tif'
-            count_cloud_dataset = rasterio.open(cloud_cloud_file, mode='w', **profile)
+        # # create file to save count no cloud
+        # build_cnc = activity['bands'][0] == band
+        # if build_cnc:
+        #     cloud_cloud_file = '/tmp/cnc.tif'
+        #     count_cloud_dataset = rasterio.open(cloud_cloud_file, mode='w', **profile)
 
         with MemoryFile() as medianfile:
             with medianfile.open(**profile) as mediandataset:
@@ -769,9 +769,9 @@ def blend(self, activity):
                     median_raster[notdonemask.astype(numpy.bool_)] = nodata
                     mediandataset.write(median_raster.astype(profile['dtype']), window=window, indexes=1)
 
-                    if build_cnc:
-                        count_raster = numpy.ma.count(stackMA, axis=0)
-                        count_cloud_dataset.write(count_raster.astype(profile['dtype']), window=window, indexes=1)
+                    # if build_cnc:
+                    #     count_raster = numpy.ma.count(stackMA, axis=0)
+                    #     count_cloud_dataset.write(count_raster.astype(profile['dtype']), window=window, indexes=1)
 
                 if band != activity['quality_band']:
                     mediandataset.nodata = nodata
@@ -792,16 +792,16 @@ def blend(self, activity):
         activity['raster_size_y'] = height
         activity['raster_size_x'] = width
 
-        # Upload the CNC dataset
-        if build_cnc:
-            count_cloud_dataset.close()
-            count_cloud_dataset = None
+        # # Upload the CNC dataset
+        # if build_cnc:
+        #     count_cloud_dataset.close()
+        #     count_cloud_dataset = None
 
-            key_cnc_med = '_'.join(activity['MEDfile'].split('_')[:-1]) + '_cnc.tif'
-            key_cnc_stk = '_'.join(activity['STKfile'].split('_')[:-1]) + '_cnc.tif'
-            services.upload_file_S3(cloud_cloud_file, key_cnc_med, {'ACL': 'public-read'}, bucket_name=bucket_name)
-            services.upload_file_S3(cloud_cloud_file, key_cnc_stk, {'ACL': 'public-read'}, bucket_name=bucket_name)
-            os.remove(cloud_cloud_file)
+        #     key_cnc_med = '_'.join(activity['MEDfile'].split('_')[:-1]) + '_cnc.tif'
+        #     key_cnc_stk = '_'.join(activity['STKfile'].split('_')[:-1]) + '_cnc.tif'
+        #     services.upload_file_S3(cloud_cloud_file, key_cnc_med, {'ACL': 'public-read'}, bucket_name=bucket_name)
+        #     services.upload_file_S3(cloud_cloud_file, key_cnc_stk, {'ACL': 'public-read'}, bucket_name=bucket_name)
+        #     os.remove(cloud_cloud_file)
 
         # Create and upload the STACK dataset
         if 'STK' in activity['functions']:
