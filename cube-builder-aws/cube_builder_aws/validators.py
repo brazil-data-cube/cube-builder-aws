@@ -28,7 +28,7 @@ def index_band():
         schema=dict(
             name=dict(type='string', empty=False, required=True),
             common_name=dict(type='string', empty=False, required=True),
-            dtype=dict(type='string', empty=False, required=True, allowed=['int16', 'Uint16'])
+            data_type=dict(type='string', empty=False, required=True, allowed=['int16', 'Uint8', 'Uint16'])
         )
     )
 

@@ -234,7 +234,7 @@ def getMask(raster, satellite):
 
     efficacy, cloudratio = getMaskStats(rastercm)
 
-    return rastercm.astype(numpy.uint16), efficacy, cloudratio
+    return rastercm.astype(numpy.uint8), efficacy, cloudratio
 
 
 ############################

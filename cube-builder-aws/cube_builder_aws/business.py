@@ -84,11 +84,11 @@ class CubeBusiness:
                 bands.append(Band(
                     name=band['name'],
                     collection_id=cube.id,
-                    min=0 if band['dtype'] == 'int16' else 0,
-                    max=10000 if band['dtype'] == 'int16' else 255,
-                    fill=-9999 if band['dtype'] == 'int16' else 0,
-                    scale=0.0001 if band['dtype'] == 'int16' else 1,
-                    data_type=band['dtype'],
+                    min=0 if band['data_type'] == 'int16' else 0,
+                    max=10000 if band['data_type'] == 'int16' else 255,
+                    fill=-9999 if band['data_type'] == 'int16' else 255,
+                    scale=0.0001 if band['data_type'] == 'int16' else 1,
+                    data_type=band['data_type'],
                     common_name=band['common_name'],
                     resolution_x=params['resolution'],
                     resolution_y=params['resolution'],
@@ -107,11 +107,11 @@ class CubeBusiness:
                 bands.append(Band(
                     name=index['name'],
                     collection_id=cube.id,
-                    min=0 if index['dtype'] == 'int16' else 0,
-                    max=10000 if index['dtype'] == 'int16' else 255,
-                    fill=-9999 if index['dtype'] == 'int16' else 0,
-                    scale=0.0001 if index['dtype'] == 'int16' else 1,
-                    data_type=index['dtype'],
+                    min=0 if index['data_type'] == 'int16' else 0,
+                    max=10000 if index['data_type'] == 'int16' else 255,
+                    fill=-9999 if index['data_type'] == 'int16' else 255,
+                    scale=0.0001 if index['data_type'] == 'int16' else 1,
+                    data_type=index['data_type'],
                     common_name=index['common_name'],
                     resolution_x=params['resolution'],
                     resolution_y=params['resolution'],
@@ -229,14 +229,15 @@ class CubeBusiness:
 
         # get process infos by dynameDB
         process_info = response['Items'][0]
-        functions = process_info['functions']
-        indexes_list = process_info['indexes']
+        functions = json.loads(process_info['functions'])
+        indexes_list = json.loads(process_info['indexes'])
         quality_band = process_info['quality_band']
+        datacube = process_info['datacube']
 
         # get one function if != IDENTITY
         base_function = [func for func in functions if func != 'IDENTITY'][0]
         
-        cube_id = get_cube_id(params['datacube'], base_function)
+        cube_id = get_cube_id(datacube, base_function)
         tiles = params['tiles']
         start_date = datetime.strptime(params['start_date'], '%Y-%m-%d').strftime('%Y-%m-%d')
         end_date = datetime.strptime(params['end_date'], '%Y-%m-%d').strftime('%Y-%m-%d') \
@@ -251,22 +252,22 @@ class CubeBusiness:
 
         # get bands list
         bands = Band.query().filter(
-            Band.collection_id == get_cube_id(params['datacube'])
+            Band.collection_id == get_cube_id(datacube)
         ).all()
         bands_list = []
         for band in bands:
-            if band.name.upper() not in indexes_list:
+            if band.name.upper() not in [i.upper() for i in indexes_list]:
                 bands_list.append(band.name)
 
         # items => old mosaic
         # orchestrate
-        self.score['items'] = orchestrate(params['datacube'], cube_infos, tiles, start_date, end_date, functions)
+        self.score['items'] = orchestrate(datacube, cube_infos, tiles, start_date, end_date, functions)
 
         # prepare merge
-        prepare_merge(self, params['datacube'], params['collections'].split(','), params['satellite'], bands_list,
+        prepare_merge(self, datacube, params['collections'].split(','), params['satellite'], bands_list,
             indexes_list, cube_infos.bands_quicklook, bands[0].resolution_x, bands[0].resolution_y, bands[0].fill,
             cube_infos.raster_size_schemas.chunk_size_x, cube_infos.grs_schema.crs, quality_band, functions, 
-            params.get('force'))
+            params.get('force', False))
 
         return 'Succesfully', 201
 
