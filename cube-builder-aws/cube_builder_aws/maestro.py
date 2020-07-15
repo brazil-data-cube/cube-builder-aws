@@ -489,8 +489,8 @@ def next_blend(services, mergeactivity):
 
     # Fill the blendactivity fields with data for quality band from the DynamoDB merge records
     blendactivity['scenes'] = {}
-    blendactivity['band'] = mergeactivity['quality_band']
     mergeactivity['band'] = mergeactivity['quality_band']
+    blendactivity['band'] = mergeactivity['quality_band']
     _ = fill_blend(services, mergeactivity, blendactivity)
 
     # Reset mycount in  activitiesControlTable
@@ -522,8 +522,9 @@ def next_blend(services, mergeactivity):
 
         mergeactivity['band'] = band
         blendactivity['band'] = band
-        blendactivity['sk'] = internal_band if internal_band else band
         _ = fill_blend(services, mergeactivity, blendactivity, internal_band)
+        
+        blendactivity['sk'] = internal_band if internal_band else band
 
         # Check if we are doing it again and if we have to do it because a different number of ARDfiles is present
         response = services.get_activity_item(
@@ -559,7 +560,8 @@ def next_blend(services, mergeactivity):
 
         # Leave room for next band in blendactivity
         for datedataset in blendactivity['scenes']:
-            if band in blendactivity['scenes'][datedataset]['ARDfiles']:
+            if band in blendactivity['scenes'][datedataset]['ARDfiles'] \
+                and band != mergeactivity['quality_band']:
                 del blendactivity['scenes'][datedataset]['ARDfiles'][band]
     return True
 
@@ -932,7 +934,7 @@ def next_publish(services, blendactivity):
     publishactivity = {}
     for key in ['datacube','satellite','datasets','bands','quicklook','tileid','start','end', \
         'dirname', 'cloudratio', 'raster_size_x', 'raster_size_y', 'chunk_size_x', 'chunk_size_y', 'bucket_name',
-        'quality_band', 'functions']:
+        'quality_band', 'internal_bands', 'functions']:
         publishactivity[key] = blendactivity.get(key)
     publishactivity['action'] = 'publish'
 
@@ -945,6 +947,7 @@ def next_publish(services, blendactivity):
     items = response['Items']
     publishactivity['scenes'] = {}
     publishactivity['blended'] = {}
+    example_file_name = ''
     for item in items:
         activity = json.loads(item['activity'])
         band = item['sk']
@@ -969,8 +972,20 @@ def next_publish(services, blendactivity):
         publishactivity['blended'][band] = {}
         for func in publishactivity['functions']:
             if func == 'IDENTITY': continue
+            if func == 'MED' and band == publishactivity['quality_band']: continue
             key_file = '{}file'.format(func)
             publishactivity['blended'][band][key_file] = activity[key_file]
+            example_file_name = activity[key_file]
+
+    for internal_band in publishactivity['internal_bands']:
+        # Create indices to catalog CLEAROB, TOTALOB, PROVENANCE, ...
+        publishactivity['blended'][internal_band] = {}
+        for func in publishactivity['functions']:
+            if func == 'IDENTITY': continue
+            if func == 'MED' and internal_band == 'PROVENANCE': continue
+            key_file = '{}file'.format(func)
+            file_name = '_'.join(example_file_name.split('_')[:-1]) + '_{}.tif'.format(internal_band)
+            publishactivity['blended'][internal_band][key_file] = file_name
 
     publishactivity['sk'] = 'ALLBANDS'
     publishactivity['mystatus'] = 'NOTDONE'
@@ -1000,7 +1015,7 @@ def publish(self, activity):
         # Generate quicklooks for CUBES (MEDIAN, STACK ...)
         qlbands = activity['quicklook'].split(',')
         for function in activity['functions']:
-            if func == 'IDENTITY': continue
+            if function == 'IDENTITY': continue
 
             cube_id = get_cube_id(activity['datacube'], function)
             general_scene_id = '{}_{}_{}_{}'.format(
@@ -1040,7 +1055,7 @@ def publish(self, activity):
 
         # register collection_items and assets in DB (MEDIAN, STACK ...)
         for function in activity['functions']:
-            if func == 'IDENTITY': continue
+            if function == 'IDENTITY': continue
 
             cube_id = '{}_{}'.format(activity['datacube'], function)
             cube = Collection.query().filter(
