@@ -19,7 +19,8 @@ from bdc_db.models.base_sql import BaseModel, db
 from bdc_db.models import Collection, Band, CollectionItem, Tile, \
     GrsSchema, RasterSizeSchema, TemporalCompositionSchema, CompositeFunctionSchema
 
-from .logger import logger
+from .constants import CLEAR_OBSERVATION_ATTRIBUTES, PROVENANCE_ATTRIBUTES, TOTAL_OBSERVATION_ATTRIBUTES, \
+    CLEAR_OBSERVATION_NAME, TOTAL_OBSERVATION_NAME, PROVENANCE_NAME
 from .utils.serializer import Serializer
 from .utils.builder import get_date, get_cube_id, get_cube_parts, decode_periods, revisit_by_satellite, generate_hash_md5
 from .utils.image import validate_merges
@@ -44,82 +45,108 @@ class CubeBusiness:
 
         return cube
 
+    @staticmethod
+    def get_or_create_band(cube, name, common_name, min, max,
+                           fill, data_type, res_x, res_y, scale, description=None) -> Band:
+        """Get or try to create a data cube band on database.
+
+        Notes:
+            When band not found, it adds a new Band object to the SQLAlchemy db.session.
+            You may need to commit the session after execution.
+
+        Returns:
+            A SQLAlchemy band object.
+        """
+        band = Band.query().filter(Band.collection_id == cube, Band.name == name).first()
+
+        if band is None:
+            band = Band(
+                name=name, collection_id=cube,
+                min=min, max=max, fill=fill,
+                scale=scale, data_type=data_type,
+                common_name=common_name,
+                resolution_x=res_x, resolution_y=res_y, resolution_unit='m',
+                description=description, mime_type='image/tiff'
+            )
+            db.session.add(band)
+
+        return band
+
     def create_cube(self, params):
         # generate cubes metadata
         cubes_db = Collection.query().filter().all()
         cubes = []
         cubes_serealized = []
-        for composite_function in params['composite_function']:
-            c_function_id = composite_function.upper()
-            raster_size_id = '{}-{}'.format(params['grs'], int(params['resolution']))
-            cube_id = get_cube_id(params['datacube'], c_function_id)
 
-            # add cube
-            if not list(filter(lambda x: x.id == cube_id, cubes)) and not list(filter(lambda x: x.id == cube_id, cubes_db)):
-                cube = Collection(
-                    id=cube_id,
-                    temporal_composition_schema_id=params['temporal_schema'] if c_function_id.upper() != 'IDENTITY' else 'Anull',
-                    raster_size_schema_id=raster_size_id,
-                    composite_function_schema_id=c_function_id,
-                    grs_schema_id=params['grs'],
-                    description=params['description'],
-                    radiometric_processing=None,
-                    geometry_processing=None,
-                    sensor=None,
-                    is_cube=True,
-                    oauth_scope=params.get('oauth_scope', None),
-                    license=params['license'],
-                    bands_quicklook=','.join(params['bands_quicklook'])
-                )
-                cubes.append(cube)
-                cubes_serealized.append(Serializer.serialize(cube))
-        BaseModel.save_all(cubes)
+        with db.session.begin_nested():
+            for composite_function in params['composite_function']:
+                c_function_id = composite_function.upper()
+                raster_size_id = '{}-{}'.format(params['grs'], int(params['resolution']))
+                cube_id = get_cube_id(params['datacube'], c_function_id)
 
-        bands = []
-        for cube in cubes:
-            # save bands
-            for band in params['bands']:
-                band['name'] = band['name'].strip()
+                # add cube
+                if not list(filter(lambda x: x.id == cube_id, cubes)) and not list(filter(lambda x: x.id == cube_id, cubes_db)):
+                    cube = Collection(
+                        id=cube_id,
+                        temporal_composition_schema_id=params['temporal_schema'] if c_function_id.upper() != 'IDENTITY' else 'Anull',
+                        raster_size_schema_id=raster_size_id,
+                        composite_function_schema_id=c_function_id,
+                        grs_schema_id=params['grs'],
+                        description=params['description'],
+                        radiometric_processing=None,
+                        geometry_processing=None,
+                        sensor=None,
+                        is_cube=True,
+                        oauth_scope=params.get('oauth_scope', None),
+                        license=params['license'],
+                        bands_quicklook=','.join(params['bands_quicklook'])
+                    )
+                    db.session.add(cube)
+                    cubes.append(cube)
+                    cubes_serealized.append(Serializer.serialize(cube))
 
-                bands.append(Band(
-                    name=band['name'],
-                    collection_id=cube.id,
-                    min=0 if band['data_type'] == 'int16' else 0,
-                    max=10000 if band['data_type'] == 'int16' else 255,
-                    fill=-9999 if band['data_type'] == 'int16' else 255,
-                    scale=0.0001 if band['data_type'] == 'int16' else 1,
-                    data_type=band['data_type'],
-                    common_name=band['common_name'],
-                    resolution_x=params['resolution'],
-                    resolution_y=params['resolution'],
-                    resolution_unit='m',
-                    description='',
-                    mime_type='image/tiff'
-                ))
+            bands = []
 
-            # save all indexes
-            for index in params['indexes']:
-                index['name'] = index['name'].strip()
+            default_bands = (CLEAR_OBSERVATION_NAME, TOTAL_OBSERVATION_NAME, PROVENANCE_NAME)
 
-                if (cube.composite_function_schema_id == 'IDENTITY' and (index['name'] == 'CLEAROB' or index['name'] == 'TOTALOB')):
-                    continue
+            for cube in cubes:
+                # Merge indexes as bands
+                params['bands'].extend(params.get('indexes', list()))
 
-                bands.append(Band(
-                    name=index['name'],
-                    collection_id=cube.id,
-                    min=0 if index['data_type'] == 'int16' else 0,
-                    max=10000 if index['data_type'] == 'int16' else 255,
-                    fill=-9999 if index['data_type'] == 'int16' else 255,
-                    scale=0.0001 if index['data_type'] == 'int16' else 1,
-                    data_type=index['data_type'],
-                    common_name=index['common_name'],
-                    resolution_x=params['resolution'],
-                    resolution_y=params['resolution'],
-                    resolution_unit='m',
-                    description='',
-                    mime_type='image/tiff'
-                ))
-        BaseModel.save_all(bands)
+                # save bands
+                for band in params['bands']:
+                    band['name'] = band['name'].strip()
+
+                    if band['name'] in default_bands:
+                        continue
+
+                    is_quality_band = params['quality_band'] == band['name']
+
+                    band_model = self.get_or_create_band(
+                        cube=cube.id,
+                        name=band['name'],
+                        min=0 if not is_quality_band else 0,
+                        max=10000 if not is_quality_band else 4,
+                        fill=-9999 if not is_quality_band else 255,
+                        scale=0.0001 if not is_quality_band else 1,
+                        data_type='int16' if is_quality_band else 'uint8',
+                        common_name=band['common_name'],
+                        res_x=params['resolution'],
+                        res_y=params['resolution'],
+                        description='',
+                    )
+                    bands.append(band_model)
+
+                # Create default Cube Bands
+                if cube.composite_function_schema_id != 'IDENTITY':
+                    self.get_or_create_band(cube.id, **CLEAR_OBSERVATION_ATTRIBUTES,
+                                            res_x=params['resolution'], res_y=params['resolution'])
+                    self.get_or_create_band(cube.id, **TOTAL_OBSERVATION_ATTRIBUTES,
+                                            res_x=params['resolution'], res_y=params['resolution'])
+                    self.get_or_create_band(cube.id, **PROVENANCE_ATTRIBUTES,
+                                            res_x=params['resolution'], res_y=params['resolution'])
+
+        db.session.commit()
 
         # set infos in process table (dynamoDB)
         process_id = generate_hash_md5('{}-{}'.format(params['datacube'], datetime.now()))
