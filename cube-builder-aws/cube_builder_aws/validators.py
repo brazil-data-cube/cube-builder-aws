@@ -11,6 +11,7 @@ validation of controllers schemas
 """
 from cerberus import Validator
 from datetime import datetime
+from rasterio.dtypes import dtype_ranges
 
 def to_date(s):
     return datetime.strptime(s, '%Y-%m-%d') if s else None
@@ -28,7 +29,7 @@ def index_band():
         schema=dict(
             name=dict(type='string', empty=False, required=True),
             common_name=dict(type='string', empty=False, required=True),
-            data_type=dict(type='string', empty=False, required=True, allowed=['int16', 'Uint8', 'Uint16'])
+            data_type=dict(type='string', empty=False, required=True, allowed=list(dtype_ranges.keys()))
         )
     )
 
@@ -42,8 +43,8 @@ def create():
         bands_quicklook=dict(type='list', empty=False, required=True),
         composite_function=dict(type='list', empty=False, required=True, allowed=['IDENTITY', 'STK', 'MED']),
         bands=dict(type='list', empty=False, required=True, schema=index_band()),
-        indexes=dict(type='list', empty=True, required=False, schema=index_band()),
-        quality_band=dict(type='string', empty=True, required=False),
+        indexes=dict(type='list', empty=True, required=False, schema=index_band(), check_with='band_uniqueness'),
+        quality_band=dict(type='string', empty=True, required=False, check_with='band_uniqueness'),
         license=dict(type='string', empty=True, required=False),
         oauth_scope=dict(type='string', empty=True, required=False),
         description=dict(type='string', empty=True, required=False)
@@ -156,10 +157,24 @@ def estimate_cost():
     )
 
 
+class BDCValidator(Validator):
+    def _check_with_band_uniqueness(self, field, value):
+        bands = self.document['bands']
+        band_names = [b['name'] for b in bands]
+
+        if field == 'indexes':
+            for index in value:
+                if index['name'] in band_names:
+                    self._error(field, f'Duplicated band name in indices {index["name"]}')
+        elif field == 'quality_band':
+            if value not in band_names:
+                self._error(field, f'Quality band "{value}" not found in key "bands"')
+
+
 def validate(data, type_schema):
     schema = eval('{}()'.format(type_schema))
 
-    v = Validator(schema)
+    v = BDCValidator(schema)
     if not v.validate(data):
         return v.errors, False
     return data, True

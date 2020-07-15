@@ -91,7 +91,7 @@ def create():
     # validate params
     data, status = validate(request.json, 'create')
     if status is False:
-        return jsonify(json.dumps(data)), 400
+        return jsonify(data), 400
 
     cubes, status = business.create_cube(data)
     return jsonify(
