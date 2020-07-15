@@ -1096,9 +1096,10 @@ def publish(self, activity):
                 bands_by_cube = Band.query().filter(
                     Band.collection_id == cube_id
                 ).all()
-                for band in activity['bands']:
-                    if band == activity['quality_band'] and function != 'STK':
+                for band in (activity['bands'] + activity['internal_bands']):
+                    if not activity['blended'][band].get('{}file'.format(function)):
                         continue
+
                     band_id = list(filter(lambda b: str(b.common_name) == band, bands_by_cube))
                     if not band_id:
                         raise Exception('band {} not found!'.format(band))
