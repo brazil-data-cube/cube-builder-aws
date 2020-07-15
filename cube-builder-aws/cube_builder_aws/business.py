@@ -11,6 +11,8 @@ import rasterio
 import sqlalchemy
 from datetime import datetime
 from geoalchemy2 import func
+from geoalchemy2.shape import from_shape
+from shapely.geometry import Polygon
 from werkzeug.exceptions import BadRequest, NotFound
 
 from bdc_db.models.base_sql import BaseModel, db
@@ -19,7 +21,7 @@ from bdc_db.models import Collection, Band, CollectionItem, Tile, \
 
 from .logger import logger
 from .utils.serializer import Serializer
-from .utils.builder import get_date, get_cube_id, get_cube_parts, decode_periods, revisit_by_satellite
+from .utils.builder import get_date, get_cube_id, get_cube_parts, decode_periods, revisit_by_satellite, generate_hash_md5
 from .utils.image import validate_merges
 from .maestro import orchestrate, prepare_merge, \
     merge_warped, solo, blend, publish
@@ -43,13 +45,11 @@ class CubeBusiness:
         return cube
 
     def create_cube(self, params):
-        params['composite_function_list'] = ['IDENTITY', 'STK', 'MED']
-
         # generate cubes metadata
         cubes_db = Collection.query().filter().all()
         cubes = []
         cubes_serealized = []
-        for composite_function in params['composite_function_list']:
+        for composite_function in params['composite_function']:
             c_function_id = composite_function.upper()
             raster_size_id = '{}-{}'.format(params['grs'], int(params['resolution']))
             cube_id = get_cube_id(params['datacube'], c_function_id)
@@ -79,22 +79,40 @@ class CubeBusiness:
         for cube in cubes:
             # save bands
             for band in params['bands']:
-                band = band.strip()
+                band['name'] = band['name'].strip()
 
-                if (band == 'cnc' and cube.composite_function_schema_id == 'IDENTITY') or \
-                    (band =='quality' and cube.composite_function_schema_id != 'IDENTITY'):
+                bands.append(Band(
+                    name=band['name'],
+                    collection_id=cube.id,
+                    min=0 if band['data_type'] == 'int16' else 0,
+                    max=10000 if band['data_type'] == 'int16' else 255,
+                    fill=-9999 if band['data_type'] == 'int16' else 255,
+                    scale=0.0001 if band['data_type'] == 'int16' else 1,
+                    data_type=band['data_type'],
+                    common_name=band['common_name'],
+                    resolution_x=params['resolution'],
+                    resolution_y=params['resolution'],
+                    resolution_unit='m',
+                    description='',
+                    mime_type='image/tiff'
+                ))
+
+            # save all indexes
+            for index in params['indexes']:
+                index['name'] = index['name'].strip()
+
+                if (cube.composite_function_schema_id == 'IDENTITY' and (index['name'] == 'CLEAROB' or index['name'] == 'TOTALOB')):
                     continue
 
-                is_not_cloud = band != 'quality' and band != 'cnc'
                 bands.append(Band(
-                    name=band,
+                    name=index['name'],
                     collection_id=cube.id,
-                    min=0 if is_not_cloud else 0,
-                    max=10000 if is_not_cloud else 255,
-                    fill=-9999 if is_not_cloud else 0,
-                    scale=0.0001 if is_not_cloud else 1,
-                    data_type='int16' if is_not_cloud else 'Uint16',
-                    common_name=band,
+                    min=0 if index['data_type'] == 'int16' else 0,
+                    max=10000 if index['data_type'] == 'int16' else 255,
+                    fill=-9999 if index['data_type'] == 'int16' else 255,
+                    scale=0.0001 if index['data_type'] == 'int16' else 1,
+                    data_type=index['data_type'],
+                    common_name=index['common_name'],
                     resolution_x=params['resolution'],
                     resolution_y=params['resolution'],
                     resolution_unit='m',
@@ -103,7 +121,18 @@ class CubeBusiness:
                 ))
         BaseModel.save_all(bands)
 
-        return cubes_serealized, 201
+        # set infos in process table (dynamoDB)
+        process_id = generate_hash_md5('{}-{}'.format(params['datacube'], datetime.now()))
+        params['indexes'] = [index['name'].strip() for index in params['indexes']]
+        self.services.put_process_table(
+            key=process_id,
+            infos=params
+        )
+
+        return dict(
+            cubes=cubes_serealized,
+            process_id=process_id
+        ), 201
 
     def get_cube_status(self, datacube):
         datacube_request = datacube
@@ -194,7 +223,21 @@ class CubeBusiness:
         ), 200
 
     def start_process(self, params):
-        cube_id = get_cube_id(params['datacube'], 'MED')
+        response = self.services.get_process_by_id(params['process_id'])
+        if 'Items' not in response or len(response['Items']) == 0:
+            raise NotFound('Process ID not found!')
+
+        # get process infos by dynameDB
+        process_info = response['Items'][0]
+        functions = json.loads(process_info['functions'])
+        indexes_list = json.loads(process_info['indexes'])
+        quality_band = process_info['quality_band']
+        datacube = process_info['datacube']
+
+        # get one function if != IDENTITY
+        base_function = [func for func in functions if func != 'IDENTITY'][0]
+        
+        cube_id = get_cube_id(datacube, base_function)
         tiles = params['tiles']
         start_date = datetime.strptime(params['start_date'], '%Y-%m-%d').strftime('%Y-%m-%d')
         end_date = datetime.strptime(params['end_date'], '%Y-%m-%d').strftime('%Y-%m-%d') \
@@ -209,19 +252,22 @@ class CubeBusiness:
 
         # get bands list
         bands = Band.query().filter(
-            Band.collection_id == get_cube_id(params['datacube'])
+            Band.collection_id == get_cube_id(datacube)
         ).all()
-        bands_list = [band.name for band in bands]
+        bands_list = []
+        for band in bands:
+            if band.name.upper() not in [i.upper() for i in indexes_list]:
+                bands_list.append(band.name)
 
         # items => old mosaic
         # orchestrate
-        self.score['items'] = orchestrate(params['datacube'], cube_infos, tiles, start_date, end_date)
+        self.score['items'] = orchestrate(datacube, cube_infos, tiles, start_date, end_date, functions)
 
         # prepare merge
-        prepare_merge(self, params['datacube'], params['collections'].split(','), params['satellite'], bands_list,
-            cube_infos.bands_quicklook, bands[0].resolution_x, bands[0].resolution_y, bands[0].fill,
-            cube_infos.raster_size_schemas.raster_size_x, cube_infos.raster_size_schemas.raster_size_y,
-            cube_infos.raster_size_schemas.chunk_size_x, cube_infos.grs_schema.crs, params.get('force'))
+        prepare_merge(self, datacube, params['collections'].split(','), params['satellite'], bands_list,
+            indexes_list, cube_infos.bands_quicklook, bands[0].resolution_x, bands[0].resolution_y, bands[0].fill,
+            cube_infos.raster_size_schemas.chunk_size_x, cube_infos.grs_schema.crs, quality_band, functions, 
+            params.get('force', False))
 
         return 'Succesfully', 201
 
@@ -257,22 +303,21 @@ class CubeBusiness:
             "e": float(bbox[2]),
             "s": float(bbox[3])
         }
-        tilesrsp4 = "+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs"
+        tile_srs_p4 = "+proj=longlat +ellps=GRS80 +datum=GRS80 +no_defs"
         if projection == 'aea':
-            tilesrsp4 = "+proj=aea +lat_1=10 +lat_2=-40 +lat_0=0 +lon_0={} +x_0=0 +y_0=0 +ellps=WGS84 +datum=WGS84 +units=m +no_defs".format(meridian)
+            tile_srs_p4 = "+proj=aea +lat_1=10 +lat_2=-40 +lat_0=0 +lon_0={} +x_0=0 +y_0=0 +ellps=GRS80 +datum=GRS80 +units=m +no_defs".format(meridian)
         elif projection == 'sinu':
-            tilesrsp4 = "+proj=sinu +lon_0={0} +x_0=0 +y_0=0 +a=6371007.181 +b=6371007.181 +units=m +no_defs".format(0.)
+            tile_srs_p4 = "+proj=sinu +lon_0={} +x_0=0 +y_0=0 +a=6371007.181 +b=6371007.181 +units=m +no_defs".format(meridian)
 
         # Number of tiles and base tile
-        numtilesx = int(360./degreesx)
-        numtilesy = int(180./degreesy)
-        hBase = numtilesx/2
-        vBase = numtilesy/2
-        logger.info('genwrs - hBase {} vBase {}'.format(hBase,vBase))
+        num_tiles_x = int(360./degreesx)
+        num_tiles_y = int(180./degreesy)
+        h_base = num_tiles_x/2
+        v_base = num_tiles_y/2
 
         # Tile size in meters (dx,dy) at center of system (argsmeridian,0.)
-        src_crs = '+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs'
-        dst_crs = tilesrsp4
+        src_crs = '+proj=longlat +ellps=GRS80 +datum=GRS80 +no_defs'
+        dst_crs = tile_srs_p4
         xs = [(meridian - degreesx/2), (meridian + degreesx/2), meridian, meridian, 0.]
         ys = [0., 0., -degreesy/2, degreesy/2, 0.]
         out = rasterio.warp.transform(src_crs, dst_crs, xs, ys, zs=None)
@@ -283,12 +328,12 @@ class CubeBusiness:
         dx = x2-x1
         dy = y2-y1
 
-        # Coordinates of WRS center (0.,0.) - top left coordinate of (hBase,vBase)
+        # Coordinates of WRS center (0.,0.) - top left coordinate of (h_base,v_base)
         xCenter =  out[0][4]
         yCenter =  out[1][4]
         # Border coordinates of WRS grid
-        xMin = xCenter - dx*hBase
-        yMax = yCenter + dy*vBase
+        xMin = xCenter - dx*h_base
+        yMax = yCenter + dy*v_base
 
         # Upper Left is (xl,yu) Bottom Right is (xr,yb)
         xs = [bbox_obj['w'], bbox_obj['e'], meridian, meridian]
@@ -311,12 +356,12 @@ class CubeBusiness:
             GrsSchema(
                 id=name,
                 description=description,
-                crs=tilesrsp4
+                crs=tile_srs_p4
             ).save()
 
         tiles = []
-        dst_crs = '+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs'
-        src_crs = tilesrsp4
+        dst_crs = '+proj=longlat +ellps=GRS80 +datum=GRS80 +no_defs'
+        src_crs = tile_srs_p4
         for ix in range(hMin, hMax+1):
             x1 = xMin + ix*dx
             x2 = x1 + dx
@@ -336,30 +381,40 @@ class CubeBusiness:
                 LL_lon = out[0][3]
                 LL_lat = out[1][3]
 
-                wkt_wgs84 = 'POLYGON(({} {},{} {},{} {},{} {},{} {}))'.format(
-                    UL_lon, UL_lat,
-                    UR_lon, UR_lat,
-                    LR_lon, LR_lat,
-                    LL_lon, LL_lat,
-                    UL_lon, UL_lat)
+                poly_wgs84 = from_shape(
+                    Polygon(
+                        [
+                            (UL_lon, UL_lat),
+                            (UR_lon, UR_lat),
+                            (LR_lon, LR_lat),
+                            (LL_lon, LL_lat),
+                            (UL_lon, UL_lat)
+                        ]
+                    ), 
+                    srid=4674
+                )
 
-                wkt = 'POLYGON(({} {},{} {},{} {},{} {},{} {}))'.format(
-                    x1, y2,
-                    x2, y2,
-                    x2, y1,
-                    x1, y1,
-                    x1, y2)
+                poly_aea = from_shape(
+                    Polygon(
+                        [
+                            (x1, y2),
+                            (x2, y2),
+                            (x2, y1),
+                            (x1, y1),
+                            (x1, y2)
+                        ]
+                    ), 
+                    srid=0
+                )
 
                 # Insert tile
                 tiles.append(Tile(
                     id='{0:03d}{1:03d}'.format(ix, iy),
                     grs_schema_id=name,
-                    geom_wgs84='SRID=4326;{}'.format(wkt_wgs84),
-                    geom='SRID=0;{}'.format(wkt),
-                    min_x=x1,
-                    max_y=y1
+                    geom_wgs84=poly_wgs84,
+                    geom=poly_aea
                 ))
-
+        
         BaseModel.save_all(tiles)
         return 'Grid {} created with successfully'.format(name), 201
 

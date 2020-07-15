@@ -11,6 +11,7 @@ from typing import List
 
 import numpy
 import rasterio
+import hashlib
 from dateutil.relativedelta import relativedelta
 from numpngw import write_png
 
@@ -233,7 +234,7 @@ def getMask(raster, satellite):
 
     efficacy, cloudratio = getMaskStats(rastercm)
 
-    return rastercm.astype(numpy.uint16), efficacy, cloudratio
+    return rastercm.astype(numpy.uint8), efficacy, cloudratio
 
 
 ############################
@@ -320,3 +321,9 @@ def revisit_by_satellite(satellite):
         'SENTINEL-2': 5,
     }
     return resolutions[satellite]
+
+
+############################
+def generate_hash_md5(word):
+    result = hashlib.md5(word.encode())
+    return result.hexdigest()

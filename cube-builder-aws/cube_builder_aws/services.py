@@ -16,7 +16,7 @@ from boto3.dynamodb.conditions import Key, Attr
 from botocore.errorfactory import ClientError
 from stac import STAC
 
-from config import DYNAMO_TB_ACTIVITY, DBNAME_TB_CONTROL, \
+from config import DYNAMO_TB_ACTIVITY, DBNAME_TB_CONTROL, DBNAME_TB_PROCESS, \
     QUEUE_NAME, KINESIS_NAME, LAMBDA_FUNCTION_NAME, \
     AWS_KEY_ID, AWS_SECRET_KEY
 
@@ -112,6 +112,32 @@ class CubeServices:
         	)
             # Wait until the table exists.
         	self.dynamoDBResource.meta.client.get_waiter('table_exists').wait(TableName=DBNAME_TB_CONTROL)
+
+        # Create the cubeBuilderActivitiesControl table in DynamoDB to manage activities completion
+        self.processTable = self.dynamoDBResource.Table(DBNAME_TB_PROCESS)
+        table_exists = False
+        try:
+        	self.processTable.creation_date_time
+        	table_exists = True
+        except:
+        	table_exists = False
+
+        if not table_exists:
+        	self.processTable = self.dynamoDBResource.create_table(
+        		TableName=DBNAME_TB_PROCESS,
+        		KeySchema=[
+        			{'AttributeName': 'id', 'KeyType': 'HASH' },
+        		],
+        		AttributeDefinitions=[
+        			{'AttributeName': 'id','AttributeType': 'S'},
+        		],
+        		ProvisionedThroughput={
+        			'ReadCapacityUnits': 2,
+        			'WriteCapacityUnits': 2
+        		}
+        	)
+            # Wait until the table exists.
+        	self.dynamoDBResource.meta.client.get_waiter('table_exists').wait(TableName=DBNAME_TB_PROCESS)
     
     def get_activities(self):
         # self.activitiesTable.meta.client.delete_table(TableName=DYNAMO_TB_ACTIVITY)
@@ -129,6 +155,11 @@ class CubeServices:
     def get_activity_item(self, query):
         return self.activitiesTable.get_item( 
             Key=query
+        )
+
+    def get_process_by_id(self, process_id):
+        return self.processTable.query(
+            KeyConditionExpression=Key('id').eq(process_id)
         )
 
     def get_cube_meta(self, cube,):
@@ -197,6 +228,18 @@ class CubeServices:
                 'instancesToBeDone': activity['instancesToBeDone'],
                 'totalInstancesToBeDone': activity['totalInstancesToBeDone'],
                 'activity': json.dumps(activity),
+            }
+        )
+        return True
+
+    def put_process_table(self, key, infos):
+        self.processTable.put_item(
+            Item = {
+                'id': key,
+                'datacube': infos['datacube'],
+                'functions': json.dumps(infos['composite_function']),
+                'indexes': json.dumps(infos['indexes']),
+                'quality_band': infos['quality_band']
             }
         )
         return True
@@ -348,8 +391,8 @@ class CubeServices:
                         scene['date'] = date
                         scene['band'] = band
                         scene['link'] = band_obj['href']
-                        if dataset == 'MOD13Q1' and band == 'quality':
-                            scene['link'] = scene['link'].replace('quality','reliability')
+                        if dataset == 'MOD13Q1' and band == activity['quality_band']:
+                            scene['link'] = scene['link'].replace(activity['quality_band'],'reliability')
 
                         # TODO: verify if scene['link'] exist 
 

@@ -12,6 +12,7 @@ import numpy
 import rasterio
 
 from datetime import datetime
+from pathlib import Path
 from geoalchemy2 import func
 from rasterio.transform import Affine 
 from rasterio.warp import reproject, Resampling, transform
@@ -27,37 +28,37 @@ from .utils.builder import decode_periods, encode_key, \
     getMaskStats, getMask, generateQLook, get_cube_id, get_resolution_by_satellite
 
 
-def orchestrate(datacube, cube_infos, tiles, start_date, end_date):
+def orchestrate(datacube, cube_infos, tiles, start_date, end_date, functions):
     # create collection_tiles
     tiles_by_grs = db.session() \
-        .query(Tile, func.ST_AsText(func.ST_BoundingDiagonal(Tile.geom_wgs84))) \
+        .query(Tile, 
+            (func.ST_XMin(Tile.geom)).label('min_x'),
+            (func.ST_YMax(Tile.geom)).label('max_y'),
+            (func.ST_XMax(Tile.geom) - func.ST_XMin(Tile.geom)).label('dist_x'),
+            (func.ST_YMax(Tile.geom) - func.ST_YMin(Tile.geom)).label('dist_y'),
+            (func.ST_AsText(func.ST_BoundingDiagonal(func.ST_Force2D(Tile.geom_wgs84)))).label('bbox')) \
         .filter(
             Tile.grs_schema_id == cube_infos.grs_schema_id,
             Tile.id.in_(tiles)
         ).all()
 
     collection_tiles = []
-    tiles = list(set(tiles))
     tiles_infos = {}
-    for tile in tiles:
-        # verify tile exists
-        tile_info = list(filter(lambda t: t[0].id == tile, tiles_by_grs))
-        if not tile_info:
-            return 'tile ({}) not found in GRS ({})'.format(tile, cube_infos.grs_schema_id), 404
-
-        tiles_infos[tile] = tile_info[0]
-        for function in ['IDENTITY', 'STK', 'MED']:
+    for tile in tiles_by_grs:
+        tile_id = tile.Tile.id
+        tiles_infos[tile_id] = tile
+        for function in functions:
             cube_id = get_cube_id(datacube, function)
             collection_tile = CollectionTile.query().filter(
                 CollectionTile.collection_id == cube_id,
                 CollectionTile.grs_schema_id == cube_infos.grs_schema_id,
-                CollectionTile.tile_id == tile
+                CollectionTile.tile_id == tile_id
             ).first()
             if not collection_tile:
                 collection_tiles.append(CollectionTile(
                     collection_id=cube_id,
                     grs_schema_id=cube_infos.grs_schema_id,
-                    tile_id=tile
+                    tile_id=tile_id
                 ))
     BaseModel.save_all(collection_tiles)
 
@@ -86,35 +87,32 @@ def orchestrate(datacube, cube_infos, tiles, start_date, end_date):
             if start_date is not None and p_startdate < start_date : continue
             if end_date is not None and p_enddate > end_date : continue
 
-            for tile in tiles:
-                bbox = tiles_infos[tile][1].replace('LINESTRING(', '') \
-                    .replace('LINESTRING Z (', '') \
-                    .replace(')', '') \
-                    .replace(' ', ',') \
-                    .split(',')
-                if len(bbox) != 4:
-                    del bbox[2]
-                    del bbox[-1]
+            for tile in tiles_by_grs:
+                tile_id = tile.Tile.id
+                bbox = tile.bbox
+                bbox_formated = bbox[bbox.find('(') + 1:bbox.find(')')].replace(' ', ',')
 
-                items[tile] = items.get(tile, {})
-                items[tile]['bbox'] = ','.join(bbox)
-                items[tile]['xmin'] = tiles_infos[tile][0].min_x
-                items[tile]['ymax'] = tiles_infos[tile][0].max_y
-                items[tile]['periods'] = items[tile].get('periods', {})
+                items[tile_id] = items.get(tile_id, {})
+                items[tile_id]['bbox'] = bbox_formated
+                items[tile_id]['xmin'] = tile.min_x
+                items[tile_id]['ymax'] = tile.max_y
+                items[tile_id]['dist_x'] = tile.dist_x
+                items[tile_id]['dist_y'] = tile.dist_y
+                items[tile_id]['periods'] = items[tile_id].get('periods', {})
 
-                item_id = '{}_{}_{}'.format(cube_infos.id, tile, p_basedate)
+                item_id = '{}_{}_{}'.format(cube_infos.id, tile_id, p_basedate)
                 if item_id not in items_id:
                     items_id.append(item_id)
                     if not list(filter(lambda c_i: c_i.id == item_id, collections_items)):
-                        items[tile]['periods'][periodkey] = {
+                        items[tile_id]['periods'][periodkey] = {
                             'collection': cube_infos.id,
                             'grs_schema_id': cube_infos.grs_schema_id,
-                            'tile_id': tile,
+                            'tile_id': tile_id,
                             'item_date': p_basedate,
                             'id': item_id,
                             'composite_start': p_startdate,
                             'composite_end': p_enddate,
-                            'dirname': '{}/{}/'.format(get_cube_id(datacube), tile)
+                            'dirname': '{}/{}/'.format(get_cube_id(datacube), tile_id)
                         }
     return items
 
@@ -154,8 +152,8 @@ def next_step(services, activity):
 ###############################
 # MERGE
 ###############################
-def prepare_merge(self, datacube, datasets, satellite, bands, quicklook, resx,
-                  resy, nodata, numcol, numlin, block_size, crs, force=False):
+def prepare_merge(self, datacube, datasets, satellite, bands, indexes, quicklook, resx,
+                  resy, nodata, block_size, crs, quality_band, functions, force=False):
     services = self.services
 
     # Build the basics of the merge activity
@@ -166,16 +164,19 @@ def prepare_merge(self, datacube, datasets, satellite, bands, quicklook, resx,
     activity['datasets'] = datasets
     activity['satellite'] = satellite
     activity['bands'] = bands
+    activity['indexes'] = indexes
     activity['quicklook'] = quicklook
     activity['resx'] = resx
     activity['resy'] = resy
-    activity['numcol'] = numcol
-    activity['numlin'] = numlin
     activity['nodata'] = nodata
     activity['block_size'] = block_size
     activity['srs'] = crs
     activity['bucket_name'] = services.bucket_name
     activity['url_stac'] = services.url_stac
+    activity['quality_band'] = quality_band
+    activity['functions'] = functions
+    activity['force'] = force
+    activity['internal_bands'] = ['CLEAROB', 'TOTALOB', 'PROVENANCE']
 
     logger.info('prepare merge - Score {} items'.format(self.score['items']))
 
@@ -186,6 +187,8 @@ def prepare_merge(self, datacube, datasets, satellite, bands, quicklook, resx,
         activity['bbox'] = self.score['items'][tileid]['bbox']
         activity['xmin'] = self.score['items'][tileid]['xmin']
         activity['ymax'] = self.score['items'][tileid]['ymax']
+        activity['dist_x'] = self.score['items'][tileid]['dist_x']
+        activity['dist_y'] = self.score['items'][tileid]['dist_y']
 
         # For all periods
         for periodkey in self.score['items'][tileid]['periods']:
@@ -279,7 +282,6 @@ def prepare_merge(self, datacube, datasets, satellite, bands, quicklook, resx,
                         activity['myend'] = 'EEEE-EE-EE'
                         activity['efficacy'] = '0'
                         activity['cloudratio'] = '100'
-                        activity['force'] = force
 
                         # Send to queue to activate merge lambda
                         services.put_item_kinesis(activity)
@@ -299,7 +301,7 @@ def merge_warped(self, activity):
     satellite = activity.get('satellite')
 
     # Flag to force merge generation without cache
-    force = activity.pop('force', False)
+    force = activity.get('force')
 
     try:
         # If ARDfile already exists, update activitiesTable and chech if this merge is the last one for the mosaic
@@ -309,7 +311,7 @@ def merge_warped(self, activity):
             try:
                 with rasterio.open('{}{}'.format(prefix, key)) as src:
                     values = src.read(1)
-                    if activity['band'] == 'quality':
+                    if activity['band'] == activity['quality_band']:
                         cloudratio, efficacy = getMaskStats(values)
 
                 # Update entry in DynamoDB
@@ -325,25 +327,42 @@ def merge_warped(self, activity):
                 _ = services.delete_file_S3(bucket_name=bucket_name, key=key)
 
         # Lets warp and merge
-        resx = int(activity['resx'])
-        resy = int(activity['resy'])
+        resx = float(activity['resx'])
+        resy = float(activity['resy'])
         xmin = float(activity['xmin'])
         ymax = float(activity['ymax'])
-        numcol = int(activity['numcol'])
-        numlin = int(activity['numlin'])
+        dist_x = float(activity['dist_x'])
+        dist_y = float(activity['dist_y'])
         block_size = int(activity['block_size'])
-        nodata = int(activity['nodata']) if 'nodata' in activity else -9999
-        transform = Affine(resx, 0, xmin, 0, -resy, ymax)
+        nodata = int(activity['nodata'])
+        band = activity['band']
+
+        num_pixel_x = round(dist_x / resx)
+        num_pixel_y = round(dist_y / resy)
+        new_res_x = dist_x / num_pixel_x
+        new_res_y = dist_y / num_pixel_y
+
+        numcol = num_pixel_x
+        numlin = num_pixel_y
+
+        transform = Affine(new_res_x, 0, xmin, 0, -new_res_y, ymax)
+
+        is_sentinel_landsat_quality_fmask = (satellite == 'LANDSAT' or satellite == 'SENTINEL-2') and band == activity['quality_band']
+        source_nodata = 0
 
         # Quality band is resampled by nearest, other are bilinear
-        band = activity['band']
-        if band == 'quality':
+        if band == activity['quality_band']:
             resampling = Resampling.nearest
 
-            raster = numpy.zeros((numlin, numcol,), dtype=numpy.uint16)
-            raster_merge = numpy.zeros((numlin, numcol,), dtype=numpy.uint16)
-            raster_mask = numpy.ones((numlin, numcol,), dtype=numpy.uint16)
             nodata = 0
+
+            if is_sentinel_landsat_quality_fmask:
+                nodata = 255  # temporally set nodata to 255 in order to reproject without losing valid 0 values
+                source_nodata = nodata
+
+            raster = numpy.zeros((numlin, numcol,), dtype=numpy.uint16)
+            raster_merge = numpy.full((numlin, numcol,), dtype=numpy.uint16, fill_value=source_nodata)
+            raster_mask = numpy.ones((numlin, numcol,), dtype=numpy.uint16)
         else:
             resampling = Resampling.bilinear
             raster = numpy.zeros((numlin, numcol,), dtype=numpy.int16)
@@ -351,6 +370,7 @@ def merge_warped(self, activity):
 
         # For all files
         template = None
+
         for url in activity['links']:
             with rasterio.Env(CPL_CURL_VERBOSE=False):
                 with rasterio.open(url) as src:
@@ -362,16 +382,13 @@ def merge_warped(self, activity):
                         'height': numlin
                     })
 
-                    source_nodata = 0
-
                     if src.profile['nodata'] is not None:
                         source_nodata = src.profile['nodata']
-                    elif satellite == 'LANDSAT':
-                        if band != 'quality':
-                            source_nodata = nodata
-                        else:
-                            source_nodata = 1
-                    elif 'CBERS' in satellite and band != 'quality':
+
+                    elif satellite == 'LANDSAT' and band != activity['quality_band']:
+                        source_nodata = nodata if src.profile['dtype'] == 'int16' else 0
+
+                    elif 'CBERS' in satellite and band != activity['quality_band']:
                         source_nodata = nodata
 
                     kwargs.update({
@@ -391,7 +408,7 @@ def merge_warped(self, activity):
                                 dst_nodata=nodata,
                                 resampling=resampling)
 
-                            if band != 'quality':
+                            if band != activity['quality_band'] or is_sentinel_landsat_quality_fmask:
                                 valid_data_scene = raster[raster != nodata]
                                 raster_merge[raster != nodata] = valid_data_scene.reshape(numpy.size(valid_data_scene))
                             else:
@@ -400,16 +417,17 @@ def merge_warped(self, activity):
 
                             if template is None:
                                 template = dst.profile
-                                if band != 'quality':
+                                if band != activity['quality_band']:
                                     template['dtype'] = 'int16'
                                     template['nodata'] = nodata
 
         # Evaluate cloud cover and efficacy if band is quality
         efficacy = 0
         cloudratio = 100
-        if activity['band'] == 'quality':
+        if activity['band'] == activity['quality_band']:
             raster_merge, efficacy, cloudratio = getMask(raster_merge, satellite)
-            template.update({'dtype': 'uint16'})
+            template.update({'dtype': 'uint8'})
+            nodata = 255
 
         # Save merged image on S3
         with MemoryFile() as memfile:
@@ -429,11 +447,13 @@ def merge_warped(self, activity):
 
         # Update entry in DynamoDB
         activity['myend'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        activity['efficacy'] = '{}'.format(int(efficacy))
-        activity['cloudratio'] = '{}'.format(int(cloudratio))
-        activity['raster_size_x'] = '{}'.format(numcol)
-        activity['raster_size_y'] = '{}'.format(numlin)
-        activity['block_size'] = '{}'.format(block_size)
+        activity['efficacy'] = str(int(efficacy))
+        activity['cloudratio'] = str(int(cloudratio))
+        activity['raster_size_x'] = str(numcol)
+        activity['raster_size_y'] = str(numlin)
+        activity['new_resolution_x'] = str(new_res_x)
+        activity['new_resolution_y'] = str(new_res_y)
+        activity['block_size'] = str(block_size)
         services.put_item_kinesis(activity)
 
         key = '{}activities/{}{}.json'.format(activity['dirname'], activity['dynamoKey'], activity['date'])
@@ -458,17 +478,19 @@ def next_blend(services, mergeactivity):
     blendactivity = {}
     blendactivity['action'] = 'blend'
     blendactivity['datacube'] = mergeactivity['datacube_orig_name']
-    for key in ['datasets','satellite', 'bands','quicklook','xmin','ymax','srs','tileid','start','end','dirname','nodata','bucket_name']:
+    for key in ['datasets','satellite', 'bands','quicklook','srs','functions',
+                'tileid','start','end','dirname','nodata','bucket_name', 'quality_band',
+                'internal_bands', 'force']:
         blendactivity[key] = mergeactivity[key]
-    blendactivity['totalInstancesToBeDone'] = len(blendactivity['bands'])-1
+    blendactivity['totalInstancesToBeDone'] = len(blendactivity['bands']) + len(blendactivity['internal_bands'])
 
     # Create  dynamoKey for the blendactivity record
     blendactivity['dynamoKey'] = encode_key(blendactivity, ['action','datacube','tileid','start','end'])
 
     # Fill the blendactivity fields with data for quality band from the DynamoDB merge records
     blendactivity['scenes'] = {}
-    blendactivity['band'] = 'quality'
-    mergeactivity['band'] = 'quality'
+    mergeactivity['band'] = mergeactivity['quality_band']
+    blendactivity['band'] = mergeactivity['quality_band']
     _ = fill_blend(services, mergeactivity, blendactivity)
 
     # Reset mycount in  activitiesControlTable
@@ -491,27 +513,36 @@ def next_blend(services, mergeactivity):
         services.put_item_kinesis(blendactivity)
         return False
 
-    # Fill the blendactivity fields with data for the other bands from the DynamoDB merge records (quality band is not a blend entry in DynamoDB)
-    for band in blendactivity['bands']:
-        if band == 'quality' or not blendactivity['datacube'].endswith('STK'):
-            continue
+    # Fill the blendactivity fields with data for the other bands from the DynamoDB merge records
+    for band in (blendactivity['bands'] + blendactivity['internal_bands']):
+        # if internal process, duplique first band and set the process in activity
+        internal_band = band if band in blendactivity['internal_bands'] else False
+        if internal_band:
+            band = blendactivity['bands'][0]
 
         mergeactivity['band'] = band
         blendactivity['band'] = band
-        blendactivity['sk'] = band
-        _ = fill_blend(services, mergeactivity, blendactivity)
+        _ = fill_blend(services, mergeactivity, blendactivity, internal_band)
+        
+        blendactivity['sk'] = internal_band if internal_band else band
 
         # Check if we are doing it again and if we have to do it because a different number of ARDfiles is present
-        response = services.get_activity_item({'id': blendactivity['dynamoKey'], 'sk': band })
+        response = services.get_activity_item(
+            {'id': blendactivity['dynamoKey'], 'sk': internal_band if internal_band else band })
 
         if 'Item' in response \
                 and response['Item']['mystatus'] == 'DONE' \
-                and response['Item']['instancesToBeDone'] == blendactivity['instancesToBeDone'] \
-                and services.s3_file_exists(bucket_name=mergeactivity['bucket_name'], key=blendactivity['MEDfile']) \
-                and services.s3_file_exists(bucket_name=mergeactivity['bucket_name'], key=blendactivity['STKfile']):
-            blendactivity['mystatus'] = 'DONE'
-            next_step(services, blendactivity)
-            continue
+                and response['Item']['instancesToBeDone'] == blendactivity['instancesToBeDone']:
+
+            exists = True
+            for func in blendactivity['functions']:
+                if func == 'IDENTITY' or (func == 'MED' and internal_band == 'PROVENANCE'): continue
+                if not services.s3_file_exists(bucket_name=mergeactivity['bucket_name'], key=blendactivity['{}file'.format(func)]):
+                    exists = False
+            if not blendactivity.get('force') and exists:
+                blendactivity['mystatus'] = 'DONE'
+                next_step(services, blendactivity)
+                continue
 
         # Blend has not been performed, do it
         blendactivity['mystatus'] = 'NOTDONE'
@@ -529,11 +560,12 @@ def next_blend(services, mergeactivity):
 
         # Leave room for next band in blendactivity
         for datedataset in blendactivity['scenes']:
-            if band in blendactivity['scenes'][datedataset]['ARDfiles']:
+            if band in blendactivity['scenes'][datedataset]['ARDfiles'] \
+                and band != mergeactivity['quality_band']:
                 del blendactivity['scenes'][datedataset]['ARDfiles'][band]
     return True
 
-def fill_blend(services, mergeactivity, blendactivity):
+def fill_blend(services, mergeactivity, blendactivity, internal_band=False):
     # Fill blend activity fields with data for band from the DynamoDB merge records
     band = blendactivity['band']
     blendactivity['instancesToBeDone'] = 0
@@ -542,7 +574,12 @@ def fill_blend(services, mergeactivity, blendactivity):
     items = []
     for date in mergeactivity['list_dates']:
         mergeactivity['date_formated'] = date
+
+        # verify if internal process
+        if internal_band:
+            blendactivity['internal_band'] = internal_band
         dynamoKey = encode_key(mergeactivity, ['action','datacube','tileid','date_formated','band'])
+        
         response = services.get_activities_by_key(dynamoKey)
         if 'Items' not in response or len(response['Items']) == 0:
             return False
@@ -570,11 +607,17 @@ def fill_blend(services, mergeactivity, blendactivity):
         blendactivity['scenes'][datedataset]['ARDfiles'][band] = basename
 
     blendactivity['instancesToBeDone'] += len(items)
-    if band != 'quality':
-        for function in ['MED', 'STK']:
+    if band != blendactivity['quality_band']:
+        for function in blendactivity['functions']:
+            if func == 'IDENTITY': continue
             cube_id = '{}_{}'.format(blendactivity['datacube'], function)
             blendactivity['{}file'.format(function)] = '{0}/{1}/{2}_{3}/{0}_{1}_{2}_{3}_{4}.tif'.format(
                 cube_id, blendactivity['tileid'], blendactivity['start'], blendactivity['end'], band)
+    else:
+        # quality band generate only STK composite
+        cube_id = '{}_{}'.format(blendactivity['datacube'], 'STK')
+        blendactivity['{}file'.format('STK')] = '{0}/{1}/{2}_{3}/{0}_{1}_{2}_{3}_{4}.tif'.format(
+            cube_id, blendactivity['tileid'], blendactivity['start'], blendactivity['end'], band)
     return True
 
 def blend(self, activity):
@@ -582,12 +625,16 @@ def blend(self, activity):
     services = self.services
 
     activity['mystart'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    activity['sk'] = activity['band']
-    band = activity['band']
-    numscenes = len(activity['scenes'])
-    nodata = activity.get('nodata', -9999)
+    activity['sk'] = activity['band'] if not activity.get('internal_band') else activity['internal_band']
     bucket_name = activity['bucket_name']
     prefix = services.get_s3_prefix(bucket_name)
+
+    band = activity['band']
+    numscenes = len(activity['scenes'])
+
+    nodata = int(activity.get('nodata', -9999))
+    if band == activity['quality_band']:
+        nodata = 255
 
     # Check if band ARDfiles are in activity
     for datedataset in activity['scenes']:
@@ -613,8 +660,7 @@ def blend(self, activity):
             profile.update({
                 'compress': 'LZW',
                 'tiled': True,
-                'blockxsize': activity.get('chunk_size_x', 512),
-                'blockysize': activity.get('chunk_size_y', 512)
+                'interleave': 'pixel',
             })
             tilelist = list(src.block_windows())
 
@@ -639,11 +685,11 @@ def blend(self, activity):
             filename = os.path.join(
                 prefix + activity['dirname'],
                 scene['date'],
-                scene['ARDfiles']['quality'])
+                scene['ARDfiles'][activity['quality_band']])
             try:
                 masklist.append(rasterio.open(filename))
             except:
-                activity['mystatus'] = 'ERROR',
+                activity['mystatus'] = 'ERROR'
                 activity['errors'] = dict(
                     step= 'blend',
                     message='ERROR {}'.format(os.path.basename(filename))
@@ -659,7 +705,7 @@ def blend(self, activity):
             try:
                 bandlist.append(rasterio.open(filename))
             except:
-                activity['mystatus'] = 'ERROR',
+                activity['mystatus'] = 'ERROR'
                 activity['errors'] = dict(
                     step= 'blend',
                     message='ERROR {}'.format(os.path.basename(filename))
@@ -671,97 +717,129 @@ def blend(self, activity):
         width = profile['width']
         height = profile['height']
 
-        # STACK will be generated in memory
+        # STACK and MED will be generated in memory
         stack_raster = numpy.full((height, width), dtype=profile['dtype'], fill_value=nodata)
+        if 'MED' in activity['functions']:
+            median_raster = numpy.full((height, width), dtype=profile['dtype'], fill_value=nodata)
 
-        # create file to save count no cloud
-        build_cnc = activity['bands'][0] == band
-        if build_cnc:
-            cloud_cloud_file = '/tmp/cnc.tif'
-            count_cloud_dataset = rasterio.open(cloud_cloud_file, mode='w', **profile)
+        # Build the stack total observation
+        build_total_observation = activity.get('internal_band') == 'TOTALOB'
+        if build_total_observation:
+            stack_total_observation = numpy.zeros((height, width), dtype=numpy.uint8)
 
-        with MemoryFile() as medianfile:
-            with medianfile.open(**profile) as mediandataset:
-                for _, window in tilelist:
-                    # Build the stack to store all images as a masked array.
-                    # At this stage the array will contain the masked data
-                    stackMA = numpy.ma.zeros((numscenes, window.height, window.width), dtype=numpy.int16)
+        # create file to save clear observation, total oberservation and provenance
+        build_clear_observation = activity.get('internal_band') == 'CLEAROB'
+        if build_clear_observation:
+            clear_ob_file = '/tmp/clearob.tif'
+            clear_ob_profile = profile.copy()
+            clear_ob_profile['dtype'] = 'uint8'
+            clear_ob_profile['nodata'] = 255
+            clear_ob_dataset = rasterio.open(clear_ob_file, mode='w', **clear_ob_profile)
 
-                    notdonemask = numpy.ones(shape=(window.height,window.width),dtype=numpy.bool_)
+        # Build the stack total observation
+        build_provenance = activity.get('internal_band') == 'PROVENANCE'
+        if build_provenance:
+            provenance_array = numpy.full((height, width), dtype=numpy.int16, fill_value=-1)
 
-                    row_offset = window.row_off + window.height
-                    col_offset = window.col_off + window.width
+        for _, window in tilelist:
+            # Build the stack to store all images as a masked array. At this stage the array will contain the masked data
+            stackMA = numpy.ma.zeros((numscenes, window.height, window.width), dtype=numpy.int16)
 
-                    # For all pair (quality,band) scenes
-                    for order in range(numscenes):
-                        ssrc = bandlist[order]
-                        msrc = masklist[order]
-                        raster = ssrc.read(1, window=window)
-                        mask = msrc.read(1, window=window)
-                        # Mask valid data (0 and 1) as True
-                        mask[mask < 2] = 1
-                        # Mask cloud/snow/shadow/no-data as False
-                        mask[mask >= 2] = 0
-                        # Ensure that Raster nodata value (-9999 maybe) is set to False
-                        mask[raster == nodata] = 0
+            notdonemask = numpy.ones(shape=(window.height, window.width), dtype=numpy.bool_)
 
-                        # Create an inverse mask value in order to pass to numpy masked array
-                        # True => nodata
-                        bmask = numpy.invert(mask.astype(numpy.bool_))
+            row_offset = window.row_off + window.height
+            col_offset = window.col_off + window.width
 
-                        # Use the mask to mark the fill (0) and cloudy (2) pixels
-                        stackMA[order] = numpy.ma.masked_where(bmask, raster)
+            # For all pair (quality,band) scenes
+            for order in range(numscenes):
+                # Read both chunk of Merge and Quality, respectively.
+                ssrc = bandlist[order]
+                msrc = masklist[order]
+                raster = ssrc.read(1, window=window)
+                mask = msrc.read(1, window=window)
 
-                        # Find all no data in destination STACK image
-                        stack_raster_where_nodata = numpy.where(
-                            stack_raster[window.row_off: row_offset, window.col_off: col_offset] == nodata
-                        )
+                if build_total_observation:
+                    copy_mask = numpy.array(mask, copy=True)
 
-                        # Turns into a 1-dimension
-                        stack_raster_nodata_pos = numpy.ravel_multi_index(stack_raster_where_nodata,
-                                                                          stack_raster[window.row_off: row_offset,
-                                                                          window.col_off: col_offset].shape)
+                # Mask valid data (0 and 1) as True
+                mask[mask < 2] = 1
+                # Mask cloud/snow/shadow/no-data as False
+                mask[mask >= 2] = 0
+                # Ensure that Raster noda value (-9999 maybe) is set to False
+                mask[raster == nodata] = 0
 
-                        # Find all valid/cloud in destination STACK image
-                        raster_where_data = numpy.where(raster != nodata)
-                        raster_data_pos = numpy.ravel_multi_index(raster_where_data, raster.shape)
+                # Create an inverse mask value in order to pass to numpy masked array
+                # True => nodata
+                bmask = numpy.invert(mask.astype(numpy.bool_))
 
-                        # Match stack nodata values with observation
-                        # stack_raster_where_nodata && raster_where_data
-                        intersect_ravel = numpy.intersect1d(stack_raster_nodata_pos, raster_data_pos)
+                # Use the mask to mark the fill (0) and cloudy (2) pixels
+                stackMA[order] = numpy.ma.masked_where(bmask, raster)
 
-                        if len(intersect_ravel):
-                            where_intersec = numpy.unravel_index(intersect_ravel, raster.shape)
-                            stack_raster[window.row_off: row_offset, window.col_off: col_offset][where_intersec] = \
-                            raster[where_intersec]
+                if build_total_observation:
+                    # Copy Masked values in order to stack total observation
+                    copy_mask[copy_mask <= 4] = 1
+                    copy_mask[copy_mask >= 5] = 0
 
-                        # Identify what is needed to stack, based in Array 2d bool
-                        todomask = notdonemask * numpy.invert(bmask)
+                    stack_total_observation[window.row_off: row_offset, window.col_off: col_offset] += copy_mask
 
-                        # Find all positions where valid data matches.
-                        clear_not_done_pixels = numpy.where(numpy.logical_and(todomask, mask.astype(numpy.bool)))
+                # Get current observation file name
+                if build_provenance:
+                    file_name = Path(bandlist[order].name).stem
+                    file_date = file_name.split('_')[3]
+                    day_of_year = datetime.strptime(file_date, '%Y-%m-%d').timetuple().tm_yday
 
-                        # Override the STACK Raster with valid data.
-                        stack_raster[window.row_off: row_offset, window.col_off: col_offset][clear_not_done_pixels] = \
-                        raster[clear_not_done_pixels]
+                # Find all no data in destination STACK image
+                stack_raster_where_nodata = numpy.where(
+                    stack_raster[window.row_off: row_offset, window.col_off: col_offset] == nodata
+                )
 
-                        # Update what was done.
-                        notdonemask = notdonemask * bmask
+                # Turns into a 1-dimension
+                stack_raster_nodata_pos = numpy.ravel_multi_index(stack_raster_where_nodata,
+                                                                    stack_raster[window.row_off: row_offset,
+                                                                    window.col_off: col_offset].shape)
 
-                    median_raster = numpy.ma.median(stackMA, axis=0).data
-                    median_raster[notdonemask.astype(numpy.bool_)] = nodata
-                    mediandataset.write(median_raster.astype(profile['dtype']), window=window, indexes=1)
+                # Find all valid/cloud in destination STACK image
+                raster_where_data = numpy.where(raster != nodata)
+                raster_data_pos = numpy.ravel_multi_index(raster_where_data, raster.shape)
 
-                    if build_cnc:
-                        count_raster = numpy.ma.count(stackMA, axis=0)
-                        count_cloud_dataset.write(count_raster.astype(profile['dtype']), window=window, indexes=1)
+                # Match stack nodata values with observation
+                # stack_raster_where_nodata && raster_where_data
+                intersect_ravel = numpy.intersect1d(stack_raster_nodata_pos, raster_data_pos)
 
-                if band != 'quality':
-                    mediandataset.nodata = nodata
-                mediandataset.build_overviews([2, 4, 8, 16, 32, 64], Resampling.nearest)
-                mediandataset.update_tags(ns='rio_overview', resampling='nearest')
+                if len(intersect_ravel):
+                    where_intersec = numpy.unravel_index(intersect_ravel, raster.shape)
+                    stack_raster[window.row_off: row_offset, window.col_off: col_offset][where_intersec] = \
+                    raster[where_intersec]
 
-            services.upload_fileobj_S3(medianfile, activity['MEDfile'], {'ACL': 'public-read'}, bucket_name=bucket_name)
+                    if build_provenance:
+                        provenance_array[window.row_off: row_offset, window.col_off: col_offset][where_intersec] = day_of_year
+
+                # Identify what is needed to stack, based in Array 2d bool
+                todomask = notdonemask * numpy.invert(bmask)
+
+                # Find all positions where valid data matches.
+                clear_not_done_pixels = numpy.where(numpy.logical_and(todomask, mask.astype(numpy.bool)))
+
+                # Override the STACK Raster with valid data.
+                stack_raster[window.row_off: row_offset, window.col_off: col_offset][clear_not_done_pixels] = \
+                raster[clear_not_done_pixels]
+
+                if build_provenance:
+                    # Mark day of year to the valid pixels
+                    provenance_array[window.row_off: row_offset, window.col_off: col_offset][clear_not_done_pixels] = day_of_year
+
+                # Update what was done.
+                notdonemask = notdonemask * bmask
+
+            if 'MED' in activity['functions']:
+                median = numpy.ma.median(stackMA, axis=0).data
+                median[notdonemask.astype(numpy.bool_)] = nodata
+                median_raster[window.row_off: row_offset, window.col_off: col_offset] = median.astype(profile['dtype'])
+
+            if build_clear_observation:
+                count_raster = numpy.ma.count(stackMA, axis=0)
+                clear_ob_dataset.nodata = 255
+                clear_ob_dataset.write(count_raster.astype(clear_ob_profile['dtype']), window=window, indexes=1)
 
         # Close all input dataset
         for order in range(numscenes):
@@ -774,26 +852,63 @@ def blend(self, activity):
         activity['raster_size_y'] = height
         activity['raster_size_x'] = width
 
-        # Upload the CNC dataset
-        if build_cnc:
-            count_cloud_dataset.close()
-            count_cloud_dataset = None
+        # Upload the CLEAROB dataset
+        if build_clear_observation:
+            clear_ob_dataset.close()
+            clear_ob_dataset = None
+            for func in activity['functions']:
+                if func == 'IDENTITY': continue
+                key_clearob = '_'.join(activity['{}file'.format(func)].split('_')[:-1]) + '_CLEAROB.tif'
+                services.upload_file_S3(clear_ob_file, key_clearob, {'ACL': 'public-read'}, bucket_name=bucket_name)
+            os.remove(clear_ob_file)
 
-            key_cnc_med = '_'.join(activity['MEDfile'].split('_')[:-1]) + '_cnc.tif'
-            key_cnc_stk = '_'.join(activity['STKfile'].split('_')[:-1]) + '_cnc.tif'
-            services.upload_file_S3(cloud_cloud_file, key_cnc_med, {'ACL': 'public-read'}, bucket_name=bucket_name)
-            services.upload_file_S3(cloud_cloud_file, key_cnc_stk, {'ACL': 'public-read'}, bucket_name=bucket_name)
-            os.remove(cloud_cloud_file)
+        # Upload the PROVENANCE dataset
+        if build_provenance and 'STK' in activity['functions']:
+            provenance_profile = profile.copy()
+            provenance_profile.pop('nodata',  -1)
+            provenance_profile['dtype'] = 'int16'
+            with MemoryFile() as memfile_provenance:
+                with memfile_provenance.open(**provenance_profile) as ds_provenance:
+                    ds_provenance.write_band(1, provenance_array)
+                    provenance_key = '_'.join(activity['STKfile'].split('_')[:-1]) + '_PROVENANCE.tif'
+                services.upload_fileobj_S3(memfile_provenance, provenance_key, {'ACL': 'public-read'}, bucket_name=bucket_name)
+
+        # Upload the TOTALOB dataset
+        if build_total_observation:
+            total_observation_profile = profile.copy()
+            total_observation_profile.pop('nodata', None)
+            total_observation_profile['dtype'] = 'uint8'
+            for func in activity['functions']:
+                if func == 'IDENTITY': continue
+                with MemoryFile() as memfile_totalob:
+                    with memfile_totalob.open(**total_observation_profile) as ds_totalob:
+                        ds_totalob.write_band(1, stack_total_observation)
+                        total_ob_key = '_'.join(activity['{}file'.format(func)].split('_')[:-1]) + '_TOTALOB.tif'
+                    services.upload_fileobj_S3(memfile_totalob, total_ob_key, {'ACL': 'public-read'}, bucket_name=bucket_name)
 
         # Create and upload the STACK dataset
-        with MemoryFile() as memfile:
-            with memfile.open(**profile) as ds_stack:
-                if band != 'quality':
-                    ds_stack.nodata = nodata
-                ds_stack.write_band(1, stack_raster)
-                ds_stack.build_overviews([2, 4, 8, 16, 32, 64], Resampling.nearest)
-                ds_stack.update_tags(ns='rio_overview', resampling='nearest')
-            services.upload_fileobj_S3(memfile, activity['STKfile'], {'ACL': 'public-read'}, bucket_name=bucket_name)
+        if 'STK' in activity['functions']:
+            if not activity.get('internal_band'):
+                with MemoryFile() as memfile:
+                    with memfile.open(**profile) as ds_stack:
+                        if band != activity['quality_band']:
+                            ds_stack.nodata = nodata
+                        ds_stack.write_band(1, stack_raster)
+                        ds_stack.build_overviews([2, 4, 8, 16, 32, 64], Resampling.nearest)
+                        ds_stack.update_tags(ns='rio_overview', resampling='nearest')
+                    services.upload_fileobj_S3(memfile, activity['STKfile'], {'ACL': 'public-read'}, bucket_name=bucket_name)
+
+        # Create and upload the STACK dataset
+        if 'MED' in activity['functions']:
+            if not activity.get('internal_band'):
+                with MemoryFile() as memfile:
+                    with memfile.open(**profile) as ds_median:
+                        if band != activity['quality_band']:
+                            ds_median.nodata = nodata
+                        ds_median.write_band(1, median_raster)
+                        ds_median.build_overviews([2, 4, 8, 16, 32, 64], Resampling.nearest)
+                        ds_median.update_tags(ns='rio_overview', resampling='nearest')
+                    services.upload_fileobj_S3(memfile, activity['MEDfile'], {'ACL': 'public-read'}, bucket_name=bucket_name)
 
         # Update status and end time in DynamoDB
         activity['myend'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -817,8 +932,9 @@ def blend(self, activity):
 def next_publish(services, blendactivity):
     # Fill the publish activity from blend activity
     publishactivity = {}
-    for key in ['datacube','satellite','datasets','bands','quicklook','xmin','ymax','srs','tileid','start','end', \
-        'dirname', 'cloudratio', 'raster_size_x', 'raster_size_y', 'chunk_size_x', 'chunk_size_y', 'bucket_name']:
+    for key in ['datacube','satellite','datasets','bands','quicklook','tileid','start','end', \
+        'dirname', 'cloudratio', 'raster_size_x', 'raster_size_y', 'chunk_size_x', 'chunk_size_y', 'bucket_name',
+        'quality_band', 'internal_bands', 'functions']:
         publishactivity[key] = blendactivity.get(key)
     publishactivity['action'] = 'publish'
 
@@ -831,6 +947,7 @@ def next_publish(services, blendactivity):
     items = response['Items']
     publishactivity['scenes'] = {}
     publishactivity['blended'] = {}
+    example_file_name = ''
     for item in items:
         activity = json.loads(item['activity'])
         band = item['sk']
@@ -841,7 +958,7 @@ def next_publish(services, blendactivity):
             scene = activity['scenes'][datedataset]
             if datedataset not in publishactivity['scenes']:
                 publishactivity['scenes'][datedataset] = {'ARDfiles' : {}}
-                publishactivity['scenes'][datedataset]['ARDfiles']['quality'] = scene['ARDfiles']['quality']
+                publishactivity['scenes'][datedataset]['ARDfiles'][publishactivity['quality_band']] = scene['ARDfiles'][publishactivity['quality_band']]
                 publishactivity['scenes'][datedataset]['date'] = scene['date']
                 publishactivity['scenes'][datedataset]['dataset'] = scene['dataset']
                 publishactivity['scenes'][datedataset]['satellite'] = scene['satellite']
@@ -853,8 +970,22 @@ def next_publish(services, blendactivity):
 
         # Get blended files
         publishactivity['blended'][band] = {}
-        publishactivity['blended'][band]['MEDfile'] = activity['MEDfile']
-        publishactivity['blended'][band]['STKfile'] = activity['STKfile']
+        for func in publishactivity['functions']:
+            if func == 'IDENTITY': continue
+            if func == 'MED' and band == publishactivity['quality_band']: continue
+            key_file = '{}file'.format(func)
+            publishactivity['blended'][band][key_file] = activity[key_file]
+            example_file_name = activity[key_file]
+
+    for internal_band in publishactivity['internal_bands']:
+        # Create indices to catalog CLEAROB, TOTALOB, PROVENANCE, ...
+        publishactivity['blended'][internal_band] = {}
+        for func in publishactivity['functions']:
+            if func == 'IDENTITY': continue
+            if func == 'MED' and internal_band == 'PROVENANCE': continue
+            key_file = '{}file'.format(func)
+            file_name = '_'.join(example_file_name.split('_')[:-1]) + '_{}.tif'.format(internal_band)
+            publishactivity['blended'][internal_band][key_file] = file_name
 
     publishactivity['sk'] = 'ALLBANDS'
     publishactivity['mystatus'] = 'NOTDONE'
@@ -883,7 +1014,9 @@ def publish(self, activity):
 
         # Generate quicklooks for CUBES (MEDIAN, STACK ...)
         qlbands = activity['quicklook'].split(',')
-        for function in ['MED', 'STK']:
+        for function in activity['functions']:
+            if function == 'IDENTITY': continue
+
             cube_id = get_cube_id(activity['datacube'], function)
             general_scene_id = '{}_{}_{}_{}'.format(
                 cube_id, activity['tileid'], activity['start'], activity['end'])
@@ -921,7 +1054,9 @@ def publish(self, activity):
             os.remove(pngname)
 
         # register collection_items and assets in DB (MEDIAN, STACK ...)
-        for function in ['MED', 'STK']:
+        for function in activity['functions']:
+            if function == 'IDENTITY': continue
+
             cube_id = '{}_{}'.format(activity['datacube'], function)
             cube = Collection.query().filter(
                 Collection.id == cube_id
@@ -962,7 +1097,7 @@ def publish(self, activity):
                     Band.collection_id == cube_id
                 ).all()
                 for band in activity['bands']:
-                    if band == 'quality' and function != 'STK':
+                    if band == activity['quality_band'] and function != 'STK':
                         continue
                     band_id = list(filter(lambda b: str(b.common_name) == band, bands_by_cube))
                     if not band_id:
@@ -976,11 +1111,11 @@ def publish(self, activity):
                         collection_item_id=general_scene_id,
                         url='{}/{}'.format(bucket_name, activity['blended'][band][function + 'file']),
                         source=None,
-                        raster_size_x=activity['raster_size_x'],
-                        raster_size_y=activity['raster_size_y'],
+                        raster_size_x=float(activity['raster_size_x']),
+                        raster_size_y=float(activity['raster_size_y']),
                         raster_size_t=1,
-                        chunk_size_x=activity['chunk_size_x'],
-                        chunk_size_y=activity['chunk_size_y'],
+                        chunk_size_x=int(activity['chunk_size_x']),
+                        chunk_size_y=int(activity['chunk_size_y']),
                         chunk_size_t=1
                     ).save(commit=False)
             db.session.commit()
@@ -1043,11 +1178,11 @@ def publish(self, activity):
                         collection_item_id=general_scene_id,
                         url='{}/{}'.format(bucket_name, os.path.join(activity['dirname'], str(scene['date'])[0:10], scene['ARDfiles'][band])),
                         source=None,
-                        raster_size_x=raster_size_x,
-                        raster_size_y=raster_size_y,
+                        raster_size_x=float(raster_size_x),
+                        raster_size_y=float(raster_size_y),
                         raster_size_t=1,
-                        chunk_size_x=block_size,
-                        chunk_size_y=block_size,
+                        chunk_size_x=int(block_size),
+                        chunk_size_y=int(block_size),
                         chunk_size_t=1
                     ).save(commit=False)
             db.session.commit()
