@@ -6,14 +6,13 @@
 # under the terms of the MIT License; see LICENSE file for more details.
 #
 
-from typing import List
-import numpy
 import datetime
+from typing import List
+
+import numpy
 import rasterio
-from datetime import timedelta
 from dateutil.relativedelta import relativedelta
 from numpngw import write_png
-from scipy import ndimage as ndi
 
 
 #############################
@@ -23,24 +22,24 @@ def get_date(str_date):
 
 #############################
 def days_in_month(date):
-	year = int(date.split('-')[0])
-	month = int(date.split('-')[1])
-	nday = int(date.split('-')[2])
-	if month == 12:
-		nmonth = 1
-		nyear = year +1
-	else:
-		nmonth = month + 1
-		nyear = year
-	ndate = '{0:4d}-{1:02d}-{2:02d}'.format(nyear,nmonth,nday)
-	td = numpy.datetime64(ndate) - numpy.datetime64(date)
-	return td
+    year = int(date.split('-')[0])
+    month = int(date.split('-')[1])
+    nday = int(date.split('-')[2])
+    if month == 12:
+        nmonth = 1
+        nyear = year +1
+    else:
+        nmonth = month + 1
+        nyear = year
+    ndate = '{0:4d}-{1:02d}-{2:02d}'.format(nyear,nmonth,nday)
+    td = numpy.datetime64(ndate) - numpy.datetime64(date)
+    return td
 
 
 #############################
 def decode_periods(temporal_schema, start_date, end_date, time_step):
     """
-	Retrieve datacube temporal resolution by periods.
+    Retrieve datacube temporal resolution by periods.
     """
     requested_periods = {}
     if start_date is None:
@@ -155,68 +154,61 @@ def decode_periods(temporal_schema, start_date, end_date, time_step):
 
 #############################
 def encode_key(activity, keylist):
-	dynamoKey = ''
-	for key in keylist:
-		dynamoKey += activity[key]
-	return dynamoKey
+    dynamoKey = ''
+    for key in keylist:
+        dynamoKey += activity[key]
+    return dynamoKey
 
 
 ############################
 def getMaskStats(mask):
-	totpix   = mask.size
-	clearpix = numpy.count_nonzero(mask == 1)
-	cloudpix = numpy.count_nonzero(mask == 2)
-	imagearea = clearpix + cloudpix
+    totpix   = mask.size
+    clearpix = numpy.count_nonzero(mask <= 1)
+    cloudpix = numpy.count_nonzero(mask >= 2)
+    imagearea = clearpix + cloudpix
 
-	cloud_ratio = 100
-	if imagearea != 0:
-		cloud_ratio = round(100. * cloudpix / imagearea, 1)
-		
-	efficacy = round(100. * clearpix / totpix, 2)
-	return cloud_ratio, efficacy
+    cloud_ratio = 100
+    if imagearea != 0:
+        cloud_ratio = round(100. * cloudpix / imagearea, 1)
+
+    efficacy = round(100. * clearpix / totpix, 2)
+    return cloud_ratio, efficacy
 
 
 ############################
 def getMask(raster, satellite):
-    # Output Cloud Mask codes
-    # 0 - fill
-    # 1 - clear data
-    # 0 - cloud
-	if satellite == 'LANDSAT':
-		# Input pixel_qa codes
-		fill = 1 				# warped images have 0 as fill area
-		terrain = 2					# 0000 0000 0000 0010
-		radsat = 4+8				# 0000 0000 0000 1100
-		cloud = 16+32+64			# 0000 0000 0110 0000
-		shadow = 128+256			# 0000 0001 1000 0000
-		snowice = 512+1024			# 0000 0110 0000 0000
-		cirrus = 2048+4096			# 0001 1000 0000 0000
+    """Retrieves and re-sample quality raster to well-known values used in Brazil Data Cube.
 
-		# Start with a zeroed image imagearea
-		imagearea = numpy.zeros(raster.shape, dtype=numpy.bool_)
-		# Mark with True the pixels that contain valid data
-		imagearea = imagearea + raster > fill
-		# Create a notcleararea mask with True where the quality criteria is as follows
-		notcleararea = (raster & radsat > 4) + \
-            (raster & cloud > 64) + \
-            (raster & shadow > 256) + \
-            (raster & snowice > 512) + \
-            (raster & cirrus > 4096)
+    We adopted the `Fmask <https://github.com/GERSL/Fmask>`_ (Function of Mask).
+    TODO: Add paper/authors reference
 
-		strel = numpy.ones((6, 6), dtype=numpy.uint16)
-		out = numpy.empty(notcleararea.shape, dtype=numpy.bool)
-		ndi.binary_dilation(notcleararea, structure=strel, output=out)
-		notcleararea = out
+    In the Fmask output product, the following classes are presented in a normative quality:
 
-		remove_small_holes(notcleararea, area_threshold=80, connectivity=1, in_place=True)
+    - 0: Clear Land Pixel
+    - 1: Clear Water Pixel
+    - 2: Cloud Shadow
+    - 3: Snow-ice
+    - 4: Cloud
+    - 255: no observation
 
-		# Clear area is the area with valid data and with no Cloud or Snow
-		cleararea = imagearea * numpy.invert(notcleararea)
-		# Code the output image rastercm as the output codes
-		rastercm = (2*notcleararea + cleararea).astype(numpy.uint16)  # .astype(numpy.uint8)
+    For satellite which does not supports these values, consider to expose individual values.
+    For example:
+        CBERS does not have `Snow-ice`, `Water` or `Cloud Shadow` pixel values. The following values are described
+        in CBERS quality band:
+        - `0`: Fill/Nodata. Re-sample to `No observation` (255);
+        - `127: Valid Data. Re-sample to `Clear Land Pixel` (0);
+        - `255`: Cloudy. Re-sample to `Cloud` (4)
 
-	elif satellite == 'MODIS':
-		# MOD13Q1 Pixel Reliability !!!!!!!!!!!!!!!!!!!!
+    Args:
+        raster - Raster with Quality band values
+        satellite - Satellite Type
+
+    Returns:
+        Tuple containing formatted quality raster, efficacy and cloud ratio, respectively
+    """
+    rastercm = raster
+    if satellite == 'MODIS':
+        # MOD13Q1 Pixel Reliability !!!!!!!!!!!!!!!!!!!!
         # Note that 1 was added to this image in downloadModis because of warping
         # Rank/Key Summary QA 		Description
         # -1 		Fill/No Data 	Not Processed
@@ -224,50 +216,24 @@ def getMask(raster, satellite):
         # 1 		Marginal data 	Useful, but look at other QA information
         # 2 		Snow/Ice 		Target covered with snow/ice
         # 3 		Cloudy 			Target not visible, covered with cloud
-		fill = 0 	# warped images have 0 as fill area
-		lut = numpy.array([0, 1, 1, 2, 2], dtype=numpy.uint8)
-		rastercm = numpy.take(lut, raster+1).astype(numpy.uint8)
+        lut = numpy.array([255, 0, 0, 2, 4], dtype=numpy.uint8)
+        rastercm = numpy.take(lut, raster+1).astype(numpy.uint8)
 
-	elif satellite == 'SENTINEL-2':
-		# S2 sen2cor - The generated classification map is specified as follows:
-        # Label Classification
-        #  0		NO_DATA
-        #  1		SATURATED_OR_DEFECTIVE
-        #  2		DARK_AREA_PIXELS
-        #  3		CLOUD_SHADOWS
-        #  4		VEGETATION
-        #  5		NOT_VEGETATED
-        #  6		WATER
-        #  7		UNCLASSIFIED
-        #  8		CLOUD_MEDIUM_PROBABILITY
-        #  9		CLOUD_HIGH_PROBABILITY
-        # 10		THIN_CIRRUS
-        # 11		SNOW
-        # 0 1 2 3 4 5 6 7 8 9 10 11
-		lut = numpy.array([0,0,2,2,1,1,1,2,2,2,1, 1],dtype=numpy.uint8)
-		rastercm = numpy.take(lut,raster).astype(numpy.uint8)
-
-	elif 'CBERS' in satellite:
-		# Key Summary        QA Description
+    elif 'CBERS' in satellite:
+        # Key Summary        QA Description
         #   0 Fill/No Data - Not Processed
         # 127 Good Data    - Use with confidence
         # 255 Cloudy       - Target not visible, covered with cloud
         # fill = 0  # warped images have 0 as fill area
-		lut = numpy.zeros(256, dtype=numpy.uint8)
-		lut[127] = 1
-		lut[255] = 2
-		rastercm = numpy.take(lut, raster).astype(numpy.uint8)
+        lut = numpy.zeros(256, dtype=numpy.uint8)
+        lut[0] = 255
+        lut[127] = 0
+        lut[255] = 4
+        rastercm = numpy.take(lut, raster).astype(numpy.uint8)
 
-	totpix   = rastercm.size
-	clearpix = numpy.count_nonzero(rastercm==1)
-	cloudpix = numpy.count_nonzero(rastercm==2)
-	imagearea = clearpix+cloudpix
-	cloudratio = 100
-	if imagearea != 0:
-		cloudratio = round(100.*cloudpix/imagearea,1)
-	efficacy = round(100.*clearpix/totpix,2)
+    efficacy, cloudratio = getMaskStats(rastercm)
 
-	return rastercm.astype(numpy.uint16), efficacy, cloudratio
+    return rastercm.astype(numpy.uint16), efficacy, cloudratio
 
 
 ############################
@@ -295,67 +261,6 @@ def generateQLook(generalSceneId, qlfiles):
 
     write_png(pngname, image, transparent=(0, 0, 0))
     return pngname
-
-############################
-def remove_small_holes(ar, area_threshold=64, connectivity=1, in_place=False):
-    """
-	@author (scikit-image)
-	- https://github.com/scikit-image/scikit-image/blob/master/skimage/morphology/misc.py
-    """
-
-    if in_place:
-        out = ar
-    else:
-        out = ar.copy()
-
-    # Creating the inverse of ar
-    if in_place:
-        numpy.logical_not(out, out=out)
-    else:
-        out = numpy.logical_not(out)
-
-    # removing small objects from the inverse of ar
-    out = remove_small_objects(out, area_threshold, connectivity, in_place)
-
-    if in_place:
-        numpy.logical_not(out, out=out)
-    else:
-        out = numpy.logical_not(out)
-
-    return out
-
-def remove_small_objects(ar, min_size=64, connectivity=1, in_place=False):
-    """
-	@author (scikit-image)
-	- https://github.com/scikit-image/scikit-image/blob/master/skimage/morphology/misc.py
-    """
-    # Raising type error if not int or bool
-    if in_place:
-        out = ar
-    else:
-        out = ar.copy()
-
-    if min_size == 0:  # shortcut for efficiency
-        return out
-
-    if out.dtype == bool:
-        selem = ndi.generate_binary_structure(ar.ndim, connectivity)
-        ccs = numpy.zeros_like(ar, dtype=numpy.int32)
-        ndi.label(ar, selem, output=ccs)
-    else:
-        ccs = out
-
-    try:
-        component_sizes = numpy.bincount(ccs.ravel())
-    except ValueError:
-        raise ValueError("Negative value labels are not supported. Try "
-                         "relabeling the input with `scipy.ndimage.label` or "
-                         "`skimage.morphology.label`.")
-
-    too_small = component_sizes < min_size
-    too_small_mask = too_small[ccs]
-    out[too_small_mask] = 0
-    return out
 
 
 #############################
