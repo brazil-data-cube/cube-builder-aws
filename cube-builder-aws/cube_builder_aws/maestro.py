@@ -25,7 +25,8 @@ from bdc_db.models import CollectionTile, CollectionItem, Tile, \
 
 from .logger import logger
 from .utils.builder import decode_periods, encode_key, \
-    getMaskStats, getMask, generateQLook, get_cube_id, get_resolution_by_satellite
+    getMaskStats, getMask, generateQLook, get_cube_id, get_resolution_by_satellite, \
+    create_cog_in_s3
 
 
 def orchestrate(datacube, cube_infos, tiles, start_date, end_date, functions):
@@ -146,8 +147,12 @@ def next_step(services, activity):
             if activity['action'] == 'merge':
                 next_blend(services, activity)
             elif activity['action'] == 'blend':
+                if activity.get('indexes') and len(activity['indexes']) > 0:
+                    next_posblend(services, activity)
+                else:
+                    next_publish(services, activity)
+            elif activity['action'] == 'posblend':
                 next_publish(services, activity)
-
 
 ###############################
 # MERGE
@@ -480,8 +485,8 @@ def next_blend(services, mergeactivity):
     blendactivity['datacube'] = mergeactivity['datacube_orig_name']
     for key in ['datasets','satellite', 'bands','quicklook','srs','functions', 'block_size',
                 'tileid','start','end','dirname','nodata','bucket_name', 'quality_band',
-                'raster_size_x', 'raster_size_y', 'internal_bands', 'force']:
-        blendactivity[key] = mergeactivity[key]
+                'raster_size_x', 'raster_size_y', 'internal_bands', 'indexes', 'force']:
+        blendactivity[key] = mergeactivity.get(key, '')
     blendactivity['totalInstancesToBeDone'] = len(blendactivity['bands']) + len(blendactivity['internal_bands'])
 
     # Create  dynamoKey for the blendactivity record
@@ -867,11 +872,10 @@ def blend(self, activity):
             provenance_profile = profile.copy()
             provenance_profile.pop('nodata',  -1)
             provenance_profile['dtype'] = 'int16'
-            with MemoryFile() as memfile_provenance:
-                with memfile_provenance.open(**provenance_profile) as ds_provenance:
-                    ds_provenance.write_band(1, provenance_array)
-                    provenance_key = '_'.join(activity['STKfile'].split('_')[:-1]) + '_PROVENANCE.tif'
-                services.upload_fileobj_S3(memfile_provenance, provenance_key, {'ACL': 'public-read'}, bucket_name=bucket_name)
+            provenance_key = '_'.join(activity['STKfile'].split('_')[:-1]) + '_PROVENANCE.tif'
+            create_cog_in_s3(
+                services, provenance_profile, provenance_key, provenance_array, 
+                False, None, bucket_name)
 
         # Upload the TOTALOB dataset
         if build_total_observation:
@@ -880,41 +884,148 @@ def blend(self, activity):
             total_observation_profile['dtype'] = 'uint8'
             for func in activity['functions']:
                 if func == 'IDENTITY': continue
-                with MemoryFile() as memfile_totalob:
-                    with memfile_totalob.open(**total_observation_profile) as ds_totalob:
-                        ds_totalob.write_band(1, stack_total_observation)
-                        total_ob_key = '_'.join(activity['{}file'.format(func)].split('_')[:-1]) + '_TOTALOB.tif'
-                    services.upload_fileobj_S3(memfile_totalob, total_ob_key, {'ACL': 'public-read'}, bucket_name=bucket_name)
+                total_ob_key = '_'.join(activity['{}file'.format(func)].split('_')[:-1]) + '_TOTALOB.tif'
+                create_cog_in_s3(
+                    services, total_observation_profile, total_ob_key, stack_total_observation, 
+                    False, None, bucket_name)
 
         # Create and upload the STACK dataset
         if 'STK' in activity['functions']:
             if not activity.get('internal_band'):
-                with MemoryFile() as memfile:
-                    with memfile.open(**profile) as ds_stack:
-                        if band != activity['quality_band']:
-                            ds_stack.nodata = nodata
-                        ds_stack.write_band(1, stack_raster)
-                        ds_stack.build_overviews([2, 4, 8, 16, 32, 64], Resampling.nearest)
-                        ds_stack.update_tags(ns='rio_overview', resampling='nearest')
-                    services.upload_fileobj_S3(memfile, activity['STKfile'], {'ACL': 'public-read'}, bucket_name=bucket_name)
+                create_cog_in_s3(
+                    services, profile, activity['STKfile'], stack_raster, 
+                    (band != activity['quality_band']), nodata, bucket_name)
 
         # Create and upload the STACK dataset
         if 'MED' in activity['functions']:
             if not activity.get('internal_band'):
-                with MemoryFile() as memfile:
-                    with memfile.open(**profile) as ds_median:
-                        if band != activity['quality_band']:
-                            ds_median.nodata = nodata
-                        ds_median.write_band(1, median_raster)
-                        ds_median.build_overviews([2, 4, 8, 16, 32, 64], Resampling.nearest)
-                        ds_median.update_tags(ns='rio_overview', resampling='nearest')
-                    services.upload_fileobj_S3(memfile, activity['MEDfile'], {'ACL': 'public-read'}, bucket_name=bucket_name)
+                create_cog_in_s3(
+                    services, profile, activity['MEDfile'], median_raster, 
+                    (band != activity['quality_band']), nodata, bucket_name)
 
         # Update status and end time in DynamoDB
         activity['myend'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         activity['mystatus'] = 'DONE'
         services.put_item_kinesis(activity)
 
+    except Exception as e:
+        # Update entry in DynamoDB
+        activity['mystatus'] = 'ERROR'
+        activity['errors'] = dict(
+            step='blend',
+            message=str(e)
+        )
+        activity['myend'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        services.put_item_kinesis(activity)
+
+
+###############################
+# POS BLEND
+###############################
+def next_posblend(services, blendactivity):
+    # Fill the blend activity from merge activity
+    blend_dynamo_key = blendactivity['dynamoKey']
+    posblendactivity = blendactivity
+    posblendactivity['action'] = 'posblend'
+    posblendactivity['totalInstancesToBeDone'] = len(posblendactivity['indexes'])
+
+    # Reset mycount in  activitiesControlTable
+    posblendactivity['dynamoKey'] = posblendactivity['dynamoKey'].replace('blend', posblendactivity['action'])
+    activitiesControlTableKey = posblendactivity['dynamoKey']
+    services.put_control_table(activitiesControlTableKey, 0)
+
+    posblendactivity['indexesToBe'] = {}
+    for index in posblendactivity['indexes']:
+        posblendactivity['indexesToBe'][index['name']] = {}
+
+        for band in index['bands']:
+            response = services.get_activity_item({'id': blend_dynamo_key, 'sk': band['name'] })
+            item = response['Item']
+            activity = json.loads(item['activity'])
+
+            # TODO: gerar indices para os irregulares
+
+            for func in posblendactivity['functions']:
+                if func == 'IDENTITY': continue
+                posblendactivity['indexesToBe'][index['name']][func] = posblendactivity['indexesToBe'][index['name']].get(func, {})
+                posblendactivity['indexesToBe'][index['name']][func][band['common_name']] = activity['{}file'.format(func)]
+
+    for index in posblendactivity['indexes']:
+        posblendactivity['sk'] = index['name']
+        
+        # Blend has not been performed, do it
+        posblendactivity['mystatus'] = 'NOTDONE'
+        posblendactivity['mystart'] = 'SSSS-SS-SS'
+        posblendactivity['myend'] = 'EEEE-EE-EE'
+        posblendactivity['efficacy'] = '0'
+        posblendactivity['cloudratio'] = '100'
+        posblendactivity['mylaunch'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        # Create an entry in dynamoDB for each band blend activity (quality band is not an entry in DynamoDB)
+        key = '{}activities/{}.json'.format(posblendactivity['dirname'], posblendactivity['dynamoKey'])
+        services.save_file_S3(bucket_name=posblendactivity['bucket_name'], key=key, activity=posblendactivity)
+        services.put_item_kinesis(posblendactivity)
+        services.send_to_sqs(posblendactivity)
+    return True
+
+def posblend(self, activity):
+    logger.info('==> start POS BLEND')
+    services = self.services
+
+    bucket_name = activity['bucket_name']
+    activity['mystart'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    prefix = services.get_s3_prefix(bucket_name)
+
+    try:
+        index = activity['indexesToBe'][activity['sk']]
+        
+        for func in activity['functions']:
+            if func == 'IDENTITY': continue
+            bands = index[func]
+
+            red_band_name = bands['red'] if bands.get('red') else bands['RED']
+            red_band_path = os.path.join(prefix + red_band_name)
+            nir_band_name = bands['nir'] if bands.get('nir') else bands['NIR']
+            nir_band_path = os.path.join(prefix + nir_band_name) 
+
+            with rasterio.open(nir_band_path) as ds_nir:
+                nir = ds_nir.read(1)
+                profile = ds_nir.profile
+                nir_ma = numpy.ma.array(nir, mask=nir == profile['nodata'], fill_value=-9999)
+                
+                with rasterio.open(red_band_path) as ds_red:
+                    red = ds_red.read(1)
+                    red_ma = numpy.ma.array(red, mask=red == profile['nodata'], fill_value=-9999)
+
+                    if activity['sk'].upper() == 'NDVI':
+                        # Calculate NDVI
+                        raster_ndvi = (10000. * ((nir_ma - red_ma) / (nir_ma + red_ma))).astype(numpy.int16)
+                        raster_ndvi[raster_ndvi == numpy.ma.masked] = profile['nodata']
+
+                        file_path = '_'.join(red_band_name.split('_')[:-1]) + '_{}.tif'.format(activity['sk'])
+                        create_cog_in_s3(
+                            services, profile, file_path, raster_ndvi, False, None, bucket_name)
+
+                    elif activity['sk'].upper() == 'EVI':
+                        blue_bland_path = bands['blue'] if bands.get('blue') else bands['BLUE']
+                        blue_bland_path = os.path.join(prefix + blue_bland_path) 
+                        with rasterio.open(blue_bland_path) as ds_blue: 
+                            blue = ds_blue.read(1)
+                            blue_ma = numpy.ma.array(blue, mask=blue == profile['nodata'], fill_value=-9999)
+
+                            # Calculate EVI
+                            raster_evi = (10000. * 2.5 * (nir_ma - red_ma) / (nir_ma + 6. * red_ma - 7.5 * blue_ma + 10000.)).astype(numpy.int16)
+                            raster_evi[raster_evi == numpy.ma.masked] = profile['nodata']
+
+                            file_path = '_'.join(red_band_name.split('_')[:-1]) + '_{}.tif'.format(activity['sk'])
+                            create_cog_in_s3(
+                                services, profile, file_path, raster_evi, False, None, bucket_name)
+
+        # Update status and end time in DynamoDB
+        activity['myend'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        activity['mystatus'] = 'DONE'
+        services.put_item_kinesis(activity)
+    
     except Exception as e:
         # Update entry in DynamoDB
         activity['mystatus'] = 'ERROR'
@@ -986,6 +1097,15 @@ def next_publish(services, blendactivity):
             key_file = '{}file'.format(func)
             file_name = '_'.join(example_file_name.split('_')[:-1]) + '_{}.tif'.format(internal_band)
             publishactivity['blended'][internal_band][key_file] = file_name
+
+    for index in publishactivity['indexes']:
+        # Create indices to catalog NIR, NDVI ...
+        publishactivity['blended'][index['name']] = {}
+        for func in publishactivity['functions']:
+            if func == 'IDENTITY': continue
+            key_file = '{}file'.format(func)
+            file_name = '_'.join(example_file_name.split('_')[:-1]) + '_{}.tif'.format(index['name'])
+            publishactivity['blended'][index['name']][key_file] = file_name
 
     publishactivity['sk'] = 'ALLBANDS'
     publishactivity['mystatus'] = 'NOTDONE'
@@ -1096,7 +1216,8 @@ def publish(self, activity):
                 bands_by_cube = Band.query().filter(
                     Band.collection_id == cube_id
                 ).all()
-                for band in (activity['bands'] + activity['internal_bands']):
+                indexes_list = [index['name'] for index in activity['indexes']]
+                for band in (activity['bands'] + activity['internal_bands'] + indexes_list):
                     if not activity['blended'][band].get('{}file'.format(function)):
                         continue
 

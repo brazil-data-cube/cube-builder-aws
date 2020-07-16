@@ -14,6 +14,8 @@ import rasterio
 import hashlib
 from dateutil.relativedelta import relativedelta
 from numpngw import write_png
+from rasterio.io import MemoryFile
+from rasterio.warp import Resampling
 
 
 #############################
@@ -327,3 +329,16 @@ def revisit_by_satellite(satellite):
 def generate_hash_md5(word):
     result = hashlib.md5(word.encode())
     return result.hexdigest()
+
+
+############################
+def create_cog_in_s3(services, profile, path, raster, is_quality, nodata, bucket_name):
+    with MemoryFile() as memfile:
+        with memfile.open(**profile) as ds:
+            if is_quality:
+                ds.nodata = nodata
+            ds.write_band(1, raster)
+            ds.build_overviews([2, 4, 8, 16, 32, 64], Resampling.nearest)
+            ds.update_tags(ns='rio_overview', resampling='nearest')
+        services.upload_fileobj_S3(memfile, path, {'ACL': 'public-read'}, bucket_name=bucket_name)
+    return True

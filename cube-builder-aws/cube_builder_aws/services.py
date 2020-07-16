@@ -276,7 +276,7 @@ class CubeServices:
     ## ----------------------
     # SQS
     def get_queue_url(self):
-        for action in ['merge', 'blend', 'publish']:
+        for action in ['merge', 'blend', 'posblend', 'publish']:
             queue = '{}-{}'.format(QUEUE_NAME, action)
             if self.QueueUrl.get(action, None) is not None:
                 continue

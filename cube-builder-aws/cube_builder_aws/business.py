@@ -25,7 +25,7 @@ from .utils.serializer import Serializer
 from .utils.builder import get_date, get_cube_id, get_cube_parts, decode_periods, revisit_by_satellite, generate_hash_md5
 from .utils.image import validate_merges
 from .maestro import orchestrate, prepare_merge, \
-    merge_warped, solo, blend, publish
+    merge_warped, solo, blend, posblend, publish
 from .services import CubeServices
 
 class CubeBusiness:
@@ -257,7 +257,7 @@ class CubeBusiness:
         # get process infos by dynameDB
         process_info = response['Items'][0]
         functions = json.loads(process_info['functions'])
-        indexes_list = json.loads(process_info['indexes'])
+        indexes = json.loads(process_info['indexes'])
         quality_band = process_info['quality_band']
         datacube = process_info['datacube']
 
@@ -282,9 +282,32 @@ class CubeBusiness:
             Band.collection_id == get_cube_id(datacube)
         ).all()
         bands_list = []
+        indexes_list = []
         for band in bands:
-            if band.name.upper() not in [i.upper() for i in indexes_list]:
+            if band.name.upper() not in [i.upper() for i in indexes]:
                 bands_list.append(band.name)
+            else:
+                indexes_available = {
+                    'NDVI': ['NIR', 'RED'],
+                    'EVI': ['NIR', 'RED', 'BLUE']
+                }
+                if not indexes_available.get(band.name.upper()):
+                    return 'Index not available', 400
+                
+                index = dict(
+                    name=band.name,
+                    bands=[
+                        dict(
+                            name=b.name,
+                            common_name=b.common_name
+                        ) for b in bands \
+                            if b.common_name.upper() in indexes_available[band.name.upper()]
+                    ]
+                )
+                if len(index['bands']) != len(indexes_available[band.name.upper()]):
+                    return 'bands: {}, are needed to create the {} index'.format(
+                        ','.join(indexes_available[band.name.upper()]), band.name), 400
+                indexes_list.append(index)
 
         # items => old mosaic
         # orchestrate
@@ -311,6 +334,10 @@ class CubeBusiness:
         elif params['action'] == 'blend':
             blend(self, params)
 
+        # dispatch POS BLEND
+        elif params['action'] == 'posblend':
+            posblend(self, params)
+
         # dispatch PUBLISH
         elif params['action'] == 'publish':
             publish(self, params)
@@ -332,7 +359,7 @@ class CubeBusiness:
         }
         tile_srs_p4 = "+proj=longlat +ellps=GRS80 +datum=GRS80 +no_defs"
         if projection == 'aea':
-            tile_srs_p4 = "+proj=aea +lat_1=10 +lat_2=-40 +lat_0=0 +lon_0={} +x_0=0 +y_0=0 +ellps=GRS80 +datum=GRS80 +units=m +no_defs".format(meridian)
+            tile_srs_p4 = "proj=aea +lat_1=-1 +lat_2=-29 +lat_0=0 +lon_0={} +x_0=0 +y_0=0 +ellps=GRS80 +datum=GRS80 +units=m +no_defs".format(meridian)
         elif projection == 'sinu':
             tile_srs_p4 = "+proj=sinu +lon_0={} +x_0=0 +y_0=0 +a=6371007.181 +b=6371007.181 +units=m +no_defs".format(meridian)
 
