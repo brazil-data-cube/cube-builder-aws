@@ -129,7 +129,7 @@ class CubeBusiness:
                         max=10000 if not is_quality_band else 4,
                         fill=-9999 if not is_quality_band else 255,
                         scale=0.0001 if not is_quality_band else 1,
-                        data_type='int16' if is_quality_band else 'uint8',
+                        data_type='int16' if not is_quality_band else 'uint8',
                         common_name=band['common_name'],
                         res_x=params['resolution'],
                         res_y=params['resolution'],

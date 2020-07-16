@@ -478,9 +478,9 @@ def next_blend(services, mergeactivity):
     blendactivity = {}
     blendactivity['action'] = 'blend'
     blendactivity['datacube'] = mergeactivity['datacube_orig_name']
-    for key in ['datasets','satellite', 'bands','quicklook','srs','functions',
+    for key in ['datasets','satellite', 'bands','quicklook','srs','functions', 'block_size',
                 'tileid','start','end','dirname','nodata','bucket_name', 'quality_band',
-                'internal_bands', 'force']:
+                'raster_size_x', 'raster_size_y', 'internal_bands', 'force']:
         blendactivity[key] = mergeactivity[key]
     blendactivity['totalInstancesToBeDone'] = len(blendactivity['bands']) + len(blendactivity['internal_bands'])
 
@@ -933,7 +933,7 @@ def next_publish(services, blendactivity):
     # Fill the publish activity from blend activity
     publishactivity = {}
     for key in ['datacube','satellite','datasets','bands','quicklook','tileid','start','end', \
-        'dirname', 'cloudratio', 'raster_size_x', 'raster_size_y', 'chunk_size_x', 'chunk_size_y', 'bucket_name',
+        'dirname', 'cloudratio', 'raster_size_x', 'raster_size_y', 'block_size', 'bucket_name', \
         'quality_band', 'internal_bands', 'functions']:
         publishactivity[key] = blendactivity.get(key)
     publishactivity['action'] = 'publish'
@@ -1100,7 +1100,7 @@ def publish(self, activity):
                     if not activity['blended'][band].get('{}file'.format(function)):
                         continue
 
-                    band_id = list(filter(lambda b: str(b.common_name) == band, bands_by_cube))
+                    band_id = list(filter(lambda b: str(b.name) == band, bands_by_cube))
                     if not band_id:
                         raise Exception('band {} not found!'.format(band))
 
@@ -1115,8 +1115,8 @@ def publish(self, activity):
                         raster_size_x=float(activity['raster_size_x']),
                         raster_size_y=float(activity['raster_size_y']),
                         raster_size_t=1,
-                        chunk_size_x=int(activity['chunk_size_x']),
-                        chunk_size_y=int(activity['chunk_size_y']),
+                        chunk_size_x=int(activity['block_size']),
+                        chunk_size_y=int(activity['block_size']),
                         chunk_size_t=1
                     ).save(commit=False)
             db.session.commit()
@@ -1164,7 +1164,7 @@ def publish(self, activity):
                 for band in activity['bands']:
                     if band not in scene['ARDfiles']:
                         raise Exception('publish - problem - band {} not in scene[files]'.format(band))
-                    band_id = list(filter(lambda b: str(b.common_name) == band, bands_by_cube))
+                    band_id = list(filter(lambda b: str(b.name) == band, bands_by_cube))
                     if not band_id:
                         raise Exception('band {} not found!'.format(band))
 
