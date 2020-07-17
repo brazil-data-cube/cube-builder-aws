@@ -955,7 +955,7 @@ def next_posblend(services, blendactivity):
 
                         date = scene['date']
                         posblendactivity['indexesToBe'][i_name][func][date] = posblendactivity['indexesToBe'][i_name][func].get(date, {})
-                        path_band = '{}/{}/{}'.format(activity['dirname'], date, scene['ARDfiles'][band['name']])
+                        path_band = '{}{}/{}'.format(activity['dirname'], date, scene['ARDfiles'][band['name']])
                         posblendactivity['indexesToBe'][i_name][func][date][band['common_name']] = path_band
                 else:
                     posblendactivity['indexesToBe'][i_name][func][band['common_name']] = activity['{}file'.format(func)]
