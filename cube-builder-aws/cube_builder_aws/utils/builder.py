@@ -12,6 +12,7 @@ from typing import List
 import numpy
 import rasterio
 import hashlib
+import os
 from dateutil.relativedelta import relativedelta
 from numpngw import write_png
 from rasterio.io import MemoryFile
@@ -342,3 +343,46 @@ def create_cog_in_s3(services, profile, path, raster, is_quality, nodata, bucket
             ds.update_tags(ns='rio_overview', resampling='nearest')
         services.upload_fileobj_S3(memfile, path, {'ACL': 'public-read'}, bucket_name=bucket_name)
     return True
+
+
+############################
+def create_index(services, index, bands, bucket_name):
+    prefix = services.get_s3_prefix(bucket_name)
+
+    red_band_name = bands['red'] if bands.get('red') else bands['RED']
+    red_band_path = os.path.join(prefix + red_band_name)
+    nir_band_name = bands['nir'] if bands.get('nir') else bands['NIR']
+    nir_band_path = os.path.join(prefix + nir_band_name) 
+
+    with rasterio.open(nir_band_path) as ds_nir:
+        nir = ds_nir.read(1)
+        profile = ds_nir.profile
+        nir_ma = numpy.ma.array(nir, mask=nir == profile['nodata'], fill_value=-9999)
+        
+        with rasterio.open(red_band_path) as ds_red:
+            red = ds_red.read(1)
+            red_ma = numpy.ma.array(red, mask=red == profile['nodata'], fill_value=-9999)
+
+            if index.upper() == 'NDVI':
+                # Calculate NDVI
+                raster_ndvi = (10000. * ((nir_ma - red_ma) / (nir_ma + red_ma))).astype(numpy.int16)
+                raster_ndvi[raster_ndvi == numpy.ma.masked] = profile['nodata']
+
+                file_path = '_'.join(red_band_name.split('_')[:-1]) + '_{}.tif'.format(index)
+                create_cog_in_s3(
+                    services, profile, file_path, raster_ndvi, False, None, bucket_name)
+
+            elif index.upper() == 'EVI':
+                blue_bland_path = bands['blue'] if bands.get('blue') else bands['BLUE']
+                blue_bland_path = os.path.join(prefix + blue_bland_path) 
+                with rasterio.open(blue_bland_path) as ds_blue: 
+                    blue = ds_blue.read(1)
+                    blue_ma = numpy.ma.array(blue, mask=blue == profile['nodata'], fill_value=-9999)
+
+                    # Calculate EVI
+                    raster_evi = (10000. * 2.5 * (nir_ma - red_ma) / (nir_ma + 6. * red_ma - 7.5 * blue_ma + 10000.)).astype(numpy.int16)
+                    raster_evi[raster_evi == numpy.ma.masked] = profile['nodata']
+
+                    file_path = '_'.join(red_band_name.split('_')[:-1]) + '_{}.tif'.format(index)
+                    create_cog_in_s3(
+                        services, profile, file_path, raster_evi, False, None, bucket_name)
