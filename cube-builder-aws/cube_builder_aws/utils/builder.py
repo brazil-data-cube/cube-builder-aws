@@ -352,37 +352,78 @@ def create_index(services, index, bands, bucket_name):
     red_band_name = bands['red'] if bands.get('red') else bands['RED']
     red_band_path = os.path.join(prefix + red_band_name)
     nir_band_name = bands['nir'] if bands.get('nir') else bands['NIR']
-    nir_band_path = os.path.join(prefix + nir_band_name) 
+    nir_band_path = os.path.join(prefix + nir_band_name)
 
-    with rasterio.open(nir_band_path) as ds_nir:
-        nir = ds_nir.read(1)
-        profile = ds_nir.profile
-        nir_ma = numpy.ma.array(nir, mask=nir == profile['nodata'], fill_value=-9999)
+    # with rasterio.open(nir_band_path) as ds_nir:
+    #     nir = ds_nir.read(1)
+    #     profile = ds_nir.profile
+    #     nir_ma = numpy.ma.array(nir, mask=nir == profile['nodata'], fill_value=-9999)
         
-        with rasterio.open(red_band_path) as ds_red:
-            red = ds_red.read(1)
-            red_ma = numpy.ma.array(red, mask=red == profile['nodata'], fill_value=-9999)
+    #     with rasterio.open(red_band_path) as ds_red:
+    #         red = ds_red.read(1)
+    #         red_ma = numpy.ma.array(red, mask=red == profile['nodata'], fill_value=-9999)
+
+    #         if index.upper() == 'NDVI':
+    #             # Calculate NDVI
+    #             raster_ndvi = (10000. * ((nir_ma - red_ma) / (nir_ma + red_ma))).astype(numpy.int16)
+    #             raster_ndvi[raster_ndvi == numpy.ma.masked] = profile['nodata']
+
+    #             file_path = '_'.join(red_band_name.split('_')[:-1]) + '_{}.tif'.format(index)
+    #             create_cog_in_s3(
+    #                 services, profile, file_path, raster_ndvi, False, None, bucket_name)
+
+    #         elif index.upper() == 'EVI':
+    #             blue_bland_path = bands['blue'] if bands.get('blue') else bands['BLUE']
+    #             blue_bland_path = os.path.join(prefix + blue_bland_path) 
+    #             with rasterio.open(blue_bland_path) as ds_blue: 
+    #                 blue = ds_blue.read(1)
+    #                 blue_ma = numpy.ma.array(blue, mask=blue == profile['nodata'], fill_value=-9999)
+
+    #                 # Calculate EVI
+    #                 raster_evi = (10000. * 2.5 * (nir_ma - red_ma) / (nir_ma + 6. * red_ma - 7.5 * blue_ma + 10000.)).astype(numpy.int16)
+    #                 raster_evi[raster_evi == numpy.ma.masked] = profile['nodata']
+
+    #                 file_path = '_'.join(red_band_name.split('_')[:-1]) + '_{}.tif'.format(index)
+    #                 create_cog_in_s3(
+    #                     services, profile, file_path, raster_evi, False, None, bucket_name)
+
+    index_file = '/tmp/index.tif'
+    index_dataset = None
+
+    with rasterio.open(nir_band_path) as ds_nir, rasterio.open(red_band_path) as ds_red:
+        index_dataset = rasterio.open(index_file, mode='w', **ds_nir.profile)
+
+        profile = ds_nir.profile
+        nodata = int(profile['nodata'])
+        blocks = ds_nir.block_windows()
+
+        for _, block in blocks:
+            nir = ds_nir.read(1, masked=True, window=block)
+            red = ds_red.read(1, masked=True, window=block)
 
             if index.upper() == 'NDVI':
-                # Calculate NDVI
-                raster_ndvi = (10000. * ((nir_ma - red_ma) / (nir_ma + red_ma))).astype(numpy.int16)
-                raster_ndvi[raster_ndvi == numpy.ma.masked] = profile['nodata']
+                ndvi_block = (10000. * ((nir - red) / (nir + red))).astype(numpy.int16)
+                ndvi_block[ndvi_block == numpy.ma.masked] = nodata
 
-                file_path = '_'.join(red_band_name.split('_')[:-1]) + '_{}.tif'.format(index)
-                create_cog_in_s3(
-                    services, profile, file_path, raster_ndvi, False, None, bucket_name)
+                index_dataset.write(ndvi_block, window=block, indexes=1)
 
             elif index.upper() == 'EVI':
                 blue_bland_path = bands['blue'] if bands.get('blue') else bands['BLUE']
-                blue_bland_path = os.path.join(prefix + blue_bland_path) 
-                with rasterio.open(blue_bland_path) as ds_blue: 
-                    blue = ds_blue.read(1)
-                    blue_ma = numpy.ma.array(blue, mask=blue == profile['nodata'], fill_value=-9999)
+                blue_bland_path = os.path.join(prefix + blue_bland_path)
+                with rasterio.open(blue_bland_path) as ds_blue:
+                    with rasterio.open(blue_bland_path) as ds_blue:
+                        blue = ds_blue.read(1, masked=True, window=block)
 
-                    # Calculate EVI
-                    raster_evi = (10000. * 2.5 * (nir_ma - red_ma) / (nir_ma + 6. * red_ma - 7.5 * blue_ma + 10000.)).astype(numpy.int16)
-                    raster_evi[raster_evi == numpy.ma.masked] = profile['nodata']
+                        evi_block = (10000. * 2.5 * (nir - red) / (nir + 6. * red - 7.5 * blue + 10000.)).astype(numpy.int16)
+                        evi_block[evi_block == numpy.ma.masked] = nodata
+                        
+                        index_dataset.write(evi_block, window=block, indexes=1)
 
-                    file_path = '_'.join(red_band_name.split('_')[:-1]) + '_{}.tif'.format(index)
-                    create_cog_in_s3(
-                        services, profile, file_path, raster_evi, False, None, bucket_name)
+    index_dataset.build_overviews([2, 4, 8, 16, 32, 64], Resampling.nearest)
+    index_dataset.update_tags(ns='rio_overview', resampling='nearest')       
+    index_dataset.close()
+    index_dataset = None
+
+    file_path = '_'.join(red_band_name.split('_')[:-1]) + '_{}.tif'.format(index)
+    services.upload_file_S3(index_file, file_path, {'ACL': 'public-read'}, bucket_name=bucket_name)
+    os.remove(index_file)

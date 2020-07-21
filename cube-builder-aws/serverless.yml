@@ -119,7 +119,7 @@ functions:
   app_merge: 
     handler: app.continue_process
     timeout: 360
-    memorySize: 1536
+    memorySize: 2560
     events:
       - sqs:
           batchSize: 1
@@ -131,7 +131,7 @@ functions:
   app_blend: 
     handler: app.continue_process
     timeout: 720
-    memorySize: 3008
+    memorySize: 2560
     events:
       - sqs:
           batchSize: 1
