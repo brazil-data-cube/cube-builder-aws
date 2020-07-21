@@ -143,7 +143,7 @@ def next_step(services, activity):
     )
     if 'Attributes' in response and 'mycount' in response['Attributes']:
         mycount = int(response['Attributes']['mycount'])
-        if mycount == activity['totalInstancesToBeDone']:
+        if mycount >= activity['totalInstancesToBeDone']:
             if activity['action'] == 'merge':
                 next_blend(services, activity)
             elif activity['action'] == 'blend':
@@ -927,10 +927,11 @@ def next_posblend(services, blendactivity):
     blend_dynamo_key = blendactivity['dynamoKey']
     posblendactivity = blendactivity
     posblendactivity['action'] = 'posblend'
-    posblendactivity['totalInstancesToBeDone'] = len(posblendactivity['indexes'])
+    posblendactivity['totalInstancesToBeDone'] = len(posblendactivity['indexes']) * 2 # Irregular and regular
 
-    # Reset mycount in  activitiesControlTable
-    posblendactivity['dynamoKey'] = posblendactivity['dynamoKey'].replace('blend', posblendactivity['action'])
+    # Reset mycount in activitiesControlTable
+    if posblendactivity['action'] not in posblendactivity['dynamoKey']:
+        posblendactivity['dynamoKey'] = blend_dynamo_key.replace('blend', posblendactivity['action'])
     activitiesControlTableKey = posblendactivity['dynamoKey']
     services.put_control_table(activitiesControlTableKey, 0)
 
@@ -944,6 +945,9 @@ def next_posblend(services, blendactivity):
             response = services.get_activity_item({'id': blend_dynamo_key, 'sk': band['name']})
             item = response['Item']
             activity = json.loads(item['activity'])
+
+            posblendactivity['raster_size_x'] = activity['raster_size_x']
+            posblendactivity['raster_size_y'] = activity['raster_size_y']
 
             for func in posblendactivity['functions']:
                 posblendactivity['indexesToBe'][i_name][func] = posblendactivity['indexesToBe'][i_name].get(func, {})
@@ -1014,7 +1018,7 @@ def posblend(self, activity):
         # Update entry in DynamoDB
         activity['mystatus'] = 'ERROR'
         activity['errors'] = dict(
-            step='blend',
+            step='posblend',
             message=str(e)
         )
         activity['myend'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -1024,20 +1028,20 @@ def posblend(self, activity):
 ###############################
 # PUBLISH
 ###############################
-def next_publish(services, blendactivity):
+def next_publish(services, posblendactivity):
     # Fill the publish activity from blend activity
     publishactivity = {}
     for key in ['datacube','satellite','datasets','bands','quicklook','tileid','start','end', \
         'dirname', 'cloudratio', 'raster_size_x', 'raster_size_y', 'block_size', 'bucket_name', \
-        'quality_band', 'internal_bands', 'functions']:
-        publishactivity[key] = blendactivity.get(key)
+        'quality_band', 'internal_bands', 'functions', 'indexes']:
+        publishactivity[key] = posblendactivity.get(key)
     publishactivity['action'] = 'publish'
 
     # Create  dynamoKey for the publish activity
     publishactivity['dynamoKey'] = encode_key(publishactivity, ['action','datacube','tileid','start','end'])
 
     # Get information from blended bands
-    response = services.get_activities_by_key(blendactivity['dynamoKey'])
+    response = services.get_activities_by_key(posblendactivity['dynamoKey'].replace('posblend', 'blend'))
 
     items = response['Items']
     publishactivity['scenes'] = {}
@@ -1061,6 +1065,12 @@ def next_publish(services, blendactivity):
                 publishactivity['scenes'][datedataset]['raster_size_x'] = scene.get('raster_size_x')
                 publishactivity['scenes'][datedataset]['raster_size_y'] = scene.get('raster_size_y')
                 publishactivity['scenes'][datedataset]['block_size'] = scene.get('block_size')
+                # add indexes to publish
+                for index in publishactivity['indexes']:
+                    # ex: LC8_30_090096_2019-01-28_fMask.tif => LC8_30_090096_2019-01-28_NDVI.tif
+                    quality_file = scene['ARDfiles'][publishactivity['quality_band']]
+                    index_file_name = '_'.join(quality_file.split('_')[:-1]) + '_{}.tif'.format(index['name'])
+                    publishactivity['scenes'][datedataset]['ARDfiles'][index['name']] = index_file_name
             publishactivity['scenes'][datedataset]['ARDfiles'][band] = scene['ARDfiles'][band]
 
         # Get blended files
@@ -1266,7 +1276,8 @@ def publish(self, activity):
                 bands_by_cube = Band.query().filter(
                     Band.collection_id == cube_id
                 ).all()
-                for band in activity['bands']:
+                indexes_list = [index['name'] for index in activity['indexes']]
+                for band in (activity['bands'] + indexes_list):
                     if band not in scene['ARDfiles']:
                         raise Exception('publish - problem - band {} not in scene[files]'.format(band))
                     band_id = list(filter(lambda b: str(b.name) == band, bands_by_cube))
