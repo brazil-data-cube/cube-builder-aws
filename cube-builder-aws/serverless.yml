@@ -143,7 +143,7 @@ functions:
   app_posblend: 
     handler: app.continue_process
     timeout: 720
-    memorySize: 2048
+    memorySize: 2560
     events:
       - sqs:
           batchSize: 1
