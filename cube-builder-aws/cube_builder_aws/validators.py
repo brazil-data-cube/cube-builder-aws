@@ -38,7 +38,7 @@ def create():
     item = dict(
         datacube=dict(type='string', empty=False, required=True),
         grs=dict(type='string', empty=False, required=True),
-        resolution=dict(type='string', empty=False, required=True),
+        resolution=dict(type='float', empty=False, required=True),
         temporal_schema=dict(type='string', empty=False, required=True),
         bands_quicklook=dict(type='list', empty=False, required=True),
         composite_function=dict(type='list', empty=False, required=True, allowed=['IDENTITY', 'STK', 'MED']),
@@ -152,6 +152,7 @@ def estimate_cost():
         grid=dict(type='string', empty=False, required=True),
         quantity_bands=dict(type='integer', empty=False, required=True),
         quantity_tiles=dict(type='integer', empty=False, required=True),
+        quantity_indexes=dict(type='integer', empty=False, required=True),
         t_schema=dict(type='string', empty=False, required=False),
         t_step=dict(type='integer', empty=False, required=True, default=1, coerce=int)
     )

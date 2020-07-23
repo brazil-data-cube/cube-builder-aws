@@ -788,7 +788,7 @@ class CubeBusiness:
         ), 200
 
     def estimate_cost(self, satellite, resolution, grid, start_date, last_date,
-                        quantity_bands, quantity_tiles, t_schema, t_step):
+                        quantity_bands, quantity_tiles, t_schema, t_step, quantity_indexes):
         """ compute STORAGE :: """
         tile = db.session() \
             .query(
@@ -806,7 +806,7 @@ class CubeBusiness:
         periods = decode_periods(t_schema, start_date, last_date, int(t_step))
         len_periods = len(periods.keys()) if t_schema == 'M' else sum([len(p) for p in periods.values()])
 
-        cube_size = size_tile * quantity_bands * quantity_tiles * len_periods
+        cube_size = size_tile * (quantity_bands + quantity_indexes) * quantity_tiles * len_periods
         # with COG and compress = +50%
         cube_size = (cube_size * 1.5) / 1024 # in GB
         cubes_size = cube_size * 2
@@ -817,37 +817,43 @@ class CubeBusiness:
         start_date = datetime.strptime(start_date, '%Y-%m-%d')
         last_date = datetime.strptime(last_date, '%Y-%m-%d')
         scenes = ((last_date - start_date).days) / revisit_by_sat
-        irregular_cube_size = (size_tile * quantity_bands * quantity_tiles * scenes) / 1024 # in GB
+        irregular_cube_size = (size_tile * (quantity_bands + quantity_indexes) * quantity_tiles * scenes) / 1024 # in GB
         price_irregular_cube_storage = irregular_cube_size * 0.024 # in U$
 
         """ compute PROCESSING :: """
         quantity_merges = quantity_bands * quantity_tiles * scenes
         quantity_blends = quantity_bands * quantity_tiles * len_periods
-        quantity_publish = len_periods
+        # quantity_indexes * 2 => Cubos (regulares e Irregulares)
+        quantity_posblends = (quantity_indexes * 2) * quantity_tiles * len_periods
+        quantity_publish = quantity_tiles * len_periods
 
         # cost
-        # merge (100 req (1536MB, 90000ms) => 0.23)
-        cost_merges = (quantity_merges / 100) * 0.23
-        # blend (100 req (3072MB, 240000ms) => 1.20)
-        cost_blends = (quantity_blends / 100) * 1.20
+        # merge (100 req (2560MB, 70000ms) => 0.23)
+        cost_merges = (quantity_merges / 100) * 0.29
+        # blend (100 req (2560MB, 200000ms) => 0.83)
+        cost_blends = (quantity_blends / 100) * 0.83
+        # posblend (100 req (2560MB, 360000ms) => 1.50)
+        cost_posblends = (quantity_posblends / 100) * 1.50
         # publish (100 req (256MB, 60000ms) => 0.03)
         cost_publish = (quantity_publish / 100) * 0.03
 
         return dict(
             storage=dict(
-                size_cubes=int(cubes_size),
-                price_cubes=int(price_cubes_storage),
-                size_irregular_cube=int(irregular_cube_size),
-                price_irregular_cube=int(price_irregular_cube_storage)
+                size_cubes=float(cubes_size),
+                price_cubes=float(price_cubes_storage),
+                size_irregular_cube=float(irregular_cube_size),
+                price_irregular_cube=float(price_irregular_cube_storage)
             ),
             build=dict(
                 quantity_merges=int(quantity_merges),
                 quantity_blends=int(quantity_blends),
+                quantity_posblends=int(quantity_posblends),
                 quantity_publish=int(quantity_publish),
                 collection_items_irregular=int((quantity_tiles * scenes)),
                 collection_items=int((quantity_tiles * len_periods) * 2),
-                price_merges=int(cost_merges),
-                price_blends=int(cost_blends),
-                price_publish=int(cost_publish)
+                price_merges=float(cost_merges),
+                price_blends=float(cost_blends),
+                price_posblends=float(cost_posblends),
+                price_publish=float(cost_publish)
             )
         ), 200
