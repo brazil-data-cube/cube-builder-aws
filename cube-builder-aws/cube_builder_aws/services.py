@@ -162,6 +162,11 @@ class CubeServices:
             KeyConditionExpression=Key('id').eq(process_id)
         )
 
+    def get_process_by_datacube(self, datacube):
+        return self.processTable.scan(
+            FilterExpression=Key('datacube').eq(datacube)
+        )
+
     def get_cube_meta(self, cube,):
         filters = Key('data_cube').eq(cube) & Key('id').begins_with('merge')
 
@@ -256,9 +261,16 @@ class CubeServices:
     def remove_control_by_key(self, key: str):
         try:
             self.activitiesControlTable.delete_item(
-                Key=dict(
-                    id=key
-                )
+                Key=dict(id=key)
+            )
+            return True
+        except:
+            return False
+
+    def remove_process_by_key(self, key: str):
+        try:
+            self.processTable.delete_item(
+                Key=dict(id=key)
             )
             return True
         except:

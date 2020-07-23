@@ -149,6 +149,13 @@ class CubeBusiness:
         db.session.commit()
 
         # set infos in process table (dynamoDB)
+        # delete if exists
+        response = self.services.get_process_by_datacube(params['datacube'])
+        if 'Items' not in response or len(response['Items']) == 0:
+            for item in response['Items']:
+                self.services.remove_process_by_key(item['id'])
+
+        # add new process
         process_id = generate_hash_md5('{}-{}'.format(params['datacube'], datetime.now()))
         params['indexes'] = [index['name'].strip() for index in params['indexes']]
         self.services.put_process_table(
@@ -250,9 +257,14 @@ class CubeBusiness:
         ), 200
 
     def start_process(self, params):
-        response = self.services.get_process_by_id(params['process_id'])
+        response = {}
+        if params.get('process_id'):
+            response = self.services.get_process_by_id(params['process_id'])
+        elif params.get('datacube'):
+            response = self.services.get_process_by_datacube(params['datacube'])
+
         if 'Items' not in response or len(response['Items']) == 0:
-            raise NotFound('Process ID not found!')
+            raise NotFound('Process ID or Data cube not found!')
 
         # get process infos by dynameDB
         process_info = response['Items'][0]

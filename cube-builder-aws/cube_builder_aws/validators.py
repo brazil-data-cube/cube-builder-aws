@@ -53,7 +53,8 @@ def create():
 
 def process():
     item = {
-        'process_id': {"type": "string", "empty": False, "required": True},
+        'process_id': {"type": "string", "empty": False, "required": False},
+        'datacube': {"type": "string", "empty": False, "required": False},
         'url_stac': {"type": "string", "empty": False, "required": True},
         'bucket': {"type": "string", "empty": False, "required": True},
         'tiles': {"type": "list", "empty": False, "required": True},
