@@ -26,7 +26,7 @@ from bdc_db.models import CollectionTile, CollectionItem, Tile, \
 from .logger import logger
 from .utils.builder import decode_periods, encode_key, \
     getMaskStats, getMask, generateQLook, get_cube_id, get_resolution_by_satellite, \
-    create_cog_in_s3, create_index
+    create_cog_in_s3, create_index, create_index_indisk
 
 
 def orchestrate(datacube, cube_infos, tiles, start_date, end_date, functions):
@@ -1002,7 +1002,7 @@ def posblend(self, activity):
         if is_identity:
             for date in index['IDENTITY'].keys():
                 bands = index['IDENTITY'][date]
-                create_index(services, sk, bands, bucket_name)
+                create_index_indisk(services, sk, bands, bucket_name)
         else:
             for func in activity['functions']:
                 if func == 'IDENTITY': continue
@@ -1016,6 +1016,8 @@ def posblend(self, activity):
     
     except Exception as e:
         # Update entry in DynamoDB
+        logger.error(e, exc_info=True)
+        logger.error('erro', exc_info=True)
         activity['mystatus'] = 'ERROR'
         activity['errors'] = dict(
             step='posblend',
