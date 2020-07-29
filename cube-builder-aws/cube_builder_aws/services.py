@@ -24,7 +24,7 @@ from config import DYNAMO_TB_ACTIVITY, DBNAME_TB_CONTROL, DBNAME_TB_PROCESS, \
 class CubeServices:
     
     def __init__(self, url_stac=None, bucket=None):
-        # session = boto3.Session(profile_name='africa')
+        # session = boto3.Session(profile_name='default')
         session = boto3.Session(
             aws_access_key_id=AWS_KEY_ID, 
             aws_secret_access_key=AWS_SECRET_KEY)
@@ -199,8 +199,8 @@ class CubeServices:
             start - Filter start data
             end - Filter end data
         """
-        expression = Key('tile_id').eq(tile_id) & Key('period_start').between(start, start) & \
-            Key('period_end').between(end, end) & Key('data_cube').eq(data_cube)
+        expression = Key('tile_id').eq(tile_id) & Key('period_start').between(start, end) & \
+            Key('period_end').between(start, end) & Key('data_cube').eq(data_cube)
 
         return self.get_all_items(expression)
 
