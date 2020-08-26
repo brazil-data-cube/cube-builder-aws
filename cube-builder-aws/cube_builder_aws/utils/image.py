@@ -9,11 +9,12 @@
 """Define a utility to validate merge images."""
 
 import json
-import logging
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Tuple
 import rasterio
+
+from ..logger import logger as logging
 
 LANDSAT_BANDS = dict(
     int16=['band1', 'band2', 'band3', 'band4', 'band5', 'band6', 'band7', 'evi', 'ndvi'],

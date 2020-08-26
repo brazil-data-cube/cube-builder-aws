@@ -25,7 +25,7 @@ from .utils.serializer import Serializer
 from .utils.builder import get_date, get_cube_id, get_cube_parts, decode_periods, revisit_by_satellite, generate_hash_md5
 from .utils.image import validate_merges
 from .maestro import orchestrate, prepare_merge, \
-    merge_warped, solo, blend, publish
+    merge_warped, solo, blend, posblend, publish
 from .services import CubeServices
 
 class CubeBusiness:
@@ -149,6 +149,13 @@ class CubeBusiness:
         db.session.commit()
 
         # set infos in process table (dynamoDB)
+        # delete if exists
+        response = self.services.get_process_by_datacube(params['datacube'])
+        if 'Items' not in response or len(response['Items']) == 0:
+            for item in response['Items']:
+                self.services.remove_process_by_key(item['id'])
+
+        # add new process
         process_id = generate_hash_md5('{}-{}'.format(params['datacube'], datetime.now()))
         params['indexes'] = [index['name'].strip() for index in params['indexes']]
         self.services.put_process_table(
@@ -250,14 +257,19 @@ class CubeBusiness:
         ), 200
 
     def start_process(self, params):
-        response = self.services.get_process_by_id(params['process_id'])
+        response = {}
+        if params.get('process_id'):
+            response = self.services.get_process_by_id(params['process_id'])
+        elif params.get('datacube'):
+            response = self.services.get_process_by_datacube(params['datacube'])
+
         if 'Items' not in response or len(response['Items']) == 0:
-            raise NotFound('Process ID not found!')
+            raise NotFound('Process ID or Data cube not found!')
 
         # get process infos by dynameDB
         process_info = response['Items'][0]
         functions = json.loads(process_info['functions'])
-        indexes_list = json.loads(process_info['indexes'])
+        indexes = json.loads(process_info['indexes'])
         quality_band = process_info['quality_band']
         datacube = process_info['datacube']
 
@@ -282,9 +294,32 @@ class CubeBusiness:
             Band.collection_id == get_cube_id(datacube)
         ).all()
         bands_list = []
+        indexes_list = []
         for band in bands:
-            if band.name.upper() not in [i.upper() for i in indexes_list]:
+            if band.name.upper() not in [i.upper() for i in indexes]:
                 bands_list.append(band.name)
+            else:
+                indexes_available = {
+                    'NDVI': ['NIR', 'RED'],
+                    'EVI': ['NIR', 'RED', 'BLUE']
+                }
+                if not indexes_available.get(band.name.upper()):
+                    return 'Index not available', 400
+                
+                index = dict(
+                    name=band.name,
+                    bands=[
+                        dict(
+                            name=b.name,
+                            common_name=b.common_name
+                        ) for b in bands \
+                            if b.common_name.upper() in indexes_available[band.name.upper()]
+                    ]
+                )
+                if len(index['bands']) != len(indexes_available[band.name.upper()]):
+                    return 'bands: {}, are needed to create the {} index'.format(
+                        ','.join(indexes_available[band.name.upper()]), band.name), 400
+                indexes_list.append(index)
 
         # items => old mosaic
         # orchestrate
@@ -311,6 +346,10 @@ class CubeBusiness:
         elif params['action'] == 'blend':
             blend(self, params)
 
+        # dispatch POS BLEND
+        elif params['action'] == 'posblend':
+            posblend(self, params)
+
         # dispatch PUBLISH
         elif params['action'] == 'publish':
             publish(self, params)
@@ -332,7 +371,7 @@ class CubeBusiness:
         }
         tile_srs_p4 = "+proj=longlat +ellps=GRS80 +datum=GRS80 +no_defs"
         if projection == 'aea':
-            tile_srs_p4 = "+proj=aea +lat_1=10 +lat_2=-40 +lat_0=0 +lon_0={} +x_0=0 +y_0=0 +ellps=GRS80 +datum=GRS80 +units=m +no_defs".format(meridian)
+            tile_srs_p4 = "proj=aea +lat_1=-1 +lat_2=-29 +lat_0=0 +lon_0={} +x_0=0 +y_0=0 +ellps=GRS80 +datum=GRS80 +units=m +no_defs".format(meridian)
         elif projection == 'sinu':
             tile_srs_p4 = "+proj=sinu +lon_0={} +x_0=0 +y_0=0 +a=6371007.181 +b=6371007.181 +units=m +no_defs".format(meridian)
 
@@ -761,7 +800,7 @@ class CubeBusiness:
         ), 200
 
     def estimate_cost(self, satellite, resolution, grid, start_date, last_date,
-                        quantity_bands, quantity_tiles, t_schema, t_step):
+                        quantity_bands, quantity_tiles, t_schema, t_step, quantity_indexes):
         """ compute STORAGE :: """
         tile = db.session() \
             .query(
@@ -779,7 +818,7 @@ class CubeBusiness:
         periods = decode_periods(t_schema, start_date, last_date, int(t_step))
         len_periods = len(periods.keys()) if t_schema == 'M' else sum([len(p) for p in periods.values()])
 
-        cube_size = size_tile * quantity_bands * quantity_tiles * len_periods
+        cube_size = size_tile * (quantity_bands + quantity_indexes) * quantity_tiles * len_periods
         # with COG and compress = +50%
         cube_size = (cube_size * 1.5) / 1024 # in GB
         cubes_size = cube_size * 2
@@ -790,37 +829,43 @@ class CubeBusiness:
         start_date = datetime.strptime(start_date, '%Y-%m-%d')
         last_date = datetime.strptime(last_date, '%Y-%m-%d')
         scenes = ((last_date - start_date).days) / revisit_by_sat
-        irregular_cube_size = (size_tile * quantity_bands * quantity_tiles * scenes) / 1024 # in GB
+        irregular_cube_size = (size_tile * (quantity_bands + quantity_indexes) * quantity_tiles * scenes) / 1024 # in GB
         price_irregular_cube_storage = irregular_cube_size * 0.024 # in U$
 
         """ compute PROCESSING :: """
         quantity_merges = quantity_bands * quantity_tiles * scenes
         quantity_blends = quantity_bands * quantity_tiles * len_periods
-        quantity_publish = len_periods
+        # quantity_indexes * 2 => Cubos (regulares e Irregulares)
+        quantity_posblends = (quantity_indexes * 2) * quantity_tiles * len_periods
+        quantity_publish = quantity_tiles * len_periods
 
         # cost
-        # merge (100 req (1536MB, 90000ms) => 0.23)
-        cost_merges = (quantity_merges / 100) * 0.23
-        # blend (100 req (3072MB, 240000ms) => 1.20)
-        cost_blends = (quantity_blends / 100) * 1.20
+        # merge (100 req (2560MB, 70000ms) => 0.23)
+        cost_merges = (quantity_merges / 100) * 0.29
+        # blend (100 req (2560MB, 200000ms) => 0.83)
+        cost_blends = (quantity_blends / 100) * 0.83
+        # posblend (100 req (2560MB, 360000ms) => 1.50)
+        cost_posblends = (quantity_posblends / 100) * 1.50
         # publish (100 req (256MB, 60000ms) => 0.03)
         cost_publish = (quantity_publish / 100) * 0.03
 
         return dict(
             storage=dict(
-                size_cubes=int(cubes_size),
-                price_cubes=int(price_cubes_storage),
-                size_irregular_cube=int(irregular_cube_size),
-                price_irregular_cube=int(price_irregular_cube_storage)
+                size_cubes=float(cubes_size),
+                price_cubes=float(price_cubes_storage),
+                size_irregular_cube=float(irregular_cube_size),
+                price_irregular_cube=float(price_irregular_cube_storage)
             ),
             build=dict(
                 quantity_merges=int(quantity_merges),
                 quantity_blends=int(quantity_blends),
+                quantity_posblends=int(quantity_posblends),
                 quantity_publish=int(quantity_publish),
                 collection_items_irregular=int((quantity_tiles * scenes)),
                 collection_items=int((quantity_tiles * len_periods) * 2),
-                price_merges=int(cost_merges),
-                price_blends=int(cost_blends),
-                price_publish=int(cost_publish)
+                price_merges=float(cost_merges),
+                price_blends=float(cost_blends),
+                price_posblends=float(cost_posblends),
+                price_publish=float(cost_publish)
             )
         ), 200

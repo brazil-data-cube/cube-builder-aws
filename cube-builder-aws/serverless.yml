@@ -57,6 +57,9 @@ provider:
           - cubeBuilderQueueBlend
           - Arn
         - Fn::GetAtt:
+          - cubeBuilderQueuePosBlend
+          - Arn
+        - Fn::GetAtt:
           - cubeBuilderQueuePublish
           - Arn
           
@@ -116,7 +119,7 @@ functions:
   app_merge: 
     handler: app.continue_process
     timeout: 360
-    memorySize: 1536
+    memorySize: 2560
     events:
       - sqs:
           batchSize: 1
@@ -128,13 +131,25 @@ functions:
   app_blend: 
     handler: app.continue_process
     timeout: 720
-    memorySize: 3008
+    memorySize: 2560
     events:
       - sqs:
           batchSize: 1
           arn:
             Fn::GetAtt:
               - cubeBuilderQueueBlend
+              - Arn
+
+  app_posblend: 
+    handler: app.continue_process
+    timeout: 720
+    memorySize: 2560
+    events:
+      - sqs:
+          batchSize: 1
+          arn:
+            Fn::GetAtt:
+              - cubeBuilderQueuePosBlend
               - Arn
 
   app_publish: 
@@ -168,6 +183,12 @@ resources:
       Type: AWS::SQS::Queue
       Properties:
         QueueName: ${self:service}-${self:provider.stage}-queue-blend
+        VisibilityTimeout: 720
+
+    cubeBuilderQueuePosBlend:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:service}-${self:provider.stage}-queue-posblend
         VisibilityTimeout: 720
 
     cubeBuilderQueuePublish:

@@ -12,8 +12,11 @@ from typing import List
 import numpy
 import rasterio
 import hashlib
+import os
 from dateutil.relativedelta import relativedelta
 from numpngw import write_png
+from rasterio.io import MemoryFile
+from rasterio.warp import Resampling
 
 
 #############################
@@ -327,3 +330,154 @@ def revisit_by_satellite(satellite):
 def generate_hash_md5(word):
     result = hashlib.md5(word.encode())
     return result.hexdigest()
+
+
+############################
+def create_cog_in_s3(services, profile, path, raster, is_quality, nodata, bucket_name):
+    with MemoryFile() as memfile:
+        with memfile.open(**profile) as ds:
+            if is_quality:
+                ds.nodata = nodata
+            ds.write_band(1, raster)
+            ds.build_overviews([2, 4, 8, 16, 32, 64], Resampling.nearest)
+            ds.update_tags(ns='rio_overview', resampling='nearest')
+        services.upload_fileobj_S3(memfile, path, {'ACL': 'public-read'}, bucket_name=bucket_name)
+    return True
+
+
+############################
+def add_overviews(services, profile, path, path_to, bucket_name):
+    with rasterio.open(path) as ds_file:
+        with MemoryFile() as memfile:
+            with memfile.open(**profile) as ds:
+                ds.write_band(1, ds_file.read(1))
+                ds.build_overviews([2, 4, 8, 16, 32, 64], Resampling.nearest)
+                ds.update_tags(ns='rio_overview', resampling='nearest')
+            services.upload_fileobj_S3(memfile, path_to, {'ACL': 'public-read'}, bucket_name=bucket_name)
+        return True
+
+
+############################
+def create_index_indisk(services, index, bands, bucket_name):
+    prefix = services.get_s3_prefix(bucket_name)
+
+    red_band_name = bands['red'] if bands.get('red') else bands['RED']
+    red_band_path = os.path.join(prefix + red_band_name)
+    nir_band_name = bands['nir'] if bands.get('nir') else bands['NIR']
+    nir_band_path = os.path.join(prefix + nir_band_name)
+
+    index_file = '/tmp/index.tif'
+    index_dataset = None
+    profile = None
+
+    if index.upper() == 'EVI':
+        blue_bland_path = bands['blue'] if bands.get('blue') else bands['BLUE']
+        blue_bland_path = os.path.join(prefix + blue_bland_path) 
+
+        with rasterio.open(nir_band_path) as ds_nir, rasterio.open(red_band_path) as ds_red,\
+            rasterio.open(blue_bland_path) as ds_blue:
+            index_dataset = rasterio.open(index_file, mode='w', **ds_nir.profile)
+
+            profile = ds_nir.profile
+            nodata = int(profile['nodata'])
+            blocks = ds_nir.block_windows()
+
+            for _, block in blocks:
+                nir = ds_nir.read(1, masked=True, window=block)
+                red = ds_red.read(1, masked=True, window=block)
+                blue = ds_blue.read(1, masked=True, window=block)
+
+                evi_block = (10000. * 2.5 * (nir - red) / (nir + 6. * red - 7.5 * blue + 10000.)).astype(numpy.int16)
+                evi_block[evi_block == numpy.ma.masked] = nodata
+                
+                index_dataset.write(evi_block.astype(numpy.int16), window=block, indexes=1)
+
+    if index.upper() == 'NDVI':
+        with rasterio.open(nir_band_path) as ds_nir, rasterio.open(red_band_path) as ds_red:
+            index_dataset = rasterio.open(index_file, mode='w', **ds_nir.profile)
+
+            profile = ds_nir.profile
+            nodata = int(profile['nodata'])
+            blocks = ds_nir.block_windows()
+            
+            for _, block in blocks:
+                nir = ds_nir.read(1, masked=True, window=block)
+                red = ds_red.read(1, masked=True, window=block)
+
+                ndvi_block = (10000. * ((nir - red) / (nir + red))).astype(numpy.int16)
+                ndvi_block[ndvi_block == numpy.ma.masked] = nodata
+
+                index_dataset.write(ndvi_block.astype(numpy.int16), window=block, indexes=1)
+     
+    index_dataset.close()
+    index_dataset = None
+
+    file_path = '_'.join(red_band_name.split('_')[:-1]) + '_{}.tif'.format(index)
+    services.upload_file_S3(index_file, file_path, {'ACL': 'public-read'}, bucket_name=bucket_name)
+    
+    add_overviews(services, profile, index_file, file_path, bucket_name)
+    os.remove(index_file)
+
+
+############################
+def create_index(services, index, bands, bucket_name):
+    prefix = services.get_s3_prefix(bucket_name)
+
+    red_band_name = bands['red'] if bands.get('red') else bands['RED']
+    red_band_path = os.path.join(prefix + red_band_name)
+    nir_band_name = bands['nir'] if bands.get('nir') else bands['NIR']
+    nir_band_path = os.path.join(prefix + nir_band_name)
+
+    raster = None
+
+    if index.upper() == 'EVI':
+        blue_bland_path = bands['blue'] if bands.get('blue') else bands['BLUE']
+        blue_bland_path = os.path.join(prefix + blue_bland_path) 
+
+        with rasterio.open(nir_band_path) as ds_nir, rasterio.open(red_band_path) as ds_red,\
+            rasterio.open(blue_bland_path) as ds_blue:
+
+            profile = ds_nir.profile
+            nodata = int(profile['nodata'])
+            blocks = ds_nir.block_windows()
+            data_type = profile['dtype']
+
+            raster = numpy.full((profile['height'], profile['width']), dtype=data_type, fill_value=nodata)
+
+            for _, block in blocks:
+                row_offset = block.row_off + block.height
+                col_offset = block.col_off + block.width
+
+                nir = ds_nir.read(1, masked=True, window=block)
+                red = ds_red.read(1, masked=True, window=block)
+                blue = ds_blue.read(1, masked=True, window=block)
+
+                # Calculate EVI
+                raster_block = (10000. * 2.5 * (nir - red) / (nir + 6. * red - 7.5 * blue + 10000.)).astype(numpy.int16)
+                raster_block[raster_block == numpy.ma.masked] = nodata
+                raster[block.row_off: row_offset, block.col_off: col_offset] = raster_block
+
+    if index.upper() == 'NDVI':
+        with rasterio.open(nir_band_path) as ds_nir, rasterio.open(red_band_path) as ds_red:
+            profile = ds_nir.profile
+            nodata = int(profile['nodata'])
+            blocks = ds_nir.block_windows()
+            data_type = profile['dtype']
+
+            raster = numpy.full((profile['height'], profile['width']), dtype=data_type, fill_value=nodata)
+
+            for _, block in blocks:
+                row_offset = block.row_off + block.height
+                col_offset = block.col_off + block.width
+
+                nir = ds_nir.read(1, masked=True, window=block)
+                red = ds_red.read(1, masked=True, window=block)
+
+                # Calculate NDVI
+                raster_block = (10000. * ((nir - red) / (nir + red))).astype(numpy.int16)
+                raster_block[raster_block == numpy.ma.masked] = nodata
+                raster[block.row_off: row_offset, block.col_off: col_offset] = raster_block
+
+    file_path = '_'.join(red_band_name.split('_')[:-1]) + '_{}.tif'.format(index)                
+    create_cog_in_s3(
+        services, profile, file_path, raster.astype(numpy.int16), False, None, bucket_name)

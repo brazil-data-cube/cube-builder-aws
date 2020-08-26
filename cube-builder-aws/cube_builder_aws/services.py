@@ -24,7 +24,7 @@ from config import DYNAMO_TB_ACTIVITY, DBNAME_TB_CONTROL, DBNAME_TB_PROCESS, \
 class CubeServices:
     
     def __init__(self, url_stac=None, bucket=None):
-        # session = boto3.Session(profile_name='africa')
+        # session = boto3.Session(profile_name='default')
         session = boto3.Session(
             aws_access_key_id=AWS_KEY_ID, 
             aws_secret_access_key=AWS_SECRET_KEY)
@@ -162,6 +162,11 @@ class CubeServices:
             KeyConditionExpression=Key('id').eq(process_id)
         )
 
+    def get_process_by_datacube(self, datacube):
+        return self.processTable.scan(
+            FilterExpression=Key('datacube').eq(datacube)
+        )
+
     def get_cube_meta(self, cube,):
         filters = Key('data_cube').eq(cube) & Key('id').begins_with('merge')
 
@@ -194,8 +199,8 @@ class CubeServices:
             start - Filter start data
             end - Filter end data
         """
-        expression = Key('tile_id').eq(tile_id) & Key('period_start').between(start, start) & \
-            Key('period_end').between(end, end) & Key('data_cube').eq(data_cube)
+        expression = Key('tile_id').eq(tile_id) & Key('period_start').between(start, end) & \
+            Key('period_end').between(start, end) & Key('data_cube').eq(data_cube)
 
         return self.get_all_items(expression)
 
@@ -256,9 +261,16 @@ class CubeServices:
     def remove_control_by_key(self, key: str):
         try:
             self.activitiesControlTable.delete_item(
-                Key=dict(
-                    id=key
-                )
+                Key=dict(id=key)
+            )
+            return True
+        except:
+            return False
+
+    def remove_process_by_key(self, key: str):
+        try:
+            self.processTable.delete_item(
+                Key=dict(id=key)
             )
             return True
         except:
@@ -276,7 +288,7 @@ class CubeServices:
     ## ----------------------
     # SQS
     def get_queue_url(self):
-        for action in ['merge', 'blend', 'publish']:
+        for action in ['merge', 'blend', 'posblend', 'publish']:
             queue = '{}-{}'.format(QUEUE_NAME, action)
             if self.QueueUrl.get(action, None) is not None:
                 continue
