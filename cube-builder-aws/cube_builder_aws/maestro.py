@@ -26,7 +26,7 @@ from bdc_db.models import CollectionTile, CollectionItem, Tile, \
 from .logger import logger
 from .utils.builder import decode_periods, encode_key, \
     getMaskStats, getMask, generateQLook, get_cube_id, get_resolution_by_satellite, \
-    create_cog_in_s3, create_index, create_index_indisk
+    create_cog_in_s3, create_index
 
 
 def orchestrate(datacube, cube_infos, tiles, start_date, end_date, functions):
@@ -927,7 +927,7 @@ def next_posblend(services, blendactivity):
     blend_dynamo_key = blendactivity['dynamoKey']
     posblendactivity = blendactivity
     posblendactivity['action'] = 'posblend'
-    posblendactivity['totalInstancesToBeDone'] = len(posblendactivity['indexes']) * 2 # Irregular and regular
+    posblendactivity['totalInstancesToBeDone'] = len(posblendactivity['indexes']) * (len(posblendactivity['scenes'].keys()) + 1) # Irregular and regular
 
     # Reset mycount in activitiesControlTable
     if posblendactivity['action'] not in posblendactivity['dynamoKey']:
@@ -968,7 +968,6 @@ def next_posblend(services, blendactivity):
         # create and dispatch one activity to irregular cube and one to regular cubes (each index)
         for i in ['', 'IDENTITY']:
             posblendactivity['sk'] = '{}{}'.format(index['name'], i)
-            
             # Blend has not been performed, do it
             posblendactivity['mystatus'] = 'NOTDONE'
             posblendactivity['mystart'] = 'SSSS-SS-SS'
@@ -977,11 +976,24 @@ def next_posblend(services, blendactivity):
             posblendactivity['cloudratio'] = '100'
             posblendactivity['mylaunch'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-            # Create an entry in dynamoDB for each band blend activity (quality band is not an entry in DynamoDB)
-            key = '{}activities/{}.json'.format(posblendactivity['dirname'], posblendactivity['dynamoKey'])
-            services.save_file_S3(bucket_name=posblendactivity['bucket_name'], key=key, activity=posblendactivity)
-            services.put_item_kinesis(posblendactivity)
-            services.send_to_sqs(posblendactivity)
+            if i == 'IDENTITY':
+                dates = activity['scenes'].keys()
+                for date_with_dataset in dates:
+                    scene = activity['scenes'][date_with_dataset]
+                    date = scene['date']
+                    posblendactivity['sk'] = '{}{}{}'.format(index['name'], i, date)
+            
+                    # Create an entry in dynamoDB for each band blend activity (quality band is not an entry in DynamoDB)
+                    key = '{}activities/{}.json'.format(posblendactivity['dirname'], posblendactivity['dynamoKey'])
+                    services.save_file_S3(bucket_name=posblendactivity['bucket_name'], key=key, activity=posblendactivity)
+                    services.put_item_kinesis(posblendactivity)
+                    services.send_to_sqs(posblendactivity)
+            else:
+                # Create an entry in dynamoDB for each band blend activity (quality band is not an entry in DynamoDB)
+                key = '{}activities/{}.json'.format(posblendactivity['dirname'], posblendactivity['dynamoKey'])
+                services.save_file_S3(bucket_name=posblendactivity['bucket_name'], key=key, activity=posblendactivity)
+                services.put_item_kinesis(posblendactivity)
+                services.send_to_sqs(posblendactivity)
 
     return True
 
@@ -995,15 +1007,16 @@ def posblend(self, activity):
     try:
         sk = activity['sk']
         is_identity = 'IDENTITY' in activity['sk']
-        if is_identity:
-            sk = sk.replace('IDENTITY', '')
-        index = activity['indexesToBe'][sk]
         
         if is_identity:
+            sk = sk.replace('IDENTITY', '')
+            index = activity['indexesToBe'][sk[:-10]]
             for date in index['IDENTITY'].keys():
-                bands = index['IDENTITY'][date]
-                create_index_indisk(services, sk, bands, bucket_name)
+                if date in sk:
+                    bands = index['IDENTITY'][date]
+                    create_index(services, sk.replace(date, ''), bands, bucket_name)
         else:
+            index = activity['indexesToBe'][sk]
             for func in activity['functions']:
                 if func == 'IDENTITY': continue
                 bands = index[func]
