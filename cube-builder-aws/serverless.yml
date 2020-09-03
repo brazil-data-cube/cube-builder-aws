@@ -35,6 +35,7 @@ provider:
     KEY_ID: ${env:KEY_ID}
     SECRET_KEY: ${env:SECRET_KEY}
     RDS_HOST: ${env:RDS_HOST}
+    RDS_PORT: ${env:RDS_PORT}
     RDS_DBNAME: ${env:RDS_DBNAME}
     RDS_USER: ${env:RDS_USER}
     RDS_PASSWORD: ${env:RDS_PASSWORD}
@@ -80,6 +81,7 @@ package:
     - package-lock.json
     - cube_builder_aws/__pycache__/**
     - cube_builder_aws/utils/__pycache__/**
+    - venv/**
     - example.env
     - .env
 
@@ -155,7 +157,7 @@ functions:
   app_publish: 
     handler: app.continue_process
     timeout: 360
-    memorySize: 256
+    memorySize: 1024
     events:
       - sqs:
           batchSize: 1

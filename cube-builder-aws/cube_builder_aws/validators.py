@@ -16,11 +16,36 @@ from rasterio.dtypes import dtype_ranges
 def to_date(s):
     return datetime.strptime(s, '%Y-%m-%d') if s else None
 
+
 def to_bbox(s):
     bbox = s.split(',')
     if len(bbox) != 4: 
         return None
     return bbox
+
+def to_platform_code(s):
+    codes = ["cbers-4", "sentinel-2", "landsat-8", "landsat-7", "landsat-6", "landsat-4", "landsat-4"] 
+    return s if s.lower() in codes else None
+
+
+def to_temporal_composition(o):
+    if o['schema'] == "cyclic" and not o['cycle']:
+        return None
+    return o
+
+
+class BDCValidator(Validator):
+    def _check_with_band_uniqueness(self, field, value):
+        bands = self.document['bands']
+        band_names = [b['name'] for b in bands]
+
+        if field == 'indexes':
+            for index in value:
+                if index['name'] in band_names:
+                    self._error(field, f'Duplicated band name in indices {index["name"]}')
+        elif field == 'quality_band':
+            if value not in band_names:
+                self._error(field, f'Quality band "{value}" not found in key "bands"')
 
 
 def index_band():
@@ -29,54 +54,89 @@ def index_band():
         schema=dict(
             name=dict(type='string', empty=False, required=True),
             common_name=dict(type='string', empty=False, required=True),
-            data_type=dict(type='string', empty=False, required=True, allowed=list(dtype_ranges.keys()))
+            data_type=dict(type='string', empty=False, required=True, allowed=list(dtype_ranges.keys())),
+            description=dict(type='string', empty=True, required=False),
+            metadata=dict(type='dict', empty=True, required=False)
         )
     )
 
 
+def cube_metadata():
+    return dict(
+        platform=dict(type='dict', empty=False, required=True, schema=dict(
+            code=dict(type='string', empty=False, required=True, coerce=to_platform_code),
+            instruments=dict(type='list', empty=True, required=False)
+        )),
+        datacite=dict(type='dict', empty=True, required=False)
+    )
+
+
+def temporal_composition_schema():
+    return dict(
+        type="dict",
+        empty=False,
+        required=True,
+        schema=dict(
+            step=dict(type='integer', empty=False, required=True),
+            unit=dict(type='string', empty=False, required=True, allowed=['hour', 'day', 'month', 'year']),
+            schema=dict(type='string', empty=False, required=True, allowed=['cyclic', 'continuous']),
+            cycle=dict(
+                type='dict', 
+                empty=True, 
+                required=False, 
+                schema=dict(
+                    step=dict(type='integer', empty=False, required=True),
+                    unit=dict(type='string', empty=False, required=True, allowed=['hour', 'day', 'month', 'year'])
+                )
+            )
+        ),
+        coerce=to_temporal_composition
+    )
+
 def create():
     item = dict(
-        datacube=dict(type='string', empty=False, required=True),
-        grs=dict(type='string', empty=False, required=True),
+        name=dict(type='string', empty=False, required=True),
+        title=dict(type='string', empty=False, required=True),
+        description=dict(type='string', empty=True, required=False),
+        temporal_composition=temporal_composition_schema(),
+        composite_functions_id=dict(type='list', empty=False, required=True, schema=dict(type="integer")),
+        grid_name=dict(type='string', empty=False, required=True),
+        metadata=dict(type='dict', empty=False, required=True, schema=cube_metadata()),
+        version=dict(type='integer', empty=False, required=True),
+        version_predecessor_id=dict(type='integer', empty=True, required=False),
         resolution=dict(type='float', empty=False, required=True),
-        temporal_schema=dict(type='string', empty=False, required=True),
-        bands_quicklook=dict(type='list', empty=False, required=True),
-        composite_function=dict(type='list', empty=False, required=True, allowed=['IDENTITY', 'STK', 'MED']),
         bands=dict(type='list', empty=False, required=True, schema=index_band()),
         indexes=dict(type='list', empty=True, required=False, schema=index_band(), check_with='band_uniqueness'),
-        quality_band=dict(type='string', empty=True, required=False, check_with='band_uniqueness'),
-        license=dict(type='string', empty=True, required=False),
-        oauth_scope=dict(type='string', empty=True, required=False),
-        description=dict(type='string', empty=True, required=False)
+        bands_quicklook=dict(type='list', empty=False, required=True),
+        quality_band=dict(type='string', empty=False, required=True, check_with='band_uniqueness'),
+    )
+    return item
+
+def grs():
+    item = dict(
+        name=dict(type="string", empty=False, required=True),
+        description=dict(type="string", empty=False, required=True),
+        projection=dict(type="string", empty=False, required=True, allowed=['aea', 'sinu', 'longlat']),
+        meridian=dict(type="float", empty=False, required=True),
+        degreesx=dict(type="float", empty=False, required=True),
+        degreesy=dict(type="float", empty=False, required=True),
+        bbox=dict(type="list", empty=False, required=True, coerce=to_bbox)
     )
     return item
 
 def process():
-    item = {
-        'process_id': {"type": "string", "empty": False, "required": False},
-        'datacube': {"type": "string", "empty": False, "required": False},
-        'url_stac': {"type": "string", "empty": False, "required": True},
-        'bucket': {"type": "string", "empty": False, "required": True},
-        'tiles': {"type": "list", "empty": False, "required": True},
-        'collections': {"type": "string", "empty": False, "required": True},
-        'satellite': {"type": "string", "empty": False, "required": True},
-        'start_date': {"type": "date", "coerce": to_date, "empty": False, "required": True},
-        'end_date': {"type": "date", "coerce": to_date, "empty": True, "required": False},
-        'force': {'type': 'boolean', 'required': False, 'default': False}
-    }
+    item = dict(
+        process_id=dict(type="string", empty=False, required=False),
+        url_stac=dict(type="string", empty=False, required=True),
+        bucket=dict(type="string", empty=False, required=True),
+        tiles=dict(type="list", empty=False, required=True),
+        collections=dict(type="list", empty=False, required=True),
+        start_date=dict(type="date", coerce=to_date, empty=False, required=True),
+        end_date=dict(type="date", coerce=to_date, empty=True, required=False),
+        force=dict(type="boolean", required=False, default=False)
+    )
     return item
 
-def grs():
-    item = {
-        'name': {"type": "string", "empty": False, "required": True},
-        'description': {"type": "string", "empty": False, "required": True},
-        'projection': {"type": "string", "empty": False, "required": True, "allowed": ['aea', 'sinu', 'longlat']},
-        'meridian': {"type": "float", "empty": False, "required": True},
-        'degreesx': {"type": "float", "empty": False, "required": True},
-        'degreesy': {"type": "float", "empty": False, "required": True},
-        'bbox': {"type": "list", "empty": False, "required": True, "coerce": to_bbox}
-    }
-    return item
 
 def raster_size():
     item = {
@@ -157,20 +217,6 @@ def estimate_cost():
         t_schema=dict(type='string', empty=False, required=False),
         t_step=dict(type='integer', empty=False, required=True, default=1, coerce=int)
     )
-
-
-class BDCValidator(Validator):
-    def _check_with_band_uniqueness(self, field, value):
-        bands = self.document['bands']
-        band_names = [b['name'] for b in bands]
-
-        if field == 'indexes':
-            for index in value:
-                if index['name'] in band_names:
-                    self._error(field, f'Duplicated band name in indices {index["name"]}')
-        elif field == 'quality_band':
-            if value not in band_names:
-                self._error(field, f'Quality band "{value}" not found in key "bands"')
 
 
 def validate(data, type_schema):
