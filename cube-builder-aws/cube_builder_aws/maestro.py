@@ -25,7 +25,7 @@ from bdc_db.models import CollectionTile, CollectionItem, Tile, \
 
 from .logger import logger
 from .utils.builder import decode_periods, encode_key, \
-    getMaskStats, getMask, generateQLook, get_cube_id, get_resolution_by_satellite, \
+    qa_statistics, getMask, generateQLook, get_cube_id, get_resolution_by_satellite, \
     create_cog_in_s3, create_index
 
 
@@ -317,7 +317,7 @@ def merge_warped(self, activity):
                 with rasterio.open('{}{}'.format(prefix, key)) as src:
                     values = src.read(1)
                     if activity['band'] == activity['quality_band']:
-                        cloudratio, efficacy = getMaskStats(values)
+                        efficacy, cloudratio = qa_statistics(values)
 
                 # Update entry in DynamoDB
                 activity['myend'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -785,7 +785,7 @@ def blend(self, activity):
                     copy_mask[copy_mask <= 4] = 1
                     copy_mask[copy_mask >= 5] = 0
 
-                    stack_total_observation[window.row_off: row_offset, window.col_off: col_offset] += copy_mask
+                    stack_total_observation[window.row_off: row_offset, window.col_off: col_offset] += copy_mask.astype(numpy.uint8)
 
                 # Get current observation file name
                 if build_provenance:
@@ -813,8 +813,7 @@ def blend(self, activity):
 
                 if len(intersect_ravel):
                     where_intersec = numpy.unravel_index(intersect_ravel, raster.shape)
-                    stack_raster[window.row_off: row_offset, window.col_off: col_offset][where_intersec] = \
-                    raster[where_intersec]
+                    stack_raster[window.row_off: row_offset, window.col_off: col_offset][where_intersec] = raster[where_intersec]
 
                     if build_provenance:
                         provenance_array[window.row_off: row_offset, window.col_off: col_offset][where_intersec] = day_of_year
@@ -826,8 +825,7 @@ def blend(self, activity):
                 clear_not_done_pixels = numpy.where(numpy.logical_and(todomask, mask.astype(numpy.bool)))
 
                 # Override the STACK Raster with valid data.
-                stack_raster[window.row_off: row_offset, window.col_off: col_offset][clear_not_done_pixels] = \
-                raster[clear_not_done_pixels]
+                stack_raster[window.row_off: row_offset, window.col_off: col_offset][clear_not_done_pixels] = raster[clear_not_done_pixels]
 
                 if build_provenance:
                     # Mark day of year to the valid pixels
