@@ -24,6 +24,8 @@ provider:
   apiKeys:
     - name: apikey-${env:PROJECT_NAME}-${env:STAGE}
       value: ${env:TOKEN}
+  tags:
+    Name: ${env:PROJECT_NAME}-${env:STAGE}
 
   environment:
     LAMBDA_FUNCTION_NAME: ${self:service}-${self:provider.stage}-app
