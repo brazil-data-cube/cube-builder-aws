@@ -165,19 +165,22 @@ def encode_key(activity, keylist):
 
 
 ############################
-def getMaskStats(mask):
-    totpix   = mask.size
-    clearpix = numpy.count_nonzero(mask <= 1)
-    cloudpix = numpy.count_nonzero(mask >= 2)
+def qa_statistics(raster):
+    """Retrieve raster statistics efficacy and cloud ratio, based in Fmask values.
+    Notes:
+        Values 0 and 1 are considered `clear data`.
+    """
+    totpix = raster.size
+    clearpix = numpy.count_nonzero(raster < 2)
+    cloudpix = numpy.count_nonzero(raster > 1)
     imagearea = clearpix + cloudpix
+    cloudratio = 100
 
-    cloud_ratio = 100
     if imagearea != 0:
-        cloud_ratio = round(100. * cloudpix / imagearea, 1)
+        cloudratio = round(100.*cloudpix/imagearea, 1)
+    efficacy = round(100.*clearpix/totpix, 2)
 
-    efficacy = round(100. * clearpix / totpix, 2)
-    return cloud_ratio, efficacy
-
+    return efficacy, cloudratio
 
 ############################
 def getMask(raster, satellite):
@@ -235,7 +238,7 @@ def getMask(raster, satellite):
         lut[255] = 4
         rastercm = numpy.take(lut, raster).astype(numpy.uint8)
 
-    efficacy, cloudratio = getMaskStats(rastercm)
+    efficacy, cloudratio = qa_statistics(rastercm)
 
     return rastercm.astype(numpy.uint8), efficacy, cloudratio
 
