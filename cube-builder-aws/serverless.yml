@@ -22,7 +22,7 @@ provider:
   stage: ${env:STAGE}
   region: ${env:REGION}
   apiKeys:
-    - name: key-${env:PROJECT_NAME}-${env:STAGE}
+    - name: apikey-${env:PROJECT_NAME}-${env:STAGE}
       value: ${env:TOKEN}
 
   environment:
@@ -77,6 +77,8 @@ provider:
 
 package:
   exclude:
+    - venvold/**
+    - venv/**
     - node_modules/**
     - package-lock.json
     - cube_builder_aws/__pycache__/**
