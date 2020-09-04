@@ -17,8 +17,6 @@ from dateutil.relativedelta import relativedelta
 from numpngw import write_png
 from rasterio.io import MemoryFile
 from rasterio.warp import Resampling
-from rio_cogeo.cogeo import cog_translate
-from rio_cogeo.profiles import cog_profiles
 
 
 #############################
@@ -313,7 +311,13 @@ def generate_hash_md5(word):
 
 ############################
 def create_cog_in_s3(services, profile, path, raster, is_quality, nodata, bucket_name):
-    dst_profile = cog_profiles.get("lzw")
+    profile.update({
+        'compress': 'LZW',
+        'tiled': True,
+        'interleave': 'pixel',
+        'blockxsize': 512,
+        'blockysize': 512
+    })
 
     with MemoryFile() as memfile:
         with memfile.open(**profile) as mem:
@@ -321,7 +325,8 @@ def create_cog_in_s3(services, profile, path, raster, is_quality, nodata, bucket
                 mem.nodata = nodata
             
             mem.write_band(1, raster)
-            cog_translate(mem, memfile.name, dst_profile, in_memory=True)
+            mem.build_overviews([2, 4, 8, 16, 32, 64], Resampling.nearest)
+            mem.update_tags(ns='rio_overview', resampling='nearest')
 
         services.upload_fileobj_S3(memfile, path, {'ACL': 'public-read'}, bucket_name=bucket_name)
     return True
