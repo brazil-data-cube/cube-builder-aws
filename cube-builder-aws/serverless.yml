@@ -24,6 +24,9 @@ provider:
   apiKeys:
     - name: apikey-${env:PROJECT_NAME}-${env:STAGE}
       value: ${env:TOKEN}
+  tags:
+    Name: ${env:PROJECT_NAME}-${env:STAGE}
+
 
   environment:
     LAMBDA_FUNCTION_NAME: ${self:service}-${self:provider.stage}-app
@@ -147,7 +150,7 @@ functions:
   app_posblend: 
     handler: app.continue_process
     timeout: 720
-    memorySize: 2560
+    memorySize: 3008
     events:
       - sqs:
           batchSize: 1
