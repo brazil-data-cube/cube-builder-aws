@@ -436,13 +436,6 @@ def merge_warped(self, activity):
 
         # Save merged image on S3
         with MemoryFile() as memfile:
-            template.update({
-                'compress': 'LZW',
-                'tiled': True,
-                'interleave': 'pixel',
-                'blockxsize': block_size,
-                'blockysize': block_size
-            })
             with memfile.open(**template) as riodataset:
                 riodataset.nodata = nodata
                 riodataset.write_band(1, raster_merge)
