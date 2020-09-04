@@ -1194,6 +1194,7 @@ def publish(self, activity):
 
                 item.assets = assets
                 item.updated = datetime.now()
+                db.session.add(item)
             db.session.commit()
 
 
@@ -1275,6 +1276,10 @@ def publish(self, activity):
                         relative_path, COG_MIME_TYPE, ['data'],
                         full_path, is_raster=True
                     )
+                
+                item.assets = assets
+                item.updated = datetime.now()
+                db.session.add(item)
             db.session.commit()
 
         # Update status and end time in DynamoDB
