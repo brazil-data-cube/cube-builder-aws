@@ -646,11 +646,6 @@ def blend(self, activity):
 
         with rasterio.open(filename) as src:
             profile = src.profile
-            profile.update({
-                'compress': 'LZW',
-                'tiled': True,
-                'interleave': 'pixel',
-            })
             tilelist = list(src.block_windows())
 
         # Order scenes based in efficacy/resolution
@@ -1180,10 +1175,8 @@ def publish(self, activity):
                     Band.collection_id == cube.id
                 ).all()
 
-                # indexes_list = [index['name'] for index in activity['indexes']]
-                # for band in (activity['bands'] + activity['internal_bands'] + indexes_list):
-
-                for band in (activity['bands'] + activity['internal_bands']):
+                indexes_list = [index['name'] for index in activity['indexes']]
+                for band in (activity['bands'] + activity['internal_bands'] + indexes_list):
                     if not activity['blended'][band].get('{}file'.format(function)):
                         continue
 
@@ -1266,9 +1259,8 @@ def publish(self, activity):
                 bands_by_cube = Band.query().filter(
                     Band.collection_id == cube.id
                 ).all()
-                # indexes_list = [index['name'] for index in activity['indexes']]
-                # for band in (activity['bands'] + indexes_list):
-                for band in (activity['bands']):
+                indexes_list = [index['name'] for index in activity['indexes']]
+                for band in (activity['bands'] + indexes_list):
                     if band not in scene['ARDfiles']:
                         raise Exception(f'publish - problem - band {band} not in scene[files]')
 
