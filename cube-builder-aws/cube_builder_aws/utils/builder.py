@@ -13,7 +13,9 @@ import numpy
 import rasterio
 import hashlib
 import os
+import shapely
 from dateutil.relativedelta import relativedelta
+from geoalchemy2.shape import from_shape
 from numpngw import write_png
 from rasterio.io import MemoryFile
 from rasterio.warp import Resampling
@@ -435,12 +437,18 @@ def create_asset_definition(services, bucket_name: str, href: str, mime_type: st
         'updated': _now_str
     }
 
+    geom = None
+
     if is_raster:
         with rasterio.open(f's3://{absolute_path}') as data_set:
             asset['raster_size'] = dict(
                 x=data_set.shape[1],
                 y=data_set.shape[0],
             )
+
+            _geom = shapely.geometry.mapping(shapely.geometry.box(*data_set.bounds))
+            geom_shape = shapely.geometry.shape(rasterio.warp.transform_geom(data_set.crs, 'EPSG:4326', _geom, precision=6))
+            geom = from_shape(geom_shape, srid=4326)
 
             chunk_x, chunk_y = data_set.profile.get('blockxsize'), data_set.profile.get('blockxsize')
 
@@ -449,4 +457,4 @@ def create_asset_definition(services, bucket_name: str, href: str, mime_type: st
 
             asset['chunk_size'] = dict(x=chunk_x, y=chunk_y)
     
-    return asset
+    return asset, geom

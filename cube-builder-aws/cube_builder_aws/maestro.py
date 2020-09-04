@@ -1164,11 +1164,9 @@ def publish(self, activity):
                         cloud_cover=float(activity['cloudratio'])
                     )
 
-
-                assets = dict(
-                    thumbnail=create_asset_definition(
-                        services, bucket_name, str(s3_pngname), 'image/png', ['thumbnail'], quicklook_url)
-                )
+                thumbnail, _ = create_asset_definition(
+                    services, bucket_name, str(s3_pngname), 'image/png', ['thumbnail'], quicklook_url)
+                assets = dict(thumbnail=thumbnail)
 
                 # add 'assets'
                 bands_by_cube = Band.query().filter(
@@ -1186,7 +1184,7 @@ def publish(self, activity):
 
                     relative_path = activity["blended"][band][function + "file"]        
                     full_path = f'{bucket_name}/{relative_path}'
-                    assets[band_model.name] = create_asset_definition(
+                    assets[band_model.name], item.geom = create_asset_definition(
                         services, bucket_name,
                         relative_path, COG_MIME_TYPE, ['data'],
                         full_path, is_raster=True
@@ -1251,10 +1249,9 @@ def publish(self, activity):
                         cloud_cover=float(scene['cloudratio'])
                     )
 
-                assets = dict(
-                    thumbnail=create_asset_definition(
-                        services, bucket_name, str(s3_pngname), 'image/png', ['thumbnail'], quicklook_url)
-                )
+                thumbnail, _ = create_asset_definition(
+                    services, bucket_name, str(s3_pngname), 'image/png', ['thumbnail'], quicklook_url)
+                assets = dict(thumbnail=thumbnail)
 
                 # insert 'assets'
                 bands_by_cube = Band.query().filter(
@@ -1271,7 +1268,7 @@ def publish(self, activity):
                     
                     relative_path = os.path.join(activity['dirname'], str(scene['date'])[0:10], scene['ARDfiles'][band])
                     full_path = f'{bucket_name}/{relative_path}'
-                    assets[band_model.name] = create_asset_definition(
+                    assets[band_model.name], item.geom = create_asset_definition(
                         services, bucket_name,
                         relative_path, COG_MIME_TYPE, ['data'],
                         full_path, is_raster=True
