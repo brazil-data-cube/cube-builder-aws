@@ -138,33 +138,16 @@ def process():
     return item
 
 
-def raster_size():
-    item = {
-        'grs_schema': {"type": "string", "empty": False, "required": True},
-        'resolution': {"type": "integer", "empty": False, "required": True},
-        'chunk_size_x': {"type": "float", "empty": False, "required": True},
-        'chunk_size_y': {"type": "float", "empty": False, "required": True}
-    }
-    return item
-
-def temporal_composition():
-    item = {
-        'temporal_schema': {"type": "string", "empty": False, "required": True, "allowed": ['A', 'M', 'S']},
-        'temporal_composite_t': {"type": "string", "empty": True, "required": False},
-        'temporal_composite_unit': {"type": "string", "empty": True, "required": False, "allowed": ['day', 'month']}
-    }
-    return item
-
 def status():
-    item = {
-        'datacube': {"type": "string", "empty": False, "required": True}
-    }
+    item = dict(
+        cube_id=dict(type="string", empty=False, required=False)
+    )
     return item
 
 
 def list_merge_form():
     item = dict(
-        data_cube=dict(type='string', empty=False, required=True),
+        cube_id=dict(type='string', empty=False, required=True),
         tile_id=dict(type='string', empty=False, required=True),
         start=dict(type='string', empty=False, required=True),
         end=dict(type='string', empty=False, required=True),

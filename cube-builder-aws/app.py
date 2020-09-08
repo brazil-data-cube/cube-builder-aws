@@ -130,33 +130,33 @@ def start():
     return jsonify(message), status
 
 
-# @app.route("/cube-status", methods=["GET"])
-# def get_status():
-#     # validate params
-#     data, status = validate(request.args.to_dict(), 'status')
-#     if status is False:
-#         return jsonify(json.dumps(data)), 400
+@app.route("/cube-status", methods=["GET"])
+def get_status():
+    # validate params
+    data, status = validate(request.args.to_dict(), 'status')
+    if status is False:
+        return jsonify(json.dumps(data)), 400
 
-#     message, status = business.get_cube_status(**data)
-#     return jsonify(message), status
-
-
-# @app.route('/cubes', defaults=dict(cube_id=None), methods=['GET'])
-# @app.route('/cubes/<cube_id>', methods=['GET'])
-# def list_cubes(cube_id):
-#     if cube_id is not None:
-#         message, status_code = business.get_cube(cube_id)
-#     else:
-#         message, status_code = business.list_cubes()
-
-#     return jsonify(message), status_code
+    message, status = business.get_cube_status(**data)
+    return jsonify(message), status
 
 
-# @app.route('/cubes/<cube_id>/tiles', methods=['GET'])
-# def list_tiles_as_features(cube_id):
-#     message, status_code = business.list_tiles_cube(cube_id)
+@app.route('/cubes', defaults=dict(cube_id=None), methods=['GET'])
+@app.route('/cubes/<cube_id>', methods=['GET'])
+def list_cubes(cube_id):
+    if cube_id is not None:
+        message, status_code = business.get_cube(cube_id)
+    else:
+        message, status_code = business.list_cubes()
 
-#     return jsonify(message), status_code
+    return jsonify(message), status_code
+
+
+@app.route('/cubes/<cube_id>/tiles', methods=['GET'])
+def list_tiles_as_features(cube_id):
+    message, status_code = business.list_tiles_cube(cube_id)
+
+    return jsonify(message), status_code
 
 
 @app.route('/grids', defaults=dict(grs_id=None), methods=['GET'])
@@ -170,27 +170,27 @@ def list_grs_schemas(grs_id):
     return jsonify(message), status_code
 
 
-# @app.route('/list-merges', methods=['GET'])
-# def list_merges():
-#     data, status = validate(request.args.to_dict(), 'list_merge_form')
-#     if status is False:
-#         return jsonify(json.dumps(data)), 400
+@app.route('/list-merges', methods=['GET'])
+def list_merges():
+    data, status = validate(request.args.to_dict(), 'list_merge_form')
+    if status is False:
+        return jsonify(json.dumps(data)), 400
 
-#     message, status_code = business.list_merges(**data)
+    message, status_code = business.list_merges(**data)
 
-#     return jsonify(message), status_code
+    return jsonify(message), status_code
 
 
-# @app.route('/cubes/<cube_id>/items', methods=['GET'])
-# def list_cube_items(cube_id):
-#     data, status = validate(request.args.to_dict(), 'list_cube_items_form')
+@app.route('/cubes/<cube_id>/items', methods=['GET'])
+def list_cube_items(cube_id):
+    data, status = validate(request.args.to_dict(), 'list_cube_items_form')
 
-#     if status is False:
-#         return jsonify(json.dumps(data)), 400
+    if status is False:
+        return jsonify(json.dumps(data)), 400
 
-#     message, status_code = business.list_cube_items(cube_id, **data)
+    message, status_code = business.list_cube_items(cube_id, **data)
 
-#     return jsonify(message), status_code
+    return jsonify(message), status_code
 
 
 @app.route('/buckets', methods=['GET'])
@@ -210,31 +210,31 @@ def craete_bucket():
     return jsonify(message), status
 
 
-# @app.route('/timeline', methods=['GET'])
-# def list_timeline():
-#     data, status = validate(request.args.to_dict(), 'list_timeline_form')
+@app.route('/timeline', methods=['GET'])
+def list_timeline():
+    data, status = validate(request.args.to_dict(), 'list_timeline_form')
 
-#     if status is False:
-#         return jsonify(json.dumps(data)), 400
+    if status is False:
+        return jsonify(json.dumps(data)), 400
 
-#     message, status_code = business.list_timeline(**data)
+    message, status_code = business.list_timeline(**data)
 
-#     return jsonify(message), status_code
-
-
-# @app.route('/cubes/<cube_id>/items/tiles', methods=['GET'])
-# def list_items_tiles(cube_id):
-#     message, status_code = business.list_cube_items_tiles(cube_id)
-
-#     return jsonify(message), status_code
+    return jsonify(message), status_code
 
 
-# @app.route('/cubes/<cube_id>/meta', methods=['GET'])
-# def get_cube_meta(cube_id: str):
-#     """Retrieve the meta information of a data cube such STAC provider used, collection, etc."""
-#     message, status_code = business.get_cube_meta(cube_id)
+@app.route('/cubes/<cube_id>/items/tiles', methods=['GET'])
+def list_items_tiles(cube_id):
+    message, status_code = business.list_cube_items_tiles(cube_id)
 
-#     return jsonify(message), status_code
+    return jsonify(message), status_code
+
+
+@app.route('/cubes/<cube_id>/meta', methods=['GET'])
+def get_cube_meta(cube_id: str):
+    """Retrieve the meta information of a data cube such STAC provider used, collection, etc."""
+    message, status_code = business.get_cube_meta(cube_id)
+
+    return jsonify(message), status_code
 
 
 # @app.route('/estimate-cost',methods=["POST"])

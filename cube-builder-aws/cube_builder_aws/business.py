@@ -16,7 +16,7 @@ from shapely.geometry import Polygon
 from werkzeug.exceptions import BadRequest, NotFound, Conflict
 
 from bdc_catalog.models.base_sql import BaseModel, db
-from bdc_catalog.models import Collection, Band, GridRefSys, Tile, CompositeFunction, MimeType, ResolutionUnit, Quicklook
+from bdc_catalog.models import Collection, Band, GridRefSys, Tile, CompositeFunction, MimeType, ResolutionUnit, Quicklook, Item
 
 from .utils.constants import CLEAR_OBSERVATION_ATTRIBUTES, PROVENANCE_ATTRIBUTES, TOTAL_OBSERVATION_ATTRIBUTES, \
     CLEAR_OBSERVATION_NAME, TOTAL_OBSERVATION_NAME, PROVENANCE_NAME, SRID_BDC_GRID, CENTER_WAVELENGTH, \
@@ -36,15 +36,15 @@ class CubeBusiness:
         self.services = CubeServices(url_stac, bucket)
 
 
-    # @staticmethod
-    # def get_cube_or_404(cube_name: str):
-    #     """Try to get a data cube from database, otherwise raises 404."""
-    #     cube = Collection.query().filter(Collection.id == cube_name, Collection.is_cube.is_(True)).first()
+    @staticmethod
+    def get_cube_or_404(cube_id: int):
+        """Try to get a data cube from database, otherwise raises 404."""
+        cube = Collection.query().filter(Collection.id == cube_id).first()
 
-    #     if cube is None:
-    #         raise NotFound('Cube "{}" not found.'.format(cube_name))
+        if cube is None:
+            raise NotFound('Cube "{}" not found.'.format(cube_id))
 
-    #     return cube
+        return cube
 
     @staticmethod
     def get_grid_by_name(grid_name: str):
@@ -215,93 +215,94 @@ class CubeBusiness:
             process_id=process_id
         ), 201
 
-    # def get_cube_status(self, datacube):
-    #     datacube_request = datacube
+    def get_cube_status(self, cube_id):
+        cube = CubeBusiness.get_cube_or_404(cube_id)
+        datacube = cube.name
 
-    #     # split and format datacube NAME
-    #     parts_cube_name = get_cube_parts(datacube)
-    #     irregular_datacube = '_'.join(parts_cube_name[:2])
-    #     is_irregular = len(parts_cube_name) > 2
-    #     datacube = '_'.join(get_cube_parts(datacube)[:3]) if is_irregular else irregular_datacube
+        # split and format datacube NAME
+        parts_cube_name = get_cube_parts(datacube)
+        irregular_datacube = '_'.join(parts_cube_name[:2])
+        is_irregular = len(parts_cube_name) > 2
+        datacube = '_'.join(get_cube_parts(datacube)[:3]) if is_irregular else irregular_datacube
 
-    #     # STATUS
-    #     acts_datacube = []
-    #     not_done_datacube = 0
-    #     error_datacube = 0
-    #     if is_irregular:
-    #         acts_datacube = self.services.get_activities_by_datacube(datacube)
-    #         not_done_datacube = len(list(filter(lambda i: i['mystatus'] == 'NOTDONE', acts_datacube)))
-    #         error_datacube = len(list(filter(lambda i: i['mystatus'] == 'ERROR', acts_datacube)))
-    #     acts_irregular = self.services.get_activities_by_datacube(irregular_datacube)
-    #     not_done_irregular = len(list(filter(lambda i: i['mystatus'] == 'NOTDONE', acts_irregular)))
-    #     error_irregular = len(list(filter(lambda i: i['mystatus'] == 'ERROR', acts_irregular)))
+        # STATUS
+        acts_datacube = []
+        not_done_datacube = 0
+        error_datacube = 0
+        if is_irregular:
+            acts_datacube = self.services.get_activities_by_datacube(datacube)
+            not_done_datacube = len(list(filter(lambda i: i['mystatus'] == 'NOTDONE', acts_datacube)))
+            error_datacube = len(list(filter(lambda i: i['mystatus'] == 'ERROR', acts_datacube)))
+        acts_irregular = self.services.get_activities_by_datacube(irregular_datacube)
+        not_done_irregular = len(list(filter(lambda i: i['mystatus'] == 'NOTDONE', acts_irregular)))
+        error_irregular = len(list(filter(lambda i: i['mystatus'] == 'ERROR', acts_irregular)))
 
-    #     activities = acts_irregular + acts_datacube
-    #     errors = error_irregular + error_datacube
-    #     not_done = not_done_irregular + not_done_datacube
-    #     if (not_done + errors):
-    #         return dict(
-    #             finished = False,
-    #             done = len(activities) - (not_done + errors),
-    #             not_done = not_done,
-    #             error = errors
-    #         ), 200
+        activities = acts_irregular + acts_datacube
+        errors = error_irregular + error_datacube
+        not_done = not_done_irregular + not_done_datacube
+        if (not_done + errors):
+            return dict(
+                finished = False,
+                done = len(activities) - (not_done + errors),
+                not_done = not_done,
+                error = errors
+            ), 200
 
-    #     # TIME
-    #     acts = sorted(activities, key=lambda i: i['mylaunch'], reverse=True)
-    #     start_date = get_date(acts[-1]['mylaunch'])
-    #     end_date = get_date(acts[0]['myend'])
+        # TIME
+        acts = sorted(activities, key=lambda i: i['mylaunch'], reverse=True)
+        start_date = get_date(acts[-1]['mylaunch'])
+        end_date = get_date(acts[0]['myend'])
 
-    #     time = 0
-    #     list_dates = []
-    #     for a in acts:
-    #         start = get_date(a['mylaunch'])
-    #         end = get_date(a['myend'])
-    #         if len(list_dates) == 0:
-    #             time += (end - start).seconds
-    #             list_dates.append({'s': start, 'e': end})
-    #             continue
+        time = 0
+        list_dates = []
+        for a in acts:
+            start = get_date(a['mylaunch'])
+            end = get_date(a['myend'])
+            if len(list_dates) == 0:
+                time += (end - start).seconds
+                list_dates.append({'s': start, 'e': end})
+                continue
 
-    #         time_by_act = 0
-    #         i = 0
-    #         for dates in list_dates:
-    #             i += 1
-    #             if dates['s'] < start < dates['e']:
-    #                 value = (end - dates['e']).seconds
-    #                 if value > 0 and value < time_by_act:
-    #                     time_by_act = value
+            time_by_act = 0
+            i = 0
+            for dates in list_dates:
+                i += 1
+                if dates['s'] < start < dates['e']:
+                    value = (end - dates['e']).seconds
+                    if value > 0 and value < time_by_act:
+                        time_by_act = value
 
-    #             elif dates['s'] < end < dates['e']:
-    #                 value = (dates['s'] - start).seconds
-    #                 if value > 0 and value < time_by_act:
-    #                     time_by_act = value
+                elif dates['s'] < end < dates['e']:
+                    value = (dates['s'] - start).seconds
+                    if value > 0 and value < time_by_act:
+                        time_by_act = value
 
-    #             elif start > dates['e'] or end < dates['s']:
-    #                 value = (end - start).seconds
-    #                 if value < time_by_act or i == 1:
-    #                     time_by_act = value
+                elif start > dates['e'] or end < dates['s']:
+                    value = (end - start).seconds
+                    if value < time_by_act or i == 1:
+                        time_by_act = value
 
-    #             elif start < dates['s'] or end > dates['e']:
-    #                 time_by_act = 0
+                elif start < dates['s'] or end > dates['e']:
+                    time_by_act = 0
 
-    #         time += time_by_act
-    #         list_dates.append({'s': start, 'e': end})
+            time += time_by_act
+            list_dates.append({'s': start, 'e': end})
 
-    #     time_str = '{} h {} m {} s'.format(
-    #         int(time / 60 / 60), int(time / 60), (time % 60))
+        time_str = '{} h {} m {} s'.format(
+            int(time / 60 / 60), int(time / 60), (time % 60))
 
-    #     quantity_coll_items = CollectionItem.query().filter(
-    #         CollectionItem.collection_id == datacube_request
-    #     ).count()
+        quantity_coll_items = Item.query().filter(
+            Item.collection_id == cube_id
+        ).count()
 
-    #     return dict(
-    #         finished = True,
-    #         start_date = str(start_date),
-    #         last_date = str(end_date),
-    #         done = len(activities),
-    #         duration = time_str,
-    #         collection_item = quantity_coll_items
-    #     ), 200
+        return dict(
+            finished = True,
+            start_date = str(start_date),
+            last_date = str(end_date),
+            done = len(activities),
+            duration = time_str,
+            collection_item = quantity_coll_items
+        ), 200
 
     def start_process(self, params):
         response = {}
@@ -551,7 +552,7 @@ class CubeBusiness:
         geom_table = schema.geom_table
         tiles = db.session.query(
             geom_table.c.tile,
-            func.ST_AsGeoJSON(func.ST_SetSRID(geom_table.c.geom, 4326), 6, 3).cast(sqlalchemy.JSON).label('geom_wgs84')
+            func.ST_AsGeoJSON(func.ST_Transform(geom_table.c.geom, 4326), 6, 3).cast(sqlalchemy.JSON).label('geom_wgs84')
         ).all()
 
         dump_grs = Serializer.serialize(schema)
@@ -559,78 +560,59 @@ class CubeBusiness:
 
         return dump_grs, 200
 
-    # def list_cubes(self):
-    #     """Retrieve the list of data cubes from Brazil Data Cube database."""
-    #     cubes = Collection.query().filter(Collection.is_cube.is_(True)).all()
+    def list_cubes(self):
+        """Retrieve the list of data cubes from Brazil Data Cube database."""
+        cubes = Collection.query().filter(Collection.collection_type == 'cube').all()
 
-    #     list_cubes = []
-    #     for cube in cubes:
-    #         cube_formated = Serializer.serialize(cube)
-    #         not_done = 0
-    #         sum_acts = 0
-    #         error = 0
-    #         if cube.composite_function_schema_id != 'IDENTITY':
-    #             parts = get_cube_parts(cube.id)
-    #             data_cube = '_'.join(parts[:3])
-    #             activities = self.services.get_activities_by_datacube(data_cube)
-    #             not_done = len(list(filter(lambda i: i['mystatus'] == 'NOTDONE', activities)))
-    #             error = len(list(filter(lambda i: i['mystatus'] == 'ERROR', activities)))
-    #             sum_acts += len(activities)
+        list_cubes = []
+        for cube in cubes:
+            cube_formated = Serializer.serialize(cube)
+            cube_formated['extent'] = None
+            not_done = 0
+            sum_acts = 0
+            error = 0
+            if cube.composite_function.alias != 'IDT':
+                activities = self.services.get_activities_by_datacube(cube.name)
+                not_done = len(list(filter(lambda i: i['mystatus'] == 'NOTDONE', activities)))
+                error = len(list(filter(lambda i: i['mystatus'] == 'ERROR', activities)))
+                sum_acts += len(activities)
 
-    #         parts = get_cube_parts(cube.id)
-    #         data_cube_identity = '_'.join(parts[:2])
-    #         activities = self.services.get_activities_by_datacube(data_cube_identity)
-    #         not_done_identity = len(list(filter(lambda i: i['mystatus'] == 'NOTDONE', activities)))
-    #         error_identity = len(list(filter(lambda i: i['mystatus'] == 'ERROR', activities)))
-    #         sum_acts += len(activities)
+            parts = get_cube_parts(cube.name)
+            data_cube_identity = '_'.join(parts[:2])
+            activities = self.services.get_activities_by_datacube(data_cube_identity)
+            not_done_identity = len(list(filter(lambda i: i['mystatus'] == 'NOTDONE', activities)))
+            error_identity = len(list(filter(lambda i: i['mystatus'] == 'ERROR', activities)))
+            sum_acts += len(activities)
 
-    #         if sum_acts > 0:
-    #             sum_not_done = not_done + not_done_identity
-    #             sum_errors = error + error_identity
-    #             cube_formated['finished'] = (sum_not_done + sum_errors) == 0
-    #             cube_formated['status'] = 'Error' if sum_errors > 0 else 'Finished' \
-    #                 if cube_formated['finished'] == True else 'Pending'
-    #             list_cubes.append(cube_formated)
+            if sum_acts > 0:
+                sum_not_done = not_done + not_done_identity
+                sum_errors = error + error_identity
+                cube_formated['finished'] = (sum_not_done + sum_errors) == 0
+                cube_formated['status'] = 'Error' if sum_errors > 0 else 'Finished' \
+                    if cube_formated['finished'] == True else 'Pending'
+                list_cubes.append(cube_formated)
 
-    #     return list_cubes, 200
+        return list_cubes, 200
 
-    # def get_cube(self, cube_name: str):
-    #     collection = CubeBusiness.get_cube_or_404(cube_name)
-    #     temporal = db.session.query(
-    #         func.min(CollectionItem.composite_start).cast(sqlalchemy.String),
-    #         func.max(CollectionItem.composite_end).cast(sqlalchemy.String)
-    #     ).filter(CollectionItem.collection_id == collection.id).first()
+    def get_cube(self, cube_id: int):
+        collection = CubeBusiness.get_cube_or_404(cube_id)
 
-    #     temporal_composition = dict(
-    #         schema=collection.temporal_composition_schema.temporal_schema,
-    #         unit=collection.temporal_composition_schema.temporal_composite_unit,
-    #         step=collection.temporal_composition_schema.temporal_composite_t
-    #     )
+        dump_collection = Serializer.serialize(collection)
+        dump_collection['bands'] = [Serializer.serialize(b) for b in collection.bands]
+        dump_collection['quicklook'] = [Serializer.serialize(b) for b in collection.quicklook]
+        dump_collection['extent'] = None
 
-    #     bands = Band.query().filter(Band.collection_id == cube_name).all()
+        return dump_collection, 200
 
-    #     if temporal is None:
-    #         temporal = []
+    def list_tiles_cube(self, cube_id: int):
+        cube = CubeBusiness.get_cube_or_404(cube_id)
 
-    #     dump_collection = Serializer.serialize(collection)
-    #     dump_collection['temporal'] = temporal
-    #     dump_collection['bands'] = [Serializer.serialize(b) for b in bands]
-    #     dump_collection['temporal_composition'] = temporal_composition
+        geom_table = cube.grs.geom_table
+        features = db.session.query(
+            func.ST_AsGeoJSON(func.ST_Transform(geom_table.c.geom, 4326), 6, 3).cast(sqlalchemy.JSON)
+        ).all()
 
-    #     return dump_collection, 200
-
-    # def list_tiles_cube(self, cube_name: str):
-    #     cube = CubeBusiness.get_cube_or_404(cube_name)
-
-    #     features = db.session.query(
-    #             func.ST_AsGeoJSON(func.ST_SetSRID(Tile.geom_wgs84, 4326), 6, 3).cast(sqlalchemy.JSON)
-    #         ).distinct(Tile.id).filter(
-    #             CollectionItem.tile_id == Tile.id,
-    #             CollectionItem.collection_id == cube_name,
-    #             Tile.grs_schema_id == cube.grs_schema_id
-    #         ).all()
-
-    #     return [feature[0] for feature in features], 200
+        return [feature[0] for feature in features], 200
 
     def list_composite_functions(self):
         """Retrieve a list of available Composite Functions on Brazil Data Cube database."""
@@ -653,134 +635,140 @@ class CubeBusiness:
 
         return buckets, 200
 
-    # def list_merges(self, data_cube: str, tile_id: str, start: str, end: str):
-    #     parts = get_cube_parts(data_cube)
+    def list_merges(self, cube_id: str, tile_id: str, start: str, end: str):
+        cube = CubeBusiness.get_cube_or_404(cube_id)
 
-    #     # Temp workaround to remove composite function from data cube name
-    #     if len(parts) == 4:
-    #         data_cube = '_'.join(parts[:-2])
-    #     elif len(parts) == 3:
-    #         data_cube = '_'.join(parts[:-1])
+        parts = get_cube_parts(cube.name)
 
-    #     items = self.services.get_merges(data_cube, tile_id, start, end)
+        # Temp workaround to remove composite function from data cube name
+        if len(parts) == 4:
+            data_cube = '_'.join(parts[:-2])
+        elif len(parts) == 3:
+            data_cube = '_'.join(parts[:-1])
 
-    #     result = validate_merges(items)
+        items = self.services.get_merges(data_cube, tile_id, start, end)
 
-    #     return result, 200
+        result = validate_merges(items)
 
-    # def list_cube_items(self, data_cube: str, bbox: str = None, start: str = None,
-    #                     end: str = None, tiles: str = None, page: int = 1, per_page: int = 10):
-    #     cube = CubeBusiness.get_cube_or_404(data_cube)
+        return result, 200
 
-    #     where = [
-    #         CollectionItem.collection_id == data_cube,
-    #         Tile.grs_schema_id == cube.grs_schema_id,
-    #         Tile.id == CollectionItem.tile_id
-    #     ]
+    def list_cube_items(self, cube_id: str, bbox: str = None, start: str = None,
+                        end: str = None, tiles: str = None, page: int = 1, per_page: int = 10):
+        cube = CubeBusiness.get_cube_or_404(cube_id)
 
-    #     if start:
-    #         where.append(CollectionItem.composite_start >= start)
+        where = [
+            Item.collection_id == cube_id,
+            Tile.id == Item.tile_id
+        ]
 
-    #     if end:
-    #         where.append(CollectionItem.composite_end <= end)
+        # temporal filter
+        if start:
+            where.append(Item.start_date >= start)
+        if end:
+            where.append(Item.end_date <= end)
 
-    #     if tiles:
-    #         tiles = tiles.split(',') if isinstance(tiles, str) else tiles
-    #         where.append(
-    #             Tile.id.in_(tiles)
-    #         )
+        # tile(string) filter
+        if tiles:
+            tiles = tiles.split(',') if isinstance(tiles, str) else tiles
+            where.append(
+                Tile.name.in_(tiles)
+            )
 
-    #     if bbox:
-    #         xmin, ymin, xmax, ymax = [float(coord) for coord in bbox.split(',')]
-    #         where.append(
-    #             func.ST_Intersects(
-    #                 func.ST_SetSRID(Tile.geom_wgs84, 4326), func.ST_MakeEnvelope(xmin, ymin, xmax, ymax, 4326)
-    #             )
-    #         )
+        # spatial filter
+        if bbox:
+            xmin, ymin, xmax, ymax = [float(coord) for coord in bbox.split(',')]
+            where.append(
+                func.ST_Intersects(
+                    func.ST_SetSRID(Item.geom, 4326), func.ST_MakeEnvelope(xmin, ymin, xmax, ymax, 4326)
+                )
+            )
 
-    #     paginator = db.session.query(CollectionItem).filter(
-    #         *where
-    #     ).order_by(CollectionItem.item_date.desc()).paginate(int(page), int(per_page), error_out=False)
+        paginator = db.session.query(Item).filter(
+            *where
+        ).order_by(Item.start_date.desc()).paginate(int(page), int(per_page), error_out=False)
 
-    #     result = []
+        result = []
+        for item in paginator.items:
+            item.geom = None
+            item.min_convex_hull = None
+            item.tile_id = item.tile.name
+            obj = Serializer.serialize(item)
+            if item.assets.get('thumbnail'):
+                obj['quicklook'] = item.assets['thumbnail']['href']
+            del obj['assets']
+                    
+            result.append(obj)
 
-    #     for item in paginator.items:
-    #         obj = Serializer.serialize(item)
-    #         obj['quicklook'] = item.quicklook
+        return dict(
+            items=result,
+            page=page,
+            per_page=page,
+            total_items=paginator.total,
+            total_pages=paginator.pages
+        ), 200
 
-    #         result.append(obj)
+    def list_timeline(self, schema: str, step: int, start: str = None, end: str = None):
+        """Generate data cube periods using temporal composition schema.
 
-    #     return dict(
-    #         items=result,
-    #         page=page,
-    #         per_page=page,
-    #         total_items=paginator.total,
-    #         total_pages=paginator.pages
-    #     ), 200
+        Args:
+            schema: Temporal Schema (M, A)
+            step: Temporal Step
+            start: Start date offset. Default is '2016-01-01'.
+            end: End data offset. Default is '2019-12-31'
 
-    # def list_timeline(self, schema: str, step: int, start: str = None, end: str = None):
-    #     """Generate data cube periods using temporal composition schema.
+        Returns:
+            List of periods between start/last date
+        """
+        start_date = start or '2016-01-01'
+        last_date = end or '2019-12-31'
 
-    #     Args:
-    #         schema: Temporal Schema (M, A)
-    #         step: Temporal Step
-    #         start: Start date offset. Default is '2016-01-01'.
-    #         end: End data offset. Default is '2019-12-31'
+        total_periods = decode_periods(schema, start_date, last_date, int(step))
 
-    #     Returns:
-    #         List of periods between start/last date
-    #     """
-    #     start_date = start or '2016-01-01'
-    #     last_date = end or '2019-12-31'
+        periods = set()
 
-    #     total_periods = decode_periods(schema, start_date, last_date, int(step))
+        for period_array in total_periods.values():
+            for period in period_array:
+                date = period.split('_')[0]
 
-    #     periods = set()
+                periods.add(date)
 
-    #     for period_array in total_periods.values():
-    #         for period in period_array:
-    #             date = period.split('_')[0]
+        return sorted(list(periods)), 200
 
-    #             periods.add(date)
+    def list_cube_items_tiles(self, cube_id: int):
+        """Retrieve the tiles which data cube is generated."""
+        tiles = db.session.query(Item)\
+            .filter(Item.collection_id == cube_id)\
+            .all()
 
-    #     return sorted(list(periods)), 200
+        return set([t.tile.name for t in tiles]), 200
 
-    # def list_cube_items_tiles(self, cube: str):
-    #     """Retrieve the tiles which data cube is generated."""
-    #     tiles = db.session.query(CollectionItem.tile_id)\
-    #         .filter(CollectionItem.collection_id == cube)\
-    #         .group_by(CollectionItem.tile_id)\
-    #         .all()
+    def get_cube_meta(self, cube_id: str):
+        """Retrieve the data cube metadata used to build a data cube items.
 
-    #     return [t.tile_id for t in tiles], 200
+        The metadata includes:
+        - STAC provider url
+        - Collection used to generate.
 
-    # def get_cube_meta(self, cube_name: str):
-    #     """Retrieve the data cube metadata used to build a data cube items.
+        Note:
+            When there is no data cube item generated yet, raises BadRequest.
+        """
+        cube = CubeBusiness.get_cube_or_404(cube_id)
 
-    #     The metadata includes:
-    #     - STAC provider url
-    #     - Collection used to generate.
+        identity_cube = '_'.join(cube.name.split('_')[:2])
 
-    #     Note:
-    #         When there is no data cube item generated yet, raises BadRequest.
-    #     """
-    #     cube = CubeBusiness.get_cube_or_404(cube_name)
+        item = self.services.get_cube_meta(identity_cube)
 
-    #     identity_cube = '_'.join(cube.id.split('_')[:2])
+        if item is None or len(item['Items']) == 0:
+            raise BadRequest('There is no data cube activity')
 
-    #     item = self.services.get_cube_meta(identity_cube)
+        activity = json.loads(item['Items'][0]['activity'])
 
-    #     if item is None or len(item['Items']) == 0:
-    #         raise BadRequest('There is no data cube activity')
-
-    #     activity = json.loads(item['Items'][0]['activity'])
-
-    #     return dict(
-    #         url_stac=activity['url_stac'],
-    #         collections=','.join(activity['datasets']),
-    #         bucket=activity['bucket_name'],
-    #         satellite=activity['satellite'],
-    #     ), 200
+        return dict(
+            url_stac=activity['url_stac'],
+            collections=','.join(activity['datasets']),
+            bucket=activity['bucket_name'],
+            satellite=activity['satellite'],
+        ), 200
 
     # def estimate_cost(self, satellite, resolution, grid, start_date, last_date,
     #                     quantity_bands, quantity_tiles, t_schema, t_step, quantity_indexes):
