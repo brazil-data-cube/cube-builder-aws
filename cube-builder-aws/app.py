@@ -159,15 +159,15 @@ def start():
 #     return jsonify(message), status_code
 
 
-# @app.route('/grs', defaults=dict(grs_id=None), methods=['GET'])
-# @app.route('/grs/<grs_id>', methods=['GET'])
-# def list_grs_schemas(grs_id):
-#     if grs_id is not None:
-#         message, status_code = business.get_grs_schema(grs_id)
-#     else:
-#         message, status_code = business.list_grs_schemas()
+@app.route('/grids', defaults=dict(grs_id=None), methods=['GET'])
+@app.route('/grids/<grs_id>', methods=['GET'])
+def list_grs_schemas(grs_id):
+    if grs_id is not None:
+        message, status_code = business.get_grs_schema(grs_id)
+    else:
+        message, status_code = business.list_grs_schemas()
 
-#     return jsonify(message), status_code
+    return jsonify(message), status_code
 
 
 # @app.route('/list-merges', methods=['GET'])

@@ -539,24 +539,25 @@ class CubeBusiness:
         """Retrieve a list of available Grid Schema on Brazil Data Cube database."""
         schemas = GridRefSys.query().all()
 
-        return [Serializer.serialize(schema) for schema in schemas], 200
+        return [dict(**Serializer.serialize(schema), crs=schema.crs) for schema in schemas], 200
 
-    # def get_grs_schema(self, grs_id):
-    #     """Retrieves a Grid Schema definition with tiles associated."""
-    #     schema = GrsSchema.query().filter(GrsSchema.id == grs_id).first()
+    def get_grs_schema(self, grs_id):
+        """Retrieves a Grid Schema definition with tiles associated."""
+        schema = GridRefSys.query().filter(GridRefSys.id == grs_id).first()
 
-    #     if schema is None:
-    #         return 'GRS {} not found.'.format(grs_id), 404
+        if schema is None:
+            return 'GRS {} not found.'.format(grs_id), 404
 
-    #     tiles = db.session.query(
-    #         Tile.id,
-    #         func.ST_AsGeoJSON(func.ST_SetSRID(Tile.geom_wgs84, 4326), 6, 3).cast(sqlalchemy.JSON).label('geom_wgs84')
-    #     ).filter(Tile.grs_schema_id == grs_id).all()
+        geom_table = schema.geom_table
+        tiles = db.session.query(
+            geom_table.c.tile,
+            func.ST_AsGeoJSON(func.ST_SetSRID(geom_table.c.geom, 4326), 6, 3).cast(sqlalchemy.JSON).label('geom_wgs84')
+        ).all()
 
-    #     dump_grs = Serializer.serialize(schema)
-    #     dump_grs['tiles'] = [dict(id=t.id, geom_wgs84=t.geom_wgs84) for t in tiles]
+        dump_grs = Serializer.serialize(schema)
+        dump_grs['tiles'] = [dict(id=t.tile, geom_wgs84=t.geom_wgs84) for t in tiles]
 
-    #     return dump_grs, 200
+        return dump_grs, 200
 
     # def list_cubes(self):
     #     """Retrieve the list of data cubes from Brazil Data Cube database."""
