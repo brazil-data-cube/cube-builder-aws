@@ -12,6 +12,7 @@ AWS_KEY_ID = os.environ.get('KEY_ID', '')
 AWS_SECRET_KEY = os.environ.get('SECRET_KEY', '')
 
 HOST = os.environ.get('RDS_HOST', '')
+PORT = os.environ.get('RDS_PORT', '5432')
 DBNAME = os.environ.get('RDS_DBNAME', '')
 USER = os.environ.get('RDS_USER', '')
 PASSWORD = os.environ.get('RDS_PASSWORD', '')

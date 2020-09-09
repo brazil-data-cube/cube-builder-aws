@@ -18,10 +18,10 @@ import base64
 from flask import Flask, request, jsonify
 from flask_redoc import Redoc
 from flask_cors import CORS
-from bdc_db import BDCDatabase
+from bdc_catalog import BDCCatalog
 from werkzeug.exceptions import HTTPException
-from config import USER, PASSWORD, HOST, DBNAME
 
+from config import USER, PASSWORD, HOST, DBNAME, PORT
 from cube_builder_aws.business import CubeBusiness
 from cube_builder_aws.validators import validate
 from cube_builder_aws.version import __version__
@@ -37,8 +37,8 @@ class ImprovedJSONEncoder(json.JSONEncoder):
 
 
 app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://{}:{}@{}:5432/{}'.format(
-   USER, PASSWORD, HOST, DBNAME
+app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://{}:{}@{}:{}/{}'.format(
+   USER, PASSWORD, HOST, PORT,  DBNAME
 )
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = True
 app.config['REDOC'] = {
@@ -48,7 +48,7 @@ app.config['REDOC'] = {
 app.json_encoder = ImprovedJSONEncoder
 CORS(app)
 
-BDCDatabase(app)
+BDCCatalog(app)
 business = CubeBusiness()
 _ = Redoc('./spec/openapi.yaml', app)
 
@@ -86,7 +86,25 @@ def status():
     ), 200
 
 
-@app.route("/create", methods=["POST"])
+@app.route("/create-grs", methods=["POST"])
+def craete_grs():
+    # validate params
+    data, status = validate(request.json, 'grs')
+    if status is False:
+        return jsonify(json.dumps(data)), 400
+
+    message, status = business.create_grs(**data)
+    return jsonify(message), status
+
+
+@app.route('/composite-functions', methods=['GET'])
+def list_composite_functions():
+    message, status_code = business.list_composite_functions()
+
+    return jsonify(message), status_code
+
+
+@app.route("/create-cube", methods=["POST"])
 def create():
     # validate params
     data, status = validate(request.json, 'create')
@@ -100,7 +118,7 @@ def create():
     ), status
 
 
-@app.route("/start", methods=["POST"])
+@app.route("/start-cube", methods=["POST"])
 def start():
     # validate params
     data, status = validate(request.json, 'process')
@@ -110,35 +128,6 @@ def start():
     business = CubeBusiness(url_stac=data['url_stac'], bucket=data['bucket'])
     message, status = business.start_process(data)
     return jsonify(message), status
-
-
-@app.route("/create-grs", methods=["POST"])
-def craete_grs():
-    # validate params
-    data, status = validate(request.json, 'grs')
-    if status is False:
-        return jsonify(json.dumps(data)), 400
-
-    message, status = business.create_grs(**data)
-    return jsonify(message), status
-
-
-@app.route("/create-raster-size", methods=["POST"])
-def craete_raster_size():
-    # validate params
-    data, status = validate(request.json, 'raster_size')
-    if status is False:
-        return jsonify(json.dumps(data)), 400
-
-    message, status = business.create_raster_size(**data)
-    return jsonify(message), status
-
-
-@app.route("/raster-size", methods=["GET"])
-def list_raster_size():
-    message, status_code = business.list_raster_size()
-
-    return jsonify(message), status_code
 
 
 @app.route("/cube-status", methods=["GET"])
@@ -170,44 +159,13 @@ def list_tiles_as_features(cube_id):
     return jsonify(message), status_code
 
 
-@app.route('/grs', defaults=dict(grs_id=None), methods=['GET'])
-@app.route('/grs/<grs_id>', methods=['GET'])
+@app.route('/grids', defaults=dict(grs_id=None), methods=['GET'])
+@app.route('/grids/<grs_id>', methods=['GET'])
 def list_grs_schemas(grs_id):
     if grs_id is not None:
         message, status_code = business.get_grs_schema(grs_id)
     else:
         message, status_code = business.list_grs_schemas()
-
-    return jsonify(message), status_code
-
-
-@app.route('/temporal-composition', methods=['GET'])
-def list_temporal_composition():
-    message, status_code = business.list_temporal_composition()
-
-    return jsonify(message), status_code
-
-
-@app.route("/create-temporal-composition", methods=["POST"])
-def craete_temporal_composition():
-    data, status = validate(request.json, 'temporal_composition')
-    if status is False:
-        return jsonify(json.dumps(data)), 400
-
-    message, status = business.create_temporal_composition(**data)
-    return jsonify(message), status
-
-
-@app.route('/composite-functions', methods=['GET'])
-def list_composite_functions():
-    message, status_code = business.list_composite_functions()
-
-    return jsonify(message), status_code
-
-
-@app.route('/list-buckets', methods=['GET'])
-def list_buckets():
-    message, status_code = business.list_buckets()
 
     return jsonify(message), status_code
 
@@ -234,6 +192,12 @@ def list_cube_items(cube_id):
 
     return jsonify(message), status_code
 
+
+@app.route('/buckets', methods=['GET'])
+def list_buckets():
+    message, status_code = business.list_buckets()
+
+    return jsonify(message), status_code
 
 @app.route("/create-bucket", methods=["POST"])
 def craete_bucket():
@@ -273,15 +237,15 @@ def get_cube_meta(cube_id: str):
     return jsonify(message), status_code
 
 
-@app.route('/estimate-cost',methods=["POST"])
-def estimate_cost():
-    # validate params
-    data, status = validate(request.json, 'estimate_cost')
-    if status is False:
-        return jsonify(json.dumps(data)), 400
+# @app.route('/estimate-cost',methods=["POST"])
+# def estimate_cost():
+#     # validate params
+#     data, status = validate(request.json, 'estimate_cost')
+#     if status is False:
+#         return jsonify(json.dumps(data)), 400
 
-    message, status = business.estimate_cost(**data)
-    return jsonify(message), status
+#     message, status = business.estimate_cost(**data)
+#     return jsonify(message), status
 
 
 #########################################

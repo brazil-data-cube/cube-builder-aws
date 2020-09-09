@@ -13,7 +13,9 @@ import numpy
 import rasterio
 import hashlib
 import os
+import shapely
 from dateutil.relativedelta import relativedelta
+from geoalchemy2.shape import from_shape
 from numpngw import write_png
 from rasterio.io import MemoryFile
 from rasterio.warp import Resampling
@@ -46,8 +48,6 @@ def decode_periods(temporal_schema, start_date, end_date, time_step):
     Retrieve datacube temporal resolution by periods.
     """
     requested_periods = {}
-    if start_date is None:
-        return requested_periods
     if isinstance(start_date, datetime.date):
         start_date = start_date.strftime('%Y-%m-%d')
 
@@ -165,19 +165,22 @@ def encode_key(activity, keylist):
 
 
 ############################
-def getMaskStats(mask):
-    totpix   = mask.size
-    clearpix = numpy.count_nonzero(mask <= 1)
-    cloudpix = numpy.count_nonzero(mask >= 2)
+def qa_statistics(raster):
+    """Retrieve raster statistics efficacy and cloud ratio, based in Fmask values.
+    Notes:
+        Values 0 and 1 are considered `clear data`.
+    """
+    totpix = raster.size
+    clearpix = numpy.count_nonzero(raster < 2)
+    cloudpix = numpy.count_nonzero(raster > 1)
     imagearea = clearpix + cloudpix
+    cloudratio = 100
 
-    cloud_ratio = 100
     if imagearea != 0:
-        cloud_ratio = round(100. * cloudpix / imagearea, 1)
+        cloudratio = round(100.*cloudpix/imagearea, 1)
+    efficacy = round(100.*clearpix/totpix, 2)
 
-    efficacy = round(100. * clearpix / totpix, 2)
-    return cloud_ratio, efficacy
-
+    return efficacy, cloudratio
 
 ############################
 def getMask(raster, satellite):
@@ -235,7 +238,7 @@ def getMask(raster, satellite):
         lut[255] = 4
         rastercm = numpy.take(lut, raster).astype(numpy.uint8)
 
-    efficacy, cloudratio = getMaskStats(rastercm)
+    efficacy, cloudratio = qa_statistics(rastercm)
 
     return rastercm.astype(numpy.uint8), efficacy, cloudratio
 
@@ -268,8 +271,8 @@ def generateQLook(generalSceneId, qlfiles):
 
 
 #############################
-def get_cube_id(cube, function=None):
-    if not function or function.upper() == 'IDENTITY':
+def get_cube_name(cube, function=None):
+    if not function or function.upper() == 'IDT':
         return '_'.join(cube.split('_')[:-1])
     else:
         return '{}_{}'.format(cube, function)
@@ -302,30 +305,6 @@ def get_cube_parts(datacube: str) -> List[str]:
     return cube_fragments
 
 
-#############################
-def get_resolution_by_satellite(satellite):
-    resolutions = {
-        'CBERS-4-MUX': '20',
-        'CBERS-4-WFI': '64',
-        'MODIS': '231',
-        'LANDSAT': '30',
-        'SENTINEL-2': '10',
-    }
-    return resolutions[satellite]
-
-
-#############################
-def revisit_by_satellite(satellite):
-    resolutions = {
-        'CBERS-4-MUX': 26,
-        'CBERS-4-WFI': 6,
-        'MODIS': 2,
-        'LANDSAT': 16,
-        'SENTINEL-2': 5,
-    }
-    return resolutions[satellite]
-
-
 ############################
 def generate_hash_md5(word):
     result = hashlib.md5(word.encode())
@@ -334,89 +313,25 @@ def generate_hash_md5(word):
 
 ############################
 def create_cog_in_s3(services, profile, path, raster, is_quality, nodata, bucket_name):
+    profile.update({
+        'compress': 'LZW',
+        'tiled': True,
+        'interleave': 'pixel',
+        'blockxsize': 512,
+        'blockysize': 512
+    })
+
     with MemoryFile() as memfile:
-        with memfile.open(**profile) as ds:
+        with memfile.open(**profile) as mem:
             if is_quality:
-                ds.nodata = nodata
-            ds.write_band(1, raster)
-            ds.build_overviews([2, 4, 8, 16, 32, 64], Resampling.nearest)
-            ds.update_tags(ns='rio_overview', resampling='nearest')
+                mem.nodata = nodata
+            
+            mem.write_band(1, raster)
+            mem.build_overviews([2, 4, 8, 16, 32, 64], Resampling.nearest)
+            mem.update_tags(ns='rio_overview', resampling='nearest')
+
         services.upload_fileobj_S3(memfile, path, {'ACL': 'public-read'}, bucket_name=bucket_name)
     return True
-
-
-############################
-def add_overviews(services, profile, path, path_to, bucket_name):
-    with rasterio.open(path) as ds_file:
-        with MemoryFile() as memfile:
-            with memfile.open(**profile) as ds:
-                ds.write_band(1, ds_file.read(1))
-                ds.build_overviews([2, 4, 8, 16, 32, 64], Resampling.nearest)
-                ds.update_tags(ns='rio_overview', resampling='nearest')
-            services.upload_fileobj_S3(memfile, path_to, {'ACL': 'public-read'}, bucket_name=bucket_name)
-        return True
-
-
-############################
-def create_index_indisk(services, index, bands, bucket_name):
-    prefix = services.get_s3_prefix(bucket_name)
-
-    red_band_name = bands['red'] if bands.get('red') else bands['RED']
-    red_band_path = os.path.join(prefix + red_band_name)
-    nir_band_name = bands['nir'] if bands.get('nir') else bands['NIR']
-    nir_band_path = os.path.join(prefix + nir_band_name)
-
-    index_file = '/tmp/index.tif'
-    index_dataset = None
-    profile = None
-
-    if index.upper() == 'EVI':
-        blue_bland_path = bands['blue'] if bands.get('blue') else bands['BLUE']
-        blue_bland_path = os.path.join(prefix + blue_bland_path) 
-
-        with rasterio.open(nir_band_path) as ds_nir, rasterio.open(red_band_path) as ds_red,\
-            rasterio.open(blue_bland_path) as ds_blue:
-            index_dataset = rasterio.open(index_file, mode='w', **ds_nir.profile)
-
-            profile = ds_nir.profile
-            nodata = int(profile['nodata'])
-            blocks = ds_nir.block_windows()
-
-            for _, block in blocks:
-                nir = ds_nir.read(1, masked=True, window=block)
-                red = ds_red.read(1, masked=True, window=block)
-                blue = ds_blue.read(1, masked=True, window=block)
-
-                evi_block = (10000. * 2.5 * (nir - red) / (nir + 6. * red - 7.5 * blue + 10000.)).astype(numpy.int16)
-                evi_block[evi_block == numpy.ma.masked] = nodata
-                
-                index_dataset.write(evi_block.astype(numpy.int16), window=block, indexes=1)
-
-    if index.upper() == 'NDVI':
-        with rasterio.open(nir_band_path) as ds_nir, rasterio.open(red_band_path) as ds_red:
-            index_dataset = rasterio.open(index_file, mode='w', **ds_nir.profile)
-
-            profile = ds_nir.profile
-            nodata = int(profile['nodata'])
-            blocks = ds_nir.block_windows()
-            
-            for _, block in blocks:
-                nir = ds_nir.read(1, masked=True, window=block)
-                red = ds_red.read(1, masked=True, window=block)
-
-                ndvi_block = (10000. * ((nir - red) / (nir + red))).astype(numpy.int16)
-                ndvi_block[ndvi_block == numpy.ma.masked] = nodata
-
-                index_dataset.write(ndvi_block.astype(numpy.int16), window=block, indexes=1)
-     
-    index_dataset.close()
-    index_dataset = None
-
-    file_path = '_'.join(red_band_name.split('_')[:-1]) + '_{}.tif'.format(index)
-    services.upload_file_S3(index_file, file_path, {'ACL': 'public-read'}, bucket_name=bucket_name)
-    
-    add_overviews(services, profile, index_file, file_path, bucket_name)
-    os.remove(index_file)
 
 
 ############################
@@ -481,3 +396,65 @@ def create_index(services, index, bands, bucket_name):
     file_path = '_'.join(red_band_name.split('_')[:-1]) + '_{}.tif'.format(index)                
     create_cog_in_s3(
         services, profile, file_path, raster.astype(numpy.int16), False, None, bucket_name)
+
+
+############################
+def format_version(version, prefix='v'):
+    return f'{prefix}{version:03d}'
+
+
+############################
+def create_asset_definition(services, bucket_name: str, href: str, mime_type: str, role: List[str], absolute_path: str,
+                            created=None, is_raster=False):
+    """Create a valid asset definition for collections.
+    TODO: Generate the asset for `Item` field with all bands
+    Args:
+        href - Relative path to the asset
+        mime_type - Asset Mime type str
+        role - Asset role. Available values are: ['data'], ['thumbnail']
+        absolute_path - Absolute path to the asset. Required to generate check_sum
+        created - Date time str of asset. When not set, use current timestamp.
+        is_raster - Flag to identify raster. When set, `raster_size` and `chunk_size` will be set to the asset.
+    """
+    fmt = '%Y-%m-%dT%H:%M:%S'
+    _now_str = datetime.datetime.utcnow().strftime(fmt)
+
+    if created is None:
+        created = _now_str
+    elif isinstance(created, datetime.datetime):
+        created = created.strftime(fmt)
+
+    file_obj = services.s3_file_exists(bucket_name=bucket_name, key=href)
+    size = file_obj['ContentLength']
+
+    asset = {
+        'href': absolute_path,
+        'type': mime_type,
+        'size': size,
+        # 'checksum:multihash': multihash_checksum_sha256(str(absolute_path)),
+        'roles': role,
+        'created': created,
+        'updated': _now_str
+    }
+
+    geom = None
+
+    if is_raster:
+        with rasterio.open(f's3://{absolute_path}') as data_set:
+            asset['raster_size'] = dict(
+                x=data_set.shape[1],
+                y=data_set.shape[0],
+            )
+
+            _geom = shapely.geometry.mapping(shapely.geometry.box(*data_set.bounds))
+            geom_shape = shapely.geometry.shape(rasterio.warp.transform_geom(data_set.crs, 'EPSG:4326', _geom, precision=6))
+            geom = from_shape(geom_shape, srid=4326)
+
+            chunk_x, chunk_y = data_set.profile.get('blockxsize'), data_set.profile.get('blockxsize')
+
+            if chunk_x is None or chunk_x is None:
+                raise RuntimeError('Can\'t compute raster chunk size. Is it a tiled/ valid Cloud Optimized GeoTIFF?')
+
+            asset['chunk_size'] = dict(x=chunk_x, y=chunk_y)
+    
+    return asset, geom

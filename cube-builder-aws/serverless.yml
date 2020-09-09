@@ -22,8 +22,11 @@ provider:
   stage: ${env:STAGE}
   region: ${env:REGION}
   apiKeys:
-    - name: key-${env:PROJECT_NAME}-${env:STAGE}
+    - name: apikey-${env:PROJECT_NAME}-${env:STAGE}
       value: ${env:TOKEN}
+  tags:
+    Name: ${env:PROJECT_NAME}-${env:STAGE}
+
 
   environment:
     LAMBDA_FUNCTION_NAME: ${self:service}-${self:provider.stage}-app
@@ -35,6 +38,7 @@ provider:
     KEY_ID: ${env:KEY_ID}
     SECRET_KEY: ${env:SECRET_KEY}
     RDS_HOST: ${env:RDS_HOST}
+    RDS_PORT: ${env:RDS_PORT}
     RDS_DBNAME: ${env:RDS_DBNAME}
     RDS_USER: ${env:RDS_USER}
     RDS_PASSWORD: ${env:RDS_PASSWORD}
@@ -76,10 +80,13 @@ provider:
 
 package:
   exclude:
+    - venvold/**
+    - venv/**
     - node_modules/**
     - package-lock.json
     - cube_builder_aws/__pycache__/**
     - cube_builder_aws/utils/__pycache__/**
+    - venv/**
     - example.env
     - .env
 
@@ -143,7 +150,7 @@ functions:
   app_posblend: 
     handler: app.continue_process
     timeout: 720
-    memorySize: 2560
+    memorySize: 3008
     events:
       - sqs:
           batchSize: 1
@@ -155,7 +162,7 @@ functions:
   app_publish: 
     handler: app.continue_process
     timeout: 360
-    memorySize: 256
+    memorySize: 1024
     events:
       - sqs:
           batchSize: 1

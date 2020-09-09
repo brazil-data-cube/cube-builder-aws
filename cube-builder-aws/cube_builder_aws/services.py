@@ -242,9 +242,11 @@ class CubeServices:
             Item = {
                 'id': key,
                 'datacube': infos['datacube'],
+                'datacube_suffix': infos['datacube_suffix'],
                 'functions': json.dumps(infos['composite_function']),
                 'indexes': json.dumps(infos['indexes']),
-                'quality_band': infos['quality_band']
+                'quality_band': infos['quality_band'],
+                'platform_code': infos['platform_code'],
             }
         )
         return True
@@ -439,10 +441,9 @@ class CubeServices:
         try:
             if not bucket_name:
                 bucket_name = self.bucket_name
-            self.S3client.head_object(Bucket=bucket_name, Key=key)
+            return self.S3client.head_object(Bucket=bucket_name, Key=key)
         except ClientError:
             return False
-        return True
 
     def delete_file_S3(self, bucket_name=None, key=''):
         try:
