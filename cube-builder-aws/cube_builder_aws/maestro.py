@@ -23,7 +23,7 @@ from bdc_catalog.models.base_sql import BaseModel, db
 from bdc_catalog.models import Collection, Tile, GridRefSys, Item, Band
 
 from .logger import logger
-from .utils.constants import RESOLUTION_BY_SATELLITE, COG_MIME_TYPE, SRID_BDC_GRID
+from .utils.constants import RESOLUTION_BY_SATELLITE, COG_MIME_TYPE, SRID_BDC_GRID, APPLICATION_ID
 from .utils.builder import decode_periods, encode_key, \
     qa_statistics, getMask, generateQLook, get_cube_name, \
     create_cog_in_s3, create_index, format_version, create_asset_definition
@@ -1162,7 +1162,8 @@ def publish(self, activity):
                         start_date=activity['start'],
                         end_date=activity['end'],
                         cloud_cover=float(activity['cloudratio']),
-                        srid=SRID_BDC_GRID
+                        srid=SRID_BDC_GRID,
+                        application_id=APPLICATION_ID
                     )
 
                 thumbnail, _ = create_asset_definition(
@@ -1248,7 +1249,8 @@ def publish(self, activity):
                         start_date=scene['date'],
                         end_date=scene['date'],
                         cloud_cover=float(scene['cloudratio']),
-                        srid=SRID_BDC_GRID
+                        srid=SRID_BDC_GRID,
+                        application_id=APPLICATION_ID
                     )
 
                 thumbnail, _ = create_asset_definition(

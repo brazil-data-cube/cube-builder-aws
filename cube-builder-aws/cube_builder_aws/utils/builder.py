@@ -10,13 +10,15 @@ import datetime
 from typing import List
 
 import numpy
-import rasterio
 import hashlib
 import os
-import shapely
 from dateutil.relativedelta import relativedelta
 from geoalchemy2.shape import from_shape
 from numpngw import write_png
+import rasterio
+import rasterio.warp
+import rasterio.features
+import shapely.geometry
 from rasterio.io import MemoryFile
 from rasterio.warp import Resampling
 
@@ -430,7 +432,7 @@ def create_asset_definition(services, bucket_name: str, href: str, mime_type: st
     asset = {
         'href': absolute_path,
         'type': mime_type,
-        'size': size,
+        'bdc:size': size,
         # 'checksum:multihash': multihash_checksum_sha256(str(absolute_path)),
         'roles': role,
         'created': created,
@@ -441,13 +443,13 @@ def create_asset_definition(services, bucket_name: str, href: str, mime_type: st
 
     if is_raster:
         with rasterio.open(f's3://{absolute_path}') as data_set:
-            asset['raster_size'] = dict(
+            asset['bdc:raster_size'] = dict(
                 x=data_set.shape[1],
                 y=data_set.shape[0],
             )
 
             _geom = shapely.geometry.mapping(shapely.geometry.box(*data_set.bounds))
-            geom_shape = shapely.geometry.shape(rasterio.warp.transform_geom(data_set.crs, 'EPSG:4326', _geom, precision=6))
+            geom_shape = shapely.geometry.shape(rasterio.warp.transform_geom(data_set.crs, 'EPSG:4326', _geom))
             geom = from_shape(geom_shape, srid=4326)
 
             chunk_x, chunk_y = data_set.profile.get('blockxsize'), data_set.profile.get('blockxsize')
@@ -455,6 +457,6 @@ def create_asset_definition(services, bucket_name: str, href: str, mime_type: st
             if chunk_x is None or chunk_x is None:
                 raise RuntimeError('Can\'t compute raster chunk size. Is it a tiled/ valid Cloud Optimized GeoTIFF?')
 
-            asset['chunk_size'] = dict(x=chunk_x, y=chunk_y)
+            asset['bdc:chunk_size'] = dict(x=chunk_x, y=chunk_y)
     
     return asset, geom
