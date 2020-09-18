@@ -15,3 +15,4 @@ requests==2.22.0
 numpngw==0.0.8
 flask-redoc==0.1.0
 shapely==1.7.0
+rio-cogeo==1.1.10

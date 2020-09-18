@@ -21,6 +21,8 @@ import rasterio.features
 import shapely.geometry
 from rasterio.io import MemoryFile
 from rasterio.warp import Resampling
+from rio_cogeo.cogeo import cog_translate
+from rio_cogeo.profiles import cog_profiles
 
 
 #############################
@@ -315,24 +317,24 @@ def generate_hash_md5(word):
 
 ############################
 def create_cog_in_s3(services, profile, path, raster, is_quality, nodata, bucket_name):
-    profile.update({
-        'compress': 'LZW',
-        'tiled': True,
-        'interleave': 'pixel',
-        'blockxsize': 512,
-        'blockysize': 512
-    })
+    with MemoryFile() as dst_file:
+        with MemoryFile() as memfile:
+            with memfile.open(**profile) as mem:
+                if is_quality:
+                    mem.nodata = nodata
+                mem.write_band(1, raster)
+                
+                # Save merged image on S3
+                dst_profile = cog_profiles.get("lzw")        
+                cog_translate(
+                    mem,
+                    dst_file.name,
+                    dst_profile,
+                    in_memory=True,
+                    quiet=True
+                )
 
-    with MemoryFile() as memfile:
-        with memfile.open(**profile) as mem:
-            if is_quality:
-                mem.nodata = nodata
-            
-            mem.write_band(1, raster)
-            mem.build_overviews([2, 4, 8, 16, 32, 64], Resampling.nearest)
-            mem.update_tags(ns='rio_overview', resampling='nearest')
-
-        services.upload_fileobj_S3(memfile, path, {'ACL': 'public-read'}, bucket_name=bucket_name)
+        services.upload_fileobj_S3(dst_file, path, {'ACL': 'public-read'}, bucket_name=bucket_name)
     return True
 
 
