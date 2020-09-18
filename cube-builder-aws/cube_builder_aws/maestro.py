@@ -422,8 +422,11 @@ def merge_warped(self, activity):
                             if template is None:
                                 template = dst.profile
                                 if band != activity['quality_band']:
-                                    template['dtype'] = 'int16'
+                                    template.update({'dtype': 'int16'})
                                     template['nodata'] = nodata
+
+        raster = None
+        raster_mask = None
 
         # Evaluate cloud cover and efficacy if band is quality
         efficacy = 0
@@ -871,6 +874,8 @@ def blend(self, activity):
                     services, profile, activity['STKfile'], stack_raster, 
                     (band != activity['quality_band']), nodata, bucket_name)
 
+        stack_raster = None
+
         # Create and upload the STACK dataset
         if 'MED' in activity['functions']:
             if not activity.get('internal_band'):
@@ -972,13 +977,16 @@ def next_posblend(services, blendactivity):
 def posblend(self, activity):
     logger.info('==> start POS BLEND')
     services = self.services
+    force = activity.get('force', False)
 
     bucket_name = activity['bucket_name']
-    activity['mystart'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    mystart = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    reprocessed = False
 
     try:
         sk = activity['sk']
         is_identity = 'IDT' in activity['sk']
+        ref_file_path = bands['red'] if bands.get('red') else bands['RED']
         
         if is_identity:
             sk = sk.replace('IDT', '')
@@ -986,16 +994,26 @@ def posblend(self, activity):
             for date in index['IDT'].keys():
                 if date in sk:
                     bands = index['IDT'][date]
-                    create_index(services, sk.replace(date, ''), bands, bucket_name)
+
+                    file_path = '_'.join(ref_file_path.split('_')[:-1]) + '_{}.tif'.format(sk.replace(date, ''))
+                    if force or not services.s3_file_exists(bucket_name=bucket_name, key=file_path):
+                        create_index(services, sk.replace(date, ''), bands, bucket_name)
+                        reprocessed = True
         else:
             index = activity['indexesToBe'][sk]
             for func in activity['functions']:
                 if func == 'IDT': continue
                 bands = index[func]
-                create_index(services, sk, bands, bucket_name)
+
+                file_path = '_'.join(ref_file_path.split('_')[:-1]) + '_{}.tif'.format(sk)
+                if force or not services.s3_file_exists(bucket_name=bucket_name, key=file_path):
+                    create_index(services, sk, bands, bucket_name)
+                    reprocessed = True
                 
         # Update status and end time in DynamoDB
-        activity['myend'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        if reprocessed:
+            activity['mystart'] = mystart
+            activity['myend'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         activity['mystatus'] = 'DONE'
         services.put_item_kinesis(activity)
     
