@@ -986,7 +986,6 @@ def posblend(self, activity):
     try:
         sk = activity['sk']
         is_identity = 'IDT' in activity['sk']
-        ref_file_path = bands['red'] if bands.get('red') else bands['RED']
         
         if is_identity:
             sk = sk.replace('IDT', '')
@@ -994,6 +993,7 @@ def posblend(self, activity):
             for date in index['IDT'].keys():
                 if date in sk:
                     bands = index['IDT'][date]
+                    ref_file_path = bands['red'] if bands.get('red') else bands['RED']
 
                     file_path = '_'.join(ref_file_path.split('_')[:-1]) + '_{}.tif'.format(sk.replace(date, ''))
                     if force or not services.s3_file_exists(bucket_name=bucket_name, key=file_path):
@@ -1005,6 +1005,7 @@ def posblend(self, activity):
                 if func == 'IDT': continue
                 bands = index[func]
 
+                ref_file_path = bands['red'] if bands.get('red') else bands['RED']
                 file_path = '_'.join(ref_file_path.split('_')[:-1]) + '_{}.tif'.format(sk)
                 if force or not services.s3_file_exists(bucket_name=bucket_name, key=file_path):
                     create_index(services, sk, bands, bucket_name)
