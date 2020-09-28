@@ -421,6 +421,7 @@ def merge_warped(self, activity):
 
                             if template is None:
                                 template = dst.profile
+
                                 if band != activity['quality_band']:
                                     template.update({'dtype': 'int16'})
                                     template['nodata'] = nodata
@@ -657,7 +658,7 @@ def blend(self, activity):
             scene = activity['scenes'][key]
             efficacy = int(scene['efficacy'])
             resolution = int(scene['resolution'])
-            mask_tuples.append((100.*efficacy/resolution,key))
+            mask_tuples.append((100. * efficacy / resolution, key))
 
         # Open all input files and save the datasets in two lists, one for masks and other for the current band.
         # The list will be ordered by efficacy/resolution
@@ -719,8 +720,6 @@ def blend(self, activity):
         if build_clear_observation:
             clear_ob_file = '/tmp/clearob.tif'
             clear_ob_profile = profile.copy()
-            clear_ob_profile['dtype'] = 'uint8'
-            clear_ob_profile['nodata'] = 255
             clear_ob_dataset = rasterio.open(clear_ob_file, mode='w', **clear_ob_profile)
 
         # Build the stack total observation
@@ -750,6 +749,7 @@ def blend(self, activity):
 
                 # Mask valid data (0 and 1) as True
                 mask[mask < 2] = 1
+                mask[mask == 3] = 1
                 # Mask cloud/snow/shadow/no-data as False
                 mask[mask >= 2] = 0
                 # Ensure that Raster noda value (-9999 maybe) is set to False
@@ -782,8 +782,8 @@ def blend(self, activity):
 
                 # Turns into a 1-dimension
                 stack_raster_nodata_pos = numpy.ravel_multi_index(stack_raster_where_nodata,
-                                                                    stack_raster[window.row_off: row_offset,
-                                                                    window.col_off: col_offset].shape)
+                                                                stack_raster[window.row_off: row_offset,
+                                                                window.col_off: col_offset].shape)
 
                 # Find all valid/cloud in destination STACK image
                 raster_where_data = numpy.where(raster != nodata)
@@ -807,15 +807,16 @@ def blend(self, activity):
                 clear_not_done_pixels = numpy.where(numpy.logical_and(todomask, mask.astype(numpy.bool)))
 
                 # Override the STACK Raster with valid data.
-                stack_raster[window.row_off: row_offset, window.col_off: col_offset][clear_not_done_pixels] = raster[clear_not_done_pixels]
+                stack_raster[window.row_off: row_offset, window.col_off: col_offset][clear_not_done_pixels] = raster[
+                    clear_not_done_pixels]
 
                 if build_provenance:
                     # Mark day of year to the valid pixels
-                    provenance_array[window.row_off: row_offset, window.col_off: col_offset][clear_not_done_pixels] = day_of_year
+                    provenance_array[window.row_off: row_offset, window.col_off: col_offset][
+                        clear_not_done_pixels] = day_of_year
 
                 # Update what was done.
                 notdonemask = notdonemask * bmask
-
             if 'MED' in activity['functions']:
                 median = numpy.ma.median(stackMA, axis=0).data
                 median[notdonemask.astype(numpy.bool_)] = nodata
@@ -823,7 +824,6 @@ def blend(self, activity):
 
             if build_clear_observation:
                 count_raster = numpy.ma.count(stackMA, axis=0)
-                clear_ob_dataset.nodata = 255
                 clear_ob_dataset.write(count_raster.astype(clear_ob_profile['dtype']), window=window, indexes=1)
 
         # Close all input dataset
@@ -831,9 +831,8 @@ def blend(self, activity):
             bandlist[order].close()
             masklist[order].close()
 
-        # Evaluate cloudcover
-        cloudcover = 100. * ((height * width - numpy.count_nonzero(stack_raster)) / (height * width))
-        activity['cloudratio'] = int(cloudcover)
+        # Evaluate cloud cover
+        efficacy, cloudcover = qa_statistics(stack_raster)
 
         # Upload the CLEAROB dataset
         if build_clear_observation:
