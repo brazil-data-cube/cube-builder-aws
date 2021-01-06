@@ -220,7 +220,7 @@ class CubeController:
         ), 201
 
     def get_cube_status(self, cube_name):
-        cube = cls.get_cube_or_404(cube_full_name=cube_name)
+        cube = self.get_cube_or_404(cube_full_name=cube_name)
         datacube = cube.name
 
         # split and format datacube NAME
