@@ -16,7 +16,7 @@ from boto3.dynamodb.conditions import Key, Attr
 from botocore.errorfactory import ClientError
 from stac import STAC
 
-from config import DYNAMO_TB_ACTIVITY, DBNAME_TB_CONTROL, DBNAME_TB_PROCESS, \
+from .config import DYNAMO_TB_ACTIVITY, DBNAME_TB_CONTROL, DBNAME_TB_PROCESS, \
     QUEUE_NAME, KINESIS_NAME, LAMBDA_FUNCTION_NAME, \
     AWS_KEY_ID, AWS_SECRET_KEY
 
