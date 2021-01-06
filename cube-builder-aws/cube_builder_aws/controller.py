@@ -18,17 +18,17 @@ from werkzeug.exceptions import BadRequest, NotFound, Conflict
 from bdc_catalog.models.base_sql import BaseModel, db
 from bdc_catalog.models import Collection, Band, GridRefSys, Tile, CompositeFunction, MimeType, ResolutionUnit, Quicklook, Item
 
-from .utils.constants import CLEAR_OBSERVATION_ATTRIBUTES, PROVENANCE_ATTRIBUTES, TOTAL_OBSERVATION_ATTRIBUTES, \
+from .constants import CLEAR_OBSERVATION_ATTRIBUTES, PROVENANCE_ATTRIBUTES, TOTAL_OBSERVATION_ATTRIBUTES, \
     CLEAR_OBSERVATION_NAME, TOTAL_OBSERVATION_NAME, PROVENANCE_NAME, SRID_BDC_GRID, CENTER_WAVELENGTH, \
     FULL_WIDTH_HALF_MAX, REVISIT_BY_SATELLITE
 from .utils.serializer import Serializer
-from .utils.builder import get_date, get_cube_name, get_cube_parts, decode_periods, generate_hash_md5, format_version
+from .utils.processing import get_date, get_cube_name, get_cube_parts, decode_periods, generate_hash_md5, format_version
 from .utils.image import validate_merges
 from .maestro import orchestrate, prepare_merge, \
     merge_warped, solo, blend, posblend, publish
 from .services import CubeServices
 
-class CubeBusiness:
+class CubeController:
 
     def __init__(self, url_stac=None, bucket=None):
         self.score = {}
@@ -37,14 +37,18 @@ class CubeBusiness:
 
 
     @staticmethod
-    def get_cube_or_404(cube_id: int):
-        """Try to get a data cube from database, otherwise raises 404."""
-        cube = Collection.query().filter(Collection.id == cube_id).first()
-
-        if cube is None:
-            raise NotFound('Cube "{}" not found.'.format(cube_id))
-
-        return cube
+    def get_cube_or_404(cube_id=None, cube_full_name: str = '-'):
+        """Try to retrieve a data cube on database and raise 404 when not found."""
+        if cube_id:
+            return Collection.query().filter(Collection.id == cube_id).first_or_404()
+        else:
+            cube_fragments = cube_full_name.split('-')
+            cube_name = '-'.join(cube_fragments[:-1])
+            cube_version = cube_fragments[-1]
+            return Collection.query().filter(
+                Collection.name == cube_name,
+                Collection.version == cube_version
+            ).first_or_404()
 
     @staticmethod
     def get_grid_by_name(grid_name: str):
@@ -215,8 +219,8 @@ class CubeBusiness:
             process_id=process_id
         ), 201
 
-    def get_cube_status(self, cube_id):
-        cube = CubeBusiness.get_cube_or_404(cube_id)
+    def get_cube_status(self, cube_name):
+        cube = self.get_cube_or_404(cube_full_name=cube_name)
         datacube = cube.name
 
         # split and format datacube NAME
@@ -292,7 +296,7 @@ class CubeBusiness:
             int(time / 60 / 60), int(time / 60), (time % 60))
 
         quantity_coll_items = Item.query().filter(
-            Item.collection_id == cube_id
+            Item.collection_id == cube.id
         ).count()
 
         return dict(
@@ -595,7 +599,7 @@ class CubeBusiness:
         return list_cubes, 200
 
     def get_cube(self, cube_id: int):
-        collection = CubeBusiness.get_cube_or_404(cube_id)
+        collection = self.get_cube_or_404(cube_id)
 
         dump_collection = Serializer.serialize(collection)
         dump_collection['bands'] = [Serializer.serialize(b) for b in collection.bands]
@@ -605,7 +609,7 @@ class CubeBusiness:
         return dump_collection, 200
 
     def list_tiles_cube(self, cube_id: int):
-        cube = CubeBusiness.get_cube_or_404(cube_id)
+        cube = self.get_cube_or_404(cube_id)
 
         geom_table = cube.grs.geom_table
         features = db.session.query(
@@ -636,7 +640,7 @@ class CubeBusiness:
         return buckets, 200
 
     def list_merges(self, cube_id: str, tile_id: str, start: str, end: str):
-        cube = CubeBusiness.get_cube_or_404(cube_id)
+        cube = self.get_cube_or_404(cube_id)
 
         parts = get_cube_parts(cube.name)
 
@@ -654,7 +658,7 @@ class CubeBusiness:
 
     def list_cube_items(self, cube_id: str, bbox: str = None, start: str = None,
                         end: str = None, tiles: str = None, page: int = 1, per_page: int = 10):
-        cube = CubeBusiness.get_cube_or_404(cube_id)
+        cube = self.get_cube_or_404(cube_id)
 
         where = [
             Item.collection_id == cube_id,
@@ -752,7 +756,7 @@ class CubeBusiness:
         Note:
             When there is no data cube item generated yet, raises BadRequest.
         """
-        cube = CubeBusiness.get_cube_or_404(cube_id)
+        cube = self.get_cube_or_404(cube_id)
 
         identity_cube = '_'.join(cube.name.split('_')[:2])
 
