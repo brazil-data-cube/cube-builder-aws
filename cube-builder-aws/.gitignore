@@ -119,5 +119,3 @@ venv.bak/
 .requirements.zip
 
 .env
-
-venvold/
