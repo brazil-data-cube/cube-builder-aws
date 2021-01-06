@@ -138,7 +138,7 @@ functions:
   app_blend: 
     handler: app.continue_process
     timeout: 720
-    memorySize: 2560
+    memorySize: 3008
     events:
       - sqs:
           batchSize: 1

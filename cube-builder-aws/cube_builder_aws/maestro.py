@@ -23,7 +23,7 @@ from bdc_catalog.models.base_sql import BaseModel, db
 from bdc_catalog.models import Collection, Tile, GridRefSys, Item, Band
 
 from .logger import logger
-from .utils.constants import RESOLUTION_BY_SATELLITE, COG_MIME_TYPE, SRID_BDC_GRID
+from .utils.constants import RESOLUTION_BY_SATELLITE, COG_MIME_TYPE, SRID_BDC_GRID, APPLICATION_ID
 from .utils.builder import decode_periods, encode_key, \
     qa_statistics, getMask, generateQLook, get_cube_name, \
     create_cog_in_s3, create_index, format_version, create_asset_definition
@@ -421,9 +421,13 @@ def merge_warped(self, activity):
 
                             if template is None:
                                 template = dst.profile
+
                                 if band != activity['quality_band']:
-                                    template['dtype'] = 'int16'
+                                    template.update({'dtype': 'int16'})
                                     template['nodata'] = nodata
+
+        raster = None
+        raster_mask = None
 
         # Evaluate cloud cover and efficacy if band is quality
         efficacy = 0
@@ -654,7 +658,7 @@ def blend(self, activity):
             scene = activity['scenes'][key]
             efficacy = int(scene['efficacy'])
             resolution = int(scene['resolution'])
-            mask_tuples.append((100.*efficacy/resolution,key))
+            mask_tuples.append((100. * efficacy / resolution, key))
 
         # Open all input files and save the datasets in two lists, one for masks and other for the current band.
         # The list will be ordered by efficacy/resolution
@@ -716,8 +720,6 @@ def blend(self, activity):
         if build_clear_observation:
             clear_ob_file = '/tmp/clearob.tif'
             clear_ob_profile = profile.copy()
-            clear_ob_profile['dtype'] = 'uint8'
-            clear_ob_profile['nodata'] = 255
             clear_ob_dataset = rasterio.open(clear_ob_file, mode='w', **clear_ob_profile)
 
         # Build the stack total observation
@@ -747,6 +749,7 @@ def blend(self, activity):
 
                 # Mask valid data (0 and 1) as True
                 mask[mask < 2] = 1
+                mask[mask == 3] = 1
                 # Mask cloud/snow/shadow/no-data as False
                 mask[mask >= 2] = 0
                 # Ensure that Raster noda value (-9999 maybe) is set to False
@@ -779,8 +782,8 @@ def blend(self, activity):
 
                 # Turns into a 1-dimension
                 stack_raster_nodata_pos = numpy.ravel_multi_index(stack_raster_where_nodata,
-                                                                    stack_raster[window.row_off: row_offset,
-                                                                    window.col_off: col_offset].shape)
+                                                                stack_raster[window.row_off: row_offset,
+                                                                window.col_off: col_offset].shape)
 
                 # Find all valid/cloud in destination STACK image
                 raster_where_data = numpy.where(raster != nodata)
@@ -804,15 +807,16 @@ def blend(self, activity):
                 clear_not_done_pixels = numpy.where(numpy.logical_and(todomask, mask.astype(numpy.bool)))
 
                 # Override the STACK Raster with valid data.
-                stack_raster[window.row_off: row_offset, window.col_off: col_offset][clear_not_done_pixels] = raster[clear_not_done_pixels]
+                stack_raster[window.row_off: row_offset, window.col_off: col_offset][clear_not_done_pixels] = raster[
+                    clear_not_done_pixels]
 
                 if build_provenance:
                     # Mark day of year to the valid pixels
-                    provenance_array[window.row_off: row_offset, window.col_off: col_offset][clear_not_done_pixels] = day_of_year
+                    provenance_array[window.row_off: row_offset, window.col_off: col_offset][
+                        clear_not_done_pixels] = day_of_year
 
                 # Update what was done.
                 notdonemask = notdonemask * bmask
-
             if 'MED' in activity['functions']:
                 median = numpy.ma.median(stackMA, axis=0).data
                 median[notdonemask.astype(numpy.bool_)] = nodata
@@ -820,7 +824,6 @@ def blend(self, activity):
 
             if build_clear_observation:
                 count_raster = numpy.ma.count(stackMA, axis=0)
-                clear_ob_dataset.nodata = 255
                 clear_ob_dataset.write(count_raster.astype(clear_ob_profile['dtype']), window=window, indexes=1)
 
         # Close all input dataset
@@ -828,9 +831,8 @@ def blend(self, activity):
             bandlist[order].close()
             masklist[order].close()
 
-        # Evaluate cloudcover
-        cloudcover = 100. * ((height * width - numpy.count_nonzero(stack_raster)) / (height * width))
-        activity['cloudratio'] = int(cloudcover)
+        # Evaluate cloud cover
+        efficacy, cloudcover = qa_statistics(stack_raster)
 
         # Upload the CLEAROB dataset
         if build_clear_observation:
@@ -870,6 +872,8 @@ def blend(self, activity):
                 create_cog_in_s3(
                     services, profile, activity['STKfile'], stack_raster, 
                     (band != activity['quality_band']), nodata, bucket_name)
+
+        stack_raster = None
 
         # Create and upload the STACK dataset
         if 'MED' in activity['functions']:
@@ -972,9 +976,11 @@ def next_posblend(services, blendactivity):
 def posblend(self, activity):
     logger.info('==> start POS BLEND')
     services = self.services
+    force = activity.get('force', False)
 
     bucket_name = activity['bucket_name']
-    activity['mystart'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    mystart = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    reprocessed = False
 
     try:
         sk = activity['sk']
@@ -986,16 +992,28 @@ def posblend(self, activity):
             for date in index['IDT'].keys():
                 if date in sk:
                     bands = index['IDT'][date]
-                    create_index(services, sk.replace(date, ''), bands, bucket_name)
+                    ref_file_path = bands['red'] if bands.get('red') else bands['RED']
+
+                    file_path = '_'.join(ref_file_path.split('_')[:-1]) + '_{}.tif'.format(sk.replace(date, ''))
+                    if force or not services.s3_file_exists(bucket_name=bucket_name, key=file_path):
+                        create_index(services, sk.replace(date, ''), bands, bucket_name)
+                        reprocessed = True
         else:
             index = activity['indexesToBe'][sk]
             for func in activity['functions']:
                 if func == 'IDT': continue
                 bands = index[func]
-                create_index(services, sk, bands, bucket_name)
+
+                ref_file_path = bands['red'] if bands.get('red') else bands['RED']
+                file_path = '_'.join(ref_file_path.split('_')[:-1]) + '_{}.tif'.format(sk)
+                if force or not services.s3_file_exists(bucket_name=bucket_name, key=file_path):
+                    create_index(services, sk, bands, bucket_name)
+                    reprocessed = True
                 
         # Update status and end time in DynamoDB
-        activity['myend'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        if reprocessed:
+            activity['mystart'] = mystart
+            activity['myend'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         activity['mystatus'] = 'DONE'
         services.put_item_kinesis(activity)
     
@@ -1162,7 +1180,8 @@ def publish(self, activity):
                         start_date=activity['start'],
                         end_date=activity['end'],
                         cloud_cover=float(activity['cloudratio']),
-                        srid=SRID_BDC_GRID
+                        srid=SRID_BDC_GRID,
+                        application_id=APPLICATION_ID
                     )
 
                 thumbnail, _ = create_asset_definition(
@@ -1248,7 +1267,8 @@ def publish(self, activity):
                         start_date=scene['date'],
                         end_date=scene['date'],
                         cloud_cover=float(scene['cloudratio']),
-                        srid=SRID_BDC_GRID
+                        srid=SRID_BDC_GRID,
+                        application_id=APPLICATION_ID
                     )
 
                 thumbnail, _ = create_asset_definition(
