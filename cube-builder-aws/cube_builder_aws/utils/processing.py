@@ -12,6 +12,7 @@ from typing import List
 import numpy
 import hashlib
 import os
+from bdc_catalog.utils import multihash_checksum_sha256 as _multihash_checksum_sha256
 from dateutil.relativedelta import relativedelta
 from geoalchemy2.shape import from_shape
 from numpngw import write_png
@@ -406,6 +407,12 @@ def format_version(version, prefix='v'):
     return f'{prefix}{version:03d}'
 
 
+def multihash_checksum_sha256(services, bucket_name, entry) -> str:
+    obj = services.get_object(key=entry, bucket_name=bucket_name)
+
+    return _multihash_checksum_sha256(obj['Body'])
+
+
 ############################
 def create_asset_definition(services, bucket_name: str, href: str, mime_type: str, role: List[str], absolute_path: str,
                             created=None, is_raster=False):
@@ -434,7 +441,7 @@ def create_asset_definition(services, bucket_name: str, href: str, mime_type: st
         'href': absolute_path,
         'type': mime_type,
         'bdc:size': size,
-        # 'checksum:multihash': multihash_checksum_sha256(str(absolute_path)),
+        'checksum:multihash': multihash_checksum_sha256(services=services, bucket_name=bucket_name, entry=href),
         'roles': role,
         'created': created,
         'updated': _now_str
@@ -455,9 +462,7 @@ def create_asset_definition(services, bucket_name: str, href: str, mime_type: st
 
             chunk_x, chunk_y = data_set.profile.get('blockxsize'), data_set.profile.get('blockxsize')
 
-            if chunk_x is None or chunk_x is None:
-                raise RuntimeError('Can\'t compute raster chunk size. Is it a tiled/ valid Cloud Optimized GeoTIFF?')
-
-            asset['bdc:chunk_size'] = dict(x=chunk_x, y=chunk_y)
+            if chunk_x and chunk_x:
+                asset['bdc:chunk_size'] = dict(x=chunk_x, y=chunk_y)
     
     return asset, geom
