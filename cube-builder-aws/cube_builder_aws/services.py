@@ -445,6 +445,9 @@ class CubeServices:
         except ClientError:
             return False
 
+    def get_object(self, key, bucket_name=None):
+        return self.S3client.get_object(Bucket=bucket_name, Key=key)
+
     def delete_file_S3(self, bucket_name=None, key=''):
         try:
             if not bucket_name:
