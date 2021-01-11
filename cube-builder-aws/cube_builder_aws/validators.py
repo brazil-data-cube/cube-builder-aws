@@ -23,16 +23,6 @@ def to_bbox(s):
         return None
     return bbox
 
-def to_platform_code(s):
-    codes = ["cbers-4", "sentinel-2", "landsat-8", "landsat-7", "landsat-6", "landsat-4", "landsat-4"] 
-    return s if s.lower() in codes else None
-
-
-def to_temporal_composition(o):
-    if o['schema'] == "cyclic" and not o['cycle']:
-        return None
-    return o
-
 
 class BDCValidator(Validator):
     def _check_with_band_uniqueness(self, field, value):
@@ -47,70 +37,6 @@ class BDCValidator(Validator):
             if value not in band_names:
                 self._error(field, f'Quality band "{value}" not found in key "bands"')
 
-
-def index_band():
-    return dict(
-        type="dict",
-        schema=dict(
-            name=dict(type='string', empty=False, required=True),
-            common_name=dict(type='string', empty=False, required=True),
-            data_type=dict(type='string', empty=False, required=True, allowed=list(dtype_ranges.keys())),
-            description=dict(type='string', empty=True, required=False),
-            metadata=dict(type='dict', empty=True, required=False)
-        )
-    )
-
-
-def cube_metadata():
-    return dict(
-        platform=dict(type='dict', empty=False, required=True, schema=dict(
-            code=dict(type='string', empty=False, required=True, coerce=to_platform_code),
-            instruments=dict(type='list', empty=True, required=False)
-        )),
-        datacite=dict(type='dict', empty=True, required=False)
-    )
-
-
-def temporal_composition_schema():
-    return dict(
-        type="dict",
-        empty=False,
-        required=True,
-        schema=dict(
-            step=dict(type='integer', empty=False, required=True),
-            unit=dict(type='string', empty=False, required=True, allowed=['hour', 'day', 'month', 'year']),
-            schema=dict(type='string', empty=False, required=True, allowed=['cyclic', 'continuous']),
-            cycle=dict(
-                type='dict', 
-                empty=True, 
-                required=False, 
-                schema=dict(
-                    step=dict(type='integer', empty=False, required=True),
-                    unit=dict(type='string', empty=False, required=True, allowed=['hour', 'day', 'month', 'year'])
-                )
-            )
-        ),
-        coerce=to_temporal_composition
-    )
-
-def create():
-    item = dict(
-        name=dict(type='string', empty=False, required=True),
-        title=dict(type='string', empty=False, required=True),
-        description=dict(type='string', empty=True, required=False),
-        temporal_composition=temporal_composition_schema(),
-        composite_functions_id=dict(type='list', empty=False, required=True, schema=dict(type="integer")),
-        grid_name=dict(type='string', empty=False, required=True),
-        metadata=dict(type='dict', empty=False, required=True, schema=cube_metadata()),
-        version=dict(type='integer', empty=False, required=True),
-        version_predecessor_id=dict(type='integer', empty=True, required=False),
-        resolution=dict(type='float', empty=False, required=True),
-        bands=dict(type='list', empty=False, required=True, schema=index_band()),
-        indexes=dict(type='list', empty=True, required=False, schema=index_band(), check_with='band_uniqueness'),
-        bands_quicklook=dict(type='list', empty=False, required=True),
-        quality_band=dict(type='string', empty=False, required=True, check_with='band_uniqueness'),
-    )
-    return item
 
 def grs():
     item = dict(
@@ -134,13 +60,6 @@ def process():
         start_date=dict(type="date", coerce=to_date, empty=False, required=True),
         end_date=dict(type="date", coerce=to_date, empty=True, required=False),
         force=dict(type="boolean", required=False, default=False)
-    )
-    return item
-
-
-def status():
-    item = dict(
-        cube_id=dict(type="string", empty=False, required=False)
     )
     return item
 

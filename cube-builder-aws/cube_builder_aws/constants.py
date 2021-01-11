@@ -24,7 +24,6 @@ CLEAR_OBSERVATION_ATTRIBUTES = dict(
     nodata=0,
     scale=1,
     common_name='ClearOb',
-    metadata=None
 )
 
 TOTAL_OBSERVATION_NAME = 'TOTALOB'
@@ -38,7 +37,6 @@ TOTAL_OBSERVATION_ATTRIBUTES = dict(
     nodata=0,
     scale=1,
     common_name='TotalOb',
-    metadata=None
 )
 
 PROVENANCE_NAME = 'PROVENANCE'
@@ -52,7 +50,20 @@ PROVENANCE_ATTRIBUTES = dict(
     nodata=-1,
     scale=1,
     common_name='Provenance',
-    metadata=None
+)
+
+# Band for Combined Collections
+DATASOURCE_NAME = 'DATASOURCE'
+
+DATASOURCE_ATTRIBUTES = dict(
+    name=DATASOURCE_NAME,
+    description='Data set value',
+    data_type='uint8',
+    min_value=0,
+    max_value=254,
+    nodata=255,
+    scale=1,
+    common_name='datasource',
 )
 
 CENTER_WAVELENGTH = dict(
@@ -138,3 +149,7 @@ REVISIT_BY_SATELLITE = {
 }
 
 COG_MIME_TYPE = 'image/tiff; application=geotiff; profile=cloud-optimized'
+
+PNG_MIME_TYPE = 'image/png'
+
+SRID_ALBERS_EQUAL_AREA = 100001

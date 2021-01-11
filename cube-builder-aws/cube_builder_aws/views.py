@@ -11,7 +11,7 @@ from flask import Blueprint, jsonify, request
 import json
 
 from .controller import CubeController
-from .forms import (CubeStatusForm)
+from .forms import (CubeStatusForm, DataCubeForm, DataCubeMetadataForm)
 # TODO: remove cerberus and validators file
 from .validators import validate
 from .version import __version__
@@ -46,6 +46,61 @@ def get_status():
     return jsonify(message), status
 
 
+@bp.route('/cubes', defaults=dict(cube_id=None), methods=['GET'])
+@bp.route('/cubes/<cube_id>', methods=['GET'])
+def list_cubes(cube_id):
+    """List all data cubes available."""
+    if cube_id is not None:
+        message, status_code = controller.get_cube(cube_id)
+
+    else:
+        message, status_code = controller.list_cubes()
+
+    return jsonify(message), status_code
+
+
+@bp.route('/cubes', methods=['POST'])
+def create_cube():
+    """Define POST handler for datacube creation.
+    Expects a JSON that matches with ``DataCubeForm``.
+    """
+    form = DataCubeForm()
+
+    args = request.get_json()
+
+    errors = form.validate(args)
+
+    if errors:
+        return errors, 400
+
+    data = form.load(args)
+
+    cubes, status = CubeController.create(data)
+
+    return jsonify(cubes), status
+
+
+@bp.route('/cubes/<cube_id>', methods=['PUT'])
+def update_cube_matadata(cube_id):
+    """Define PUT handler for datacube Updation.
+    Expects a JSON that matches with ``DataCubeMetadataForm``.
+    """
+    form = DataCubeMetadataForm()
+
+    args = request.get_json()
+
+    errors = form.validate(args)
+
+    if errors:
+        return errors, 400
+
+    data = form.load(args)
+
+    message, status = CubeController.update(cube_id, data)
+
+    return jsonify(message), status
+
+
 @bp.route("/create-grs", methods=["POST"])
 def craete_grs():
     # validate params
@@ -64,20 +119,6 @@ def list_composite_functions():
     return jsonify(message), status_code
 
 
-@bp.route("/create-cube", methods=["POST"])
-def create():
-    # validate params
-    data, status = validate(request.json, 'create')
-    if status is False:
-        return jsonify(data), 400
-
-    cubes, status = controller.create_cube(data)
-    return jsonify(
-        message = 'Cube created',
-        cubes = cubes
-    ), status
-
-
 @bp.route("/start-cube", methods=["POST"])
 def start():
     # validate params
@@ -88,18 +129,6 @@ def start():
     controller = CubeController(url_stac=data['url_stac'], bucket=data['bucket'])
     message, status = controller.start_process(data)
     return jsonify(message), status
-
-
-
-@bp.route('/cubes', defaults=dict(cube_id=None), methods=['GET'])
-@bp.route('/cubes/<cube_id>', methods=['GET'])
-def list_cubes(cube_id):
-    if cube_id is not None:
-        message, status_code = controller.get_cube(cube_id)
-    else:
-        message, status_code = controller.list_cubes()
-
-    return jsonify(message), status_code
 
 
 @bp.route('/cubes/<cube_id>/tiles', methods=['GET'])
