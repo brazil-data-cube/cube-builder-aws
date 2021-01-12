@@ -179,3 +179,16 @@ class BucketForm(Schema):
 
     name = fields.String(required=False)
     requester_pay = fields.Boolean(required=False, default=True)
+
+
+class StartProcessForm(Schema):
+    """Parser for start process."""
+
+    process_id = fields.String(required=False)
+    url_stac = fields.String(required=False, default=True)
+    bucket = fields.String(required=True),
+    tiles = fields.List(fields.String, required=True),
+    collections = fields.List(fields.String, required=True),
+    start_date = fields.Date(required=True),
+    end_date = fields.Date(required=False),
+    force = fields.Boolean(required=False, default=False)

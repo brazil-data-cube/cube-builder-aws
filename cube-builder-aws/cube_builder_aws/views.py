@@ -12,9 +12,7 @@ import json
 
 from .controller import CubeController
 from .forms import (CubeStatusForm, DataCubeForm, DataCubeMetadataForm, GridRefSysForm,
-                    CubeItemsForm, BucketForm, PeriodForm)
-# TODO: remove cerberus and validators file
-from .validators import validate
+                    CubeItemsForm, BucketForm, PeriodForm, StartProcessForm)
 from .version import __version__
 
 controller = CubeController()
@@ -177,13 +175,15 @@ def craete_grs():
 # Start Processing
 @bp.route("/start", methods=["POST"])
 def start():
-    # validate params
-    data, status = validate(request.json, 'process')
-    if status is False:
-        return jsonify(json.dumps(data)), 400
+    form = GridRefSysForm()
 
-    controller = CubeController(url_stac=data['url_stac'], bucket=data['bucket'])
-    message, status = controller.start_process(data)
+    args = request.get_json()
+
+    errors = form.validate(args)
+
+    controller = CubeController(url_stac=args['url_stac'], bucket=args['bucket'])
+    message, status = controller.start_process(args)
+
     return jsonify(message), status
 
 
