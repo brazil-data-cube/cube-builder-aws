@@ -16,11 +16,13 @@ from geoalchemy2.shape import from_shape
 from shapely.geometry import Polygon
 from werkzeug.exceptions import BadRequest, NotFound, Conflict
 from rasterio.crs import CRS
+from rasterio.warp import transform
+from typing import Tuple, Union
 
 from bdc_catalog.models.base_sql import BaseModel, db
 from bdc_catalog.models import (Collection, Band, BandSRC, GridRefSys, Tile, 
                                 CompositeFunction, MimeType, ResolutionUnit, 
-                                Quicklook, Item)
+                                Quicklook, Item, SpatialRefSys)
 
 from .constants import (CLEAR_OBSERVATION_ATTRIBUTES, PROVENANCE_ATTRIBUTES, 
                         TOTAL_OBSERVATION_ATTRIBUTES, CLEAR_OBSERVATION_NAME, 
@@ -340,7 +342,9 @@ class CubeController:
             
         db.session.commit()
 
-        return {'message': 'Updated cube!'}, 200
+        return dict(
+            message='Updated cube!'
+        ), 200
 
 
     def get_cube_status(self, cube_name):
@@ -527,10 +531,12 @@ class CubeController:
             int(bands[0].nodata), crs, quality_band, functions, formatted_version, 
             params.get('force', False))
 
-        return 'Succesfully', 201
+        return dict(
+            message='Processing started with succesfully'
+        ), 201
 
     @classmethod
-    def create_grs_schema(cls, name, description, projection, meridian, degreesx, degreesy, bbox):
+    def create_grs_schema(cls, name, description, projection, meridian, degreesx, degreesy, bbox, srid=SRID_ALBERS_EQUAL_AREA):
         """Create a Brazil Data Cube Grid Schema."""
         bbox = bbox.split(',')
         bbox_obj = {
@@ -599,7 +605,7 @@ class CubeController:
                 # Evaluate the bounding box of tile in longlat
                 xs = [x1, x2, x2, x1]
                 ys = [y1, y1, y2, y2]
-                out = rasterio.warp.transform(src_crs, dst_crs, xs, ys, zs=None)
+                out = transform(src_crs, dst_crs, xs, ys, zs=None)
 
                 polygon = from_shape(
                     Polygon(
@@ -611,7 +617,7 @@ class CubeController:
                             (x1, y2)
                         ]
                     ), 
-                    srid=SRID_ALBERS_EQUAL_AREA
+                    srid=srid
                 )
 
                 # Insert tile
@@ -643,7 +649,9 @@ class CubeController:
             [db.session.add(Tile(**tile, grs=grs)) for tile in tiles]
         db.session.commit()        
 
-        return 'Grid {} created with successfully'.format(name), 201
+        return dict(
+            message='Grid {} created with successfully'.format(name)
+        ), 201
 
     @classmethod
     def list_grs_schemas(cls):
@@ -745,9 +753,13 @@ class CubeController:
 
         status = service.create_bucket(name, requester_pay)
         if not status:
-            return 'Bucket {} already exists.'.format(name), 409
+            return dict(
+                message='Bucket {} already exists.'.format(name)
+            ), 409
 
-        return 'Bucket created with successfully', 201
+        return dict(
+            message='Bucket created with successfully'
+        ), 201
 
     def list_buckets(self):
         """Retrieve a list of available bucket in aws account."""

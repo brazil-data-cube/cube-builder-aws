@@ -208,7 +208,7 @@ def list_merges():
     return res
 
 
-@bp.route('/buckets', methods=['GET'])
+@bp.route('/list-buckets', methods=['GET'])
 def list_buckets():
     message, status_code = controller.list_buckets()
 
