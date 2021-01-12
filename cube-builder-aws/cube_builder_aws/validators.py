@@ -17,13 +17,6 @@ def to_date(s):
     return datetime.strptime(s, '%Y-%m-%d') if s else None
 
 
-def to_bbox(s):
-    bbox = s.split(',')
-    if len(bbox) != 4: 
-        return None
-    return bbox
-
-
 class BDCValidator(Validator):
     def _check_with_band_uniqueness(self, field, value):
         bands = self.document['bands']
@@ -38,18 +31,6 @@ class BDCValidator(Validator):
                 self._error(field, f'Quality band "{value}" not found in key "bands"')
 
 
-def grs():
-    item = dict(
-        name=dict(type="string", empty=False, required=True),
-        description=dict(type="string", empty=False, required=True),
-        projection=dict(type="string", empty=False, required=True, allowed=['aea', 'sinu', 'longlat']),
-        meridian=dict(type="float", empty=False, required=True),
-        degreesx=dict(type="float", empty=False, required=True),
-        degreesy=dict(type="float", empty=False, required=True),
-        bbox=dict(type="list", empty=False, required=True, coerce=to_bbox)
-    )
-    return item
-
 def process():
     item = dict(
         process_id=dict(type="string", empty=False, required=False),
@@ -62,48 +43,6 @@ def process():
         force=dict(type="boolean", required=False, default=False)
     )
     return item
-
-
-def list_merge_form():
-    item = dict(
-        cube_id=dict(type='string', empty=False, required=True),
-        tile_id=dict(type='string', empty=False, required=True),
-        start=dict(type='string', empty=False, required=True),
-        end=dict(type='string', empty=False, required=True),
-    )
-
-    return item
-
-
-def list_cube_items_form():
-    return dict(
-        bbox=dict(
-            type='list',
-            empty=False,
-            required=False,
-            coerce=to_bbox
-        ),
-        tiles=dict(type='string', empty=False, required=False),
-        start=dict(type='string', empty=False, required=False),
-        end=dict(type='string', empty=False, required=False),
-        page=dict(type='integer', empty=False, required=True, default=1, coerce=int),
-    )
-
-
-def bucket():
-    return dict(
-        name=dict(type='string', empty=False, required=False),
-        requester_pay=dict(type='boolean', empty=False, required=False, default=True)
-    )
-
-
-def list_timeline_form():
-    return dict(
-        start=dict(type='string', empty=False, required=False),
-        end=dict(type='string', empty=False, required=False),
-        schema=dict(type='string', empty=False, required=False),
-        step=dict(type='integer', empty=False, required=True, default=1, coerce=int)
-    )
 
 
 def estimate_cost():

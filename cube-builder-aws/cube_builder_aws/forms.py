@@ -172,3 +172,10 @@ class CubeItemsForm(Schema):
     end = fields.String(required=False)
     page = fields.Integer(required=False)
     per_page = fields.Integer(required=False)
+
+
+class BucketForm(Schema):
+    """Parser for create bucket."""
+
+    name = fields.String(required=False)
+    requester_pay = fields.Boolean(required=False, default=True)
