@@ -642,7 +642,7 @@ class CubeController:
 
             spatial_index, _ = get_or_create_model(SpatialRefSys, defaults=data, srid=srid)
 
-            grs = GridRefSys.create_geometry_table(table_name=name, features=features, srid=SRID_ALBERS_EQUAL_AREA)
+            grs = GridRefSys.create_geometry_table(table_name=name, features=features, srid=srid)
             grs.description = description
             db.session.add(grs)
 
