@@ -513,9 +513,11 @@ class CubeController:
             list(filter(lambda b: b.id == bands_ql.blue, bands))[0].name
         ]
 
+        cub_ref = cube_infos or cube_infos_irregular
+
         # items => old mosaic
         # orchestrate
-        self.score['items'] = orchestrate(cube_infos_irregular, tiles, start_date, end_date, functions)
+        self.score['items'] = orchestrate(cub_ref, tiles, start_date, end_date, functions)
 
         # prepare merge
         crs = cube_infos.grs.crs
