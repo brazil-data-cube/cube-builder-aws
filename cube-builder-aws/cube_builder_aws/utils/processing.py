@@ -7,7 +7,7 @@
 #
 
 import datetime
-from typing import List
+from typing import List, Tuple
 
 import numpy
 import hashlib
@@ -15,6 +15,7 @@ import os
 from bdc_catalog.models import db
 from bdc_catalog.utils import multihash_checksum_sha256 as _multihash_checksum_sha256
 from dateutil.relativedelta import relativedelta
+from flask import abort
 from geoalchemy2.shape import from_shape
 from numpngw import write_png
 import rasterio
@@ -171,22 +172,31 @@ def encode_key(activity, keylist):
 
 
 ############################
-def qa_statistics(raster):
-    """Retrieve raster statistics efficacy and cloud ratio, based in Fmask values.
+def qa_statistics(raster) -> Tuple[float, float]:
+    """Retrieve raster statistics efficacy and not clear ratio, based in Fmask values.
+
     Notes:
         Values 0 and 1 are considered `clear data`.
+        Values 2 and 4 are considered as `not clear data`
+        The values for snow `3` and nodata `255` is not used to count efficacy and not clear ratio
     """
-    totpix = raster.size
-    clearpix = numpy.count_nonzero(raster < 2)
-    cloudpix = numpy.count_nonzero(raster > 1)
-    imagearea = clearpix + cloudpix
-    cloudratio = 100
+    total_pixels = raster.size
+    clear_pixel = numpy.count_nonzero(raster < 2)
+    # TODO: Custom values mappings
+    cloud_pixels = raster[raster == 4].size
+    cloud_shadow = raster[raster == 2].size
+    snow_pixels = raster[raster == 3].size
+    not_clear_pixel = cloud_pixels + cloud_shadow
+    image_area = clear_pixel + not_clear_pixel + snow_pixels
+    not_clear_ratio = 100
 
-    if imagearea != 0:
-        cloudratio = round(100.*cloudpix/imagearea, 1)
-    efficacy = round(100.*clearpix/totpix, 2)
+    if image_area != 0:
+        not_clear_ratio = round(100. * not_clear_pixel / image_area, 2)
 
-    return efficacy, cloudratio
+    efficacy = round(100. * clear_pixel / total_pixels, 2)
+
+    return efficacy, not_clear_ratio
+
 
 ############################
 def getMask(raster, satellite):
