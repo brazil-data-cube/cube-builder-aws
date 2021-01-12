@@ -12,6 +12,7 @@ from typing import List
 import numpy
 import hashlib
 import os
+from bdc_catalog.models import db
 from bdc_catalog.utils import multihash_checksum_sha256 as _multihash_checksum_sha256
 from dateutil.relativedelta import relativedelta
 from geoalchemy2.shape import from_shape
@@ -276,6 +277,82 @@ def generateQLook(generalSceneId, qlfiles):
 
 
 #############################
+class DataCubeFragments(list):
+    """Parse a data cube name and retrieve their parts.
+    A data cube is composed by the following structure:
+    ``Collections_Resolution_TemporalPeriod_CompositeFunction``.
+    An IDT data cube does not have TemporalPeriod and CompositeFunction.
+    Examples:
+        >>> # Parse Sentinel 2 Monthly MEDIAN
+        >>> cube_parts = DataCubeFragments('S2_10_1M_MED') # ['S2', '10', '1M', 'MED']
+        >>> cube_parts.composite_function
+        ... 'MED'
+        >>> # Parse Sentinel 2 IDENTITY
+        >>> cube_parts = DataCubeFragments('S2_10') # ['S2', '10']
+        >>> cube_parts.composite_function
+        ... 'IDT'
+        >>> DataCubeFragments('S2-10') # ValueError Invalid data cube name
+    """
+
+    def __init__(self, datacube: str):
+        """Construct a Data Cube Fragments parser.
+        Exceptions:
+            ValueError when data cube name is invalid.
+        """
+        cube_fragments = self.parse(datacube)
+
+        self.datacube = '_'.join(cube_fragments)
+
+        super(DataCubeFragments, self).__init__(cube_fragments)
+
+    @staticmethod
+    def parse(datacube: str) -> List[str]:
+        """Parse a data cube name."""
+        cube_fragments = datacube.split('_')
+
+        if len(cube_fragments) > 4 or len(cube_fragments) < 2:
+            abort(400, 'Invalid data cube name. "{}"'.format(datacube))
+
+        return cube_fragments
+
+    def __str__(self):
+        """Retrieve the data cube name."""
+        return self.datacube
+
+    @property
+    def composite_function(self):
+        """Retrieve data cube composite function based.
+        TODO: Add reference to document User Guide - Convention Data Cube Names
+        """
+        if len(self) < 4:
+            return 'IDT'
+
+        return self[-1]
+        
+
+def get_or_create_model(model_class, defaults=None, **restrictions):
+    """Define a utility method for looking up an object with the given restrictions, creating one if necessary.
+    Args:
+        model_class (BaseModel) - Base Model of Brazil Data Cube DB
+        defaults (dict) - Values to fill out model instance
+        restrictions (dict) - Query Restrictions
+    Returns:
+        BaseModel Retrieves model instance
+    """
+    instance = db.session.query(model_class).filter_by(**restrictions).first()
+
+    if instance:
+        return instance, False
+
+    params = dict((k, v) for k, v in restrictions.items())
+
+    params.update(defaults or {})
+    instance = model_class(**params)
+
+    db.session.add(instance)
+
+    return instance, True
+
 def get_cube_name(cube, function=None):
     if not function or function.upper() == 'IDT':
         return '_'.join(cube.split('_')[:-1])
@@ -284,30 +361,8 @@ def get_cube_name(cube, function=None):
 
 
 def get_cube_parts(datacube: str) -> List[str]:
-    """Parse a data cube name and retrieve their parts.
-
-    A data cube is composed by the following structure:
-    ``Collections_Resolution_TemporalPeriod_CompositeFunction``.
-
-    An IDENTITY data cube does not have TemporalPeriod and CompositeFunction.
-
-    Examples:
-        >>> # Parse Sentinel 2 Monthly MEDIAN
-        >>> get_cube_parts('S2_10_1M_MED') # ['S2', '10', '1M', 'MED']
-        >>> # Parse Sentinel 2 IDENTITY
-        >>> get_cube_parts('S2_10') # ['S2', '10']
-        >>> # Invalid data cubes
-        >>> get_cube_parts('S2-10')
-
-    Raises:
-        ValueError when data cube name is invalid.
-    """
-    cube_fragments = datacube.split('_')
-
-    if len(cube_fragments) > 4 or len(cube_fragments) < 2:
-        raise ValueError('Invalid data cube name. "{}"'.format(datacube))
-
-    return cube_fragments
+    """Build a `DataCubeFragments` and validate data cube name policy."""
+    return DataCubeFragments(datacube)
 
 
 ############################
