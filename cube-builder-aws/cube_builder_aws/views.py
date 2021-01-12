@@ -11,9 +11,8 @@ from flask import Blueprint, jsonify, request
 import json
 
 from .controller import CubeController
-from .forms import (CubeStatusForm, DataCubeForm, DataCubeMetadataForm)
-# TODO: remove cerberus and validators file
-from .validators import validate
+from .forms import (CubeStatusForm, DataCubeForm, DataCubeMetadataForm, GridRefSysForm,
+                    CubeItemsForm, BucketForm, PeriodForm, StartProcessForm)
 from .version import __version__
 
 controller = CubeController()
@@ -33,6 +32,7 @@ def status():
     ), 200
 
 
+# Cube Metadata
 @bp.route("/cube-status", methods=["GET"])
 def get_status():
     """Retrieve the cube processing state, which refers to total items and total to be done."""
@@ -101,119 +101,151 @@ def update_cube_matadata(cube_id):
     return jsonify(message), status
 
 
-@bp.route("/create-grs", methods=["POST"])
-def craete_grs():
-    # validate params
-    data, status = validate(request.json, 'grs')
-    if status is False:
-        return jsonify(json.dumps(data)), 400
-
-    message, status = controller.create_grs(**data)
-    return jsonify(message), status
-
-
-@bp.route('/composite-functions', methods=['GET'])
-def list_composite_functions():
-    message, status_code = controller.list_composite_functions()
-
-    return jsonify(message), status_code
-
-
-@bp.route("/start-cube", methods=["POST"])
-def start():
-    # validate params
-    data, status = validate(request.json, 'process')
-    if status is False:
-        return jsonify(json.dumps(data)), 400
-
-    controller = CubeController(url_stac=data['url_stac'], bucket=data['bucket'])
-    message, status = controller.start_process(data)
-    return jsonify(message), status
-
-
-@bp.route('/cubes/<cube_id>/tiles', methods=['GET'])
-def list_tiles_as_features(cube_id):
-    message, status_code = controller.list_tiles_cube(cube_id)
-
-    return jsonify(message), status_code
-
-
-@bp.route('/grids', defaults=dict(grs_id=None), methods=['GET'])
-@bp.route('/grids/<grs_id>', methods=['GET'])
-def list_grs_schemas(grs_id):
-    if grs_id is not None:
-        message, status_code = controller.get_grs_schema(grs_id)
-    else:
-        message, status_code = controller.list_grs_schemas()
-
-    return jsonify(message), status_code
-
-
-@bp.route('/list-merges', methods=['GET'])
-def list_merges():
-    data, status = validate(request.args.to_dict(), 'list_merge_form')
-    if status is False:
-        return jsonify(json.dumps(data)), 400
-
-    message, status_code = controller.list_merges(**data)
-
-    return jsonify(message), status_code
-
-
-@bp.route('/cubes/<cube_id>/items', methods=['GET'])
-def list_cube_items(cube_id):
-    data, status = validate(request.args.to_dict(), 'list_cube_items_form')
-
-    if status is False:
-        return jsonify(json.dumps(data)), 400
-
-    message, status_code = controller.list_cube_items(cube_id, **data)
-
-    return jsonify(message), status_code
-
-
-@bp.route('/buckets', methods=['GET'])
-def list_buckets():
-    message, status_code = controller.list_buckets()
-
-    return jsonify(message), status_code
-
-@bp.route("/create-bucket", methods=["POST"])
-def craete_bucket():
-    # validate params
-    data, status = validate(request.json, 'bucket')
-    if status is False:
-        return jsonify(json.dumps(data)), 400
-
-    message, status = controller.create_bucket(**data)
-    return jsonify(message), status
-
-
-@bp.route('/timeline', methods=['GET'])
-def list_timeline():
-    data, status = validate(request.args.to_dict(), 'list_timeline_form')
-
-    if status is False:
-        return jsonify(json.dumps(data)), 400
-
-    message, status_code = controller.list_timeline(**data)
-
-    return jsonify(message), status_code
-
-
-@bp.route('/cubes/<cube_id>/items/tiles', methods=['GET'])
-def list_items_tiles(cube_id):
-    message, status_code = controller.list_cube_items_tiles(cube_id)
-
-    return jsonify(message), status_code
-
-
 @bp.route('/cubes/<cube_id>/meta', methods=['GET'])
 def get_cube_meta(cube_id: str):
     """Retrieve the meta information of a data cube such STAC provider used, collection, etc."""
     message, status_code = controller.get_cube_meta(cube_id)
 
     return jsonify(message), status_code
+
+
+@bp.route('/cubes/<cube_id>/tiles', methods=['GET'])
+def list_tiles(cube_id):
+    """List all data cube tiles already done."""
+    message, status_code = CubeController.list_tiles_cube(cube_id, only_ids=True)
+
+    return jsonify(message), status_code
+
+
+@bp.route('/cubes/<cube_id>/tiles/geom', methods=['GET'])
+def list_tiles_as_features(cube_id):
+    """List all tiles as GeoJSON feature."""
+    message, status_code = CubeController.list_tiles_cube(cube_id)
+
+    return jsonify(message), status_code
+
+
+@bp.route('/cubes/<cube_id>/items', methods=['GET'])
+def list_cube_items(cube_id):
+    """List all data cube items."""
+    form = CubeItemsForm()
+
+    args = request.args.to_dict()
+
+    errors = form.validate(args)
+
+    if errors:
+        return errors, 400
+
+    message, status_code = controller.list_cube_items(cube_id, **args)
+
+    return jsonify(message), status_code
+
+
+# Grid Ref Sys
+@bp.route('/grids', defaults=dict(grs_id=None), methods=['GET'])
+@bp.route('/grids/<grs_id>', methods=['GET'])
+def list_grs_schemas(grs_id):
+    """List all data cube Grids."""
+    if grs_id is not None:
+        result, status_code = CubeController.get_grs_schema(grs_id)
+    else:
+        result, status_code = CubeController.list_grs_schemas()
+
+    return jsonify(result), status_code
+
+
+@bp.route("/create-grs", methods=["POST"])
+def craete_grs():
+    """Create the grid reference system using HTTP Post method."""
+    form = GridRefSysForm()
+
+    args = request.get_json()
+
+    errors = form.validate(args)
+
+    if errors:
+        return errors, 400
+
+    cubes, status = CubeController.create_grs_schema(**args)
+
+    return cubes, status
+
+
+# Start Processing
+@bp.route("/start", methods=["POST"])
+def start():
+    form = GridRefSysForm()
+
+    args = request.get_json()
+
+    errors = form.validate(args)
+
+    controller = CubeController(url_stac=args['url_stac'], bucket=args['bucket'])
+    message, status = controller.start_process(args)
+
+    return jsonify(message), status
+
+
+# Extras
+@bp.route('/composite-functions', methods=['GET'])
+def list_composite_functions():
+    """List all data cube supported composite functions."""
+    message, status_code = CubeController.list_composite_functions()
+
+    return jsonify(message), status_code
+
+
+@bp.route('/list-merges', methods=['GET'])
+def list_merges():
+    """Define POST handler for datacube execution.
+    Expects a JSON that matches with ``DataCubeProcessForm``.
+    """
+    args = request.args
+
+    res = controller.check_for_invalid_merges(**args)
+
+    return res
+
+
+@bp.route('/list-buckets', methods=['GET'])
+def list_buckets():
+    message, status_code = controller.list_buckets()
+
+    return jsonify(message), status_code
+
+
+@bp.route("/create-bucket", methods=["POST"])
+def craete_bucket():
+    form = CubeStatusForm()
+
+    args = request.get_json()
+
+    errors = form.validate(args)
+
+    message, status = controller.create_bucket(**args)
+    return jsonify(message), status
+
+
+@bp.route('/list-periods', methods=['POST'])
+def list_periods():
+    """List data cube periods.
+    The user must provide the following query-string parameters:
+    - schema: Temporal Schema
+    - step: Temporal Step
+    - start_date: Start offset
+    - last_date: End date offset
+    """
+    parser = PeriodForm()
+
+    args = request.get_json()
+
+    errors = parser.validate(args)
+
+    if errors:
+        return errors, 400
+
+    return CubeController.generate_periods(**args)
 
 
 # @bp.route('/estimate-cost',methods=["POST"])
