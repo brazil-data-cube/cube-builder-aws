@@ -19,14 +19,16 @@ from rasterio.warp import reproject, Resampling, transform
 from rasterio.merge import merge 
 from rasterio.io import MemoryFile
 
-from bdc_catalog.models.base_sql import BaseModel, db
+from bdc_catalog.models.base_sql import db
 from bdc_catalog.models import Collection, Tile, GridRefSys, Item, Band
 
 from .logger import logger
 from .constants import RESOLUTION_BY_SATELLITE, COG_MIME_TYPE, SRID_BDC_GRID, APPLICATION_ID
-from .utils.processing import decode_periods, encode_key, \
+from .utils.processing import encode_key, \
     qa_statistics, getMask, generateQLook, get_cube_name, \
     create_cog_in_s3, create_index, format_version, create_asset_definition
+from .utils.timeline import Timeline
+
 
 def orchestrate(cube_infos, tiles, start_date, end_date, functions):
     formatted_version = format_version(cube_infos.version)
@@ -61,16 +63,14 @@ def orchestrate(cube_infos, tiles, start_date, end_date, functions):
         ))
 
     # get cube start_date if exists
-    cube_start_date = cube_infos.start_date or start_date
+    start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
 
-    # get/mount timeline
-    # TODO: review code (decode_periods)
-    temporal_schema = 'A' if  cube_infos.temporal_composition_schema['schema'] != 'month' else 'M'
-    step = cube_infos.temporal_composition_schema['step']
-    timeline = decode_periods(temporal_schema.upper(), cube_start_date, end_date, int(step))
+    end_date = datetime.strptime(end_date, '%Y-%m-%d').date()
 
-    # get items
-    collections_items = Item.query().filter(Item.collection_id == cube_infos.id).all()
+    temporal_schema = cube_infos.temporal_composition_schema
+
+    # Get/Mount timeline from given parameters
+    timeline = Timeline(**temporal_schema, start_date=start_date, end_date=end_date).mount()
 
     # create collection items (old model => mosaic)
     items_id = []
