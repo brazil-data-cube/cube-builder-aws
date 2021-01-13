@@ -171,14 +171,17 @@ def encode_key(activity, keylist):
     return dynamoKey
 
 
-############################
-def qa_statistics(raster, mask: dict) -> Tuple[float, float]:
-    """Retrieve raster statistics efficacy and not clear ratio, based in Fmask values.
+def parse_mask(raster, mask):
+    """Parse input mask according to the raster.
 
-    Notes:
-        Values 0 and 1 are considered `clear data`.
-        Values 2 and 4 are considered as `not clear data`
-        The values for snow `3` and nodata `255` is not used to count efficacy and not clear ratio
+    This method expects a dict with contains the following keys:
+
+        clear_data - Array of clear data
+        nodata - Cloud mask nodata
+        not_clear (Optional) _ List of pixels to be not considered.
+
+    It will read the input array and get all unique values. Make sure to call for cloud file.
+    It may take too long do parse, according to the raster.
     """
     clear_data = numpy.array(mask['clear_data'])
     not_clear_data = numpy.array(mask.get('not_clear_data', []))
@@ -203,10 +206,30 @@ def qa_statistics(raster, mask: dict) -> Tuple[float, float]:
     # Get all unspecified values
     others_values = numpy.setdiff1d(unique_values, useful_values)
 
+    return dict(
+        clear_data=clear_data,
+        not_clear_data=not_clear_data,
+        nodata=nodata,
+        others=others_values
+    )
+
+
+############################
+def qa_statistics(raster, mask: dict, compute=False) -> Tuple[float, float]:
+    """Retrieve raster statistics efficacy and not clear ratio, based in Fmask values.
+
+    Notes:
+        Values 0 and 1 are considered `clear data`.
+        Values 2 and 4 are considered as `not clear data`
+        The values for snow `3` and nodata `255` is not used to count efficacy and not clear ratio
+    """
+    if compute:
+        mask = parse_mask(raster, mask)
+
     # Compute how much data is for each class. It will be used as image area
-    clear_pixels = raster[numpy.where(numpy.isin(raster, clear_data))].size
-    not_clear_pixels = raster[numpy.where(numpy.isin(raster, not_clear_data))].size
-    others_pixels = raster[numpy.where(numpy.isin(raster, others_values))].size
+    clear_pixels = raster[numpy.where(numpy.isin(raster, mask['clear_data']))].size
+    not_clear_pixels = raster[numpy.where(numpy.isin(raster, mask['not_clear_data']))].size
+    others_pixels = raster[numpy.where(numpy.isin(raster, mask['others']))].size
 
     # Total pixels used to retrieve data efficacy
     total_pixels = raster.size
