@@ -521,7 +521,8 @@ class CubeController:
 
         # items => old mosaic
         # orchestrate
-        self.score['items'] = orchestrate(cub_ref, tiles, start_date, end_date, functions)
+        shape = params.get('shape', None)
+        self.score['items'] = orchestrate(cub_ref, tiles, start_date, end_date, functions, shape)
 
         # prepare merge
         crs = cube_infos.grs.crs
