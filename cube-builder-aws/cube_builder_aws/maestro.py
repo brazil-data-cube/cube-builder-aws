@@ -30,7 +30,7 @@ from .utils.processing import encode_key, \
 from .utils.timeline import Timeline
 
 
-def orchestrate(cube_infos, tiles, start_date, end_date, functions):
+def orchestrate(cube_infos, tiles, start_date, end_date, functions, shape=None):
     formatted_version = format_version(cube_infos.version)
 
     tiles_by_grs = db.session() \
@@ -113,6 +113,9 @@ def orchestrate(cube_infos, tiles, start_date, end_date, functions):
                         'composite_end': p_enddate,
                         'dirname': f'{cube_infos.name}/{formatted_version}/{tile_name}/'
                     }
+                    if shape:
+                        items[tile_name]['periods'][periodkey]['shape'] = shape
+
     return items
 
 
@@ -201,6 +204,7 @@ def prepare_merge(self, datacube, datasets, satellite, bands, indexes, quicklook
             activity['start'] = self.score['items'][tile_name]['periods'][periodkey]['composite_start']
             activity['end'] = self.score['items'][tile_name]['periods'][periodkey]['composite_end']
             activity['dirname'] = self.score['items'][tile_name]['periods'][periodkey]['dirname']
+            activity['shape'] = self.score['items'][tile_name]['periods'][periodkey].get('shape')
 
             # When force is True, we must rebuild the merge
             if force:
@@ -341,15 +345,21 @@ def merge_warped(self, activity):
         nodata = int(activity['nodata'])
         band = activity['band']
 
-        num_pixel_x = round(dist_x / resx)
-        num_pixel_y = round(dist_y / resy)
-        new_res_x = dist_x / num_pixel_x
-        new_res_y = dist_y / num_pixel_y
+        shape = activity.get('shape', None)
+        if shape:
+            num_pixel_x = shape[0]
+            num_pixel_y = shape[1]
+        else:
+            num_pixel_x = round(dist_x / resx)
+            num_pixel_y = round(dist_y / resy)
 
+            new_res_x = dist_x / num_pixel_x
+            new_res_y = dist_y / num_pixel_y
+
+            transform = Affine(new_res_x, 0, xmin, 0, -new_res_y, ymax)
+        
         numcol = num_pixel_x
         numlin = num_pixel_y
-
-        transform = Affine(new_res_x, 0, xmin, 0, -new_res_y, ymax)
 
         is_sentinel_landsat_quality_fmask = ('LANDSAT' in satellite or satellite == 'SENTINEL-2') and band == activity['quality_band']
         source_nodata = 0
@@ -380,11 +390,14 @@ def merge_warped(self, activity):
                 with rasterio.open(url) as src:
                     kwargs = src.meta.copy()
                     kwargs.update({
-                        'crs': activity['srs'],
-                        'transform': transform,
                         'width': numcol,
                         'height': numlin
                     })
+                    if not shape:
+                        kwargs.update({
+                            'crs': activity['srs'],
+                            'transform': transform
+                        })
 
                     if src.profile['nodata'] is not None:
                         source_nodata = src.profile['nodata']
@@ -401,16 +414,19 @@ def merge_warped(self, activity):
 
                     with MemoryFile() as memfile:
                         with memfile.open(**kwargs) as dst:
-                            reproject(
-                                source=rasterio.band(src, 1),
-                                destination=raster,
-                                src_transform=src.transform,
-                                src_crs=src.crs,
-                                dst_transform=transform,
-                                dst_crs=activity['srs'],
-                                src_nodata=source_nodata,
-                                dst_nodata=nodata,
-                                resampling=resampling)
+                            if shape:
+                                raster = src.read(1)
+                            else:
+                                reproject(
+                                    source=rasterio.band(src, 1),
+                                    destination=raster,
+                                    src_transform=src.transform,
+                                    src_crs=src.crs,
+                                    dst_transform=transform,
+                                    dst_crs=activity['srs'],
+                                    src_nodata=source_nodata,
+                                    dst_nodata=nodata,
+                                    resampling=resampling)
 
                             if band != activity['quality_band'] or is_sentinel_landsat_quality_fmask:
                                 valid_data_scene = raster[raster != nodata]

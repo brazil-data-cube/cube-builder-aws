@@ -12,7 +12,7 @@ import json
 
 from .controller import CubeController
 from .forms import (CubeStatusForm, DataCubeForm, DataCubeMetadataForm, GridRefSysForm,
-                    CubeItemsForm, BucketForm, PeriodForm, StartProcessForm)
+                    CubeItemsForm, BucketForm, PeriodForm, StartProcessForm, DataCubeProcessForm)
 from .version import __version__
 
 controller = CubeController()
@@ -175,14 +175,22 @@ def craete_grs():
 # Start Processing
 @bp.route("/start", methods=["POST"])
 def start():
-    form = GridRefSysForm()
-
+     """Define POST handler for datacube execution.
+    Expects a JSON that matches with ``DataCubeProcessForm``.
+    """
     args = request.get_json()
+
+    form = DataCubeProcessForm()
 
     errors = form.validate(args)
 
+    if errors:
+        return errors, 400
+
+    data = form.load(args)
+
     controller = CubeController(url_stac=args['url_stac'], bucket=args['bucket'])
-    message, status = controller.start_process(args)
+    message, status = controller.start_process(data)
 
     return jsonify(message), status
 
