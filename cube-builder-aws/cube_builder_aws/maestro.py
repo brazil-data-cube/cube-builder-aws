@@ -51,7 +51,7 @@ def orchestrate(cube_infos, tiles, start_date, end_date, functions, shape=None):
             (func.ST_YMax(grid_table.c.geom)).label('max_y'),
             (func.ST_XMax(grid_table.c.geom) - func.ST_XMin(grid_table.c.geom)).label('dist_x'),
             (func.ST_YMax(grid_table.c.geom) - func.ST_YMin(grid_table.c.geom)).label('dist_y'),
-            (func.ST_AsText(func.ST_BoundingDiagonal(func.ST_Transform(grid_table.c.geom, 4326)))).label('bbox')
+            (func.ST_AsGeoJSON(func.ST_Transform(grid_table.c.geom, 4326))).label('feature')
         ).filter(
             grid_table.c.tile == tile.Tile.name
         ).first()
@@ -87,11 +87,10 @@ def orchestrate(cube_infos, tiles, start_date, end_date, functions, shape=None):
                 tile_id = tile['id']
                 tile_name = tile['name']
                 tile_stats = tile['stats']
-                bbox = tile_stats.bbox
-                bbox_formated = bbox[bbox.find('(') + 1:bbox.find(')')].replace(' ', ',')
+                feature = tile_stats.feature
 
                 items[tile_name] = items.get(tile_name, {})
-                items[tile_name]['bbox'] = bbox_formated
+                items[tile_name]['bbox'] = feature
                 items[tile_name]['xmin'] = tile_stats.min_x
                 items[tile_name]['ymax'] = tile_stats.max_y
                 items[tile_name]['dist_x'] = tile_stats.dist_x
@@ -160,7 +159,7 @@ def next_step(services, activity):
 # MERGE
 ###############################
 def prepare_merge(self, datacube, datasets, satellite, bands, indexes, quicklook, resx,
-                  resy, nodata, crs, quality_band, functions, version, force=False, mask=None):
+                  resy, nodata, crs, quality_band, functions, version, force=False, mask=None, secondary_catalog=None):
     services = self.services
 
     # Build the basics of the merge activity
@@ -216,7 +215,11 @@ def prepare_merge(self, datacube, datasets, satellite, bands, indexes, quicklook
                 self.services.remove_control_by_key(blend_control_key)
 
             # Search all images
-            self.score['items'][tile_name]['periods'][periodkey]['scenes'] = services.search_STAC(activity)
+            options = dict()
+            if secondary_catalog:
+                options.update(secondary_catalog)
+
+            self.score['items'][tile_name]['periods'][periodkey]['scenes'] = services.search_STAC(activity, options)
 
             # Evaluate the number of dates, the number of scenes for each date and
             # the total amount merges that will be done
