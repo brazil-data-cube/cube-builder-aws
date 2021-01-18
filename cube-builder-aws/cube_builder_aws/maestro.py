@@ -26,7 +26,7 @@ from .logger import logger
 from .constants import RESOLUTION_BY_SATELLITE, COG_MIME_TYPE, SRID_BDC_GRID, APPLICATION_ID
 from .utils.processing import encode_key, \
     qa_statistics, getMask, generateQLook, get_cube_name, \
-    create_cog_in_s3, create_index, format_version, create_asset_definition
+    create_cog_in_s3, create_index, format_version, create_asset_definition, parse_mask
 from .utils.timeline import Timeline
 
 
@@ -160,7 +160,7 @@ def next_step(services, activity):
 # MERGE
 ###############################
 def prepare_merge(self, datacube, datasets, satellite, bands, indexes, quicklook, resx,
-                  resy, nodata, crs, quality_band, functions, version, force=False):
+                  resy, nodata, crs, quality_band, functions, version, force=False, mask=None):
     services = self.services
 
     # Build the basics of the merge activity
@@ -191,6 +191,7 @@ def prepare_merge(self, datacube, datasets, satellite, bands, indexes, quicklook
     for tile_name in self.score['items']:
         activity['tileid'] = tile_name
         activity['tileid_original'] = tile_name
+        activity['mask'] = mask
 
         # GET bounding box - tile ID
         activity['bbox'] = self.score['items'][tile_name]['bbox']
@@ -308,6 +309,7 @@ def merge_warped(self, activity):
     activity['mystart'] = mystart
     activity['mystatus'] = 'DONE'
     satellite = activity.get('satellite')
+    activity_mask = activity['mask']
 
     # Flag to force merge generation without cache
     force = activity.get('force')
@@ -321,7 +323,7 @@ def merge_warped(self, activity):
                 with rasterio.open('{}{}'.format(prefix, key)) as src:
                     values = src.read(1)
                     if activity['band'] == activity['quality_band']:
-                        efficacy, cloudratio = qa_statistics(values)
+                        efficacy, cloudratio = qa_statistics(values, mask=activity_mask, compute=True)
 
                 # Update entry in DynamoDB
                 activity['myend'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -361,18 +363,18 @@ def merge_warped(self, activity):
         numcol = num_pixel_x
         numlin = num_pixel_y
 
-        is_sentinel_landsat_quality_fmask = ('LANDSAT' in satellite or satellite == 'SENTINEL-2') and band == activity['quality_band']
+        transform = Affine(new_res_x, 0, xmin, 0, -new_res_y, ymax)
+
+        is_sentinel_landsat_quality_fmask = ('LANDSAT' in satellite or satellite == 'SENTINEL-2') and \
+                                            (band == activity['quality_band'] and activity_mask['nodata'] != 0)
         source_nodata = 0
 
         # Quality band is resampled by nearest, other are bilinear
         if band == activity['quality_band']:
             resampling = Resampling.nearest
 
-            nodata = 0
-
-            if is_sentinel_landsat_quality_fmask:
-                nodata = 255  # temporally set nodata to 255 in order to reproject without losing valid 0 values
-                source_nodata = nodata
+            nodata = activity_mask['nodata']
+            source_nodata = nodata
 
             raster = numpy.zeros((numlin, numcol,), dtype=numpy.uint16)
             raster_merge = numpy.full((numlin, numcol,), dtype=numpy.uint16, fill_value=source_nodata)
@@ -451,7 +453,7 @@ def merge_warped(self, activity):
         if activity['band'] == activity['quality_band']:
             raster_merge, efficacy, cloudratio = getMask(raster_merge, satellite)
             template.update({'dtype': 'uint8'})
-            nodata = 255
+            nodata = activity_mask['nodata']
 
             # Save merged image on S3
             create_cog_in_s3(services, template, key, raster_merge, True, nodata, bucket_name)
@@ -629,6 +631,7 @@ def fill_blend(services, mergeactivity, blendactivity, internal_band=False):
             cube_id, blendactivity['tileid'], blendactivity['start'], blendactivity['end'], band, cube_version)
     return True
 
+
 def blend(self, activity):
     logger.info('==> start BLEND')
     services = self.services
@@ -637,13 +640,16 @@ def blend(self, activity):
     activity['sk'] = activity['band'] if not activity.get('internal_band') else activity['internal_band']
     bucket_name = activity['bucket_name']
     prefix = services.get_s3_prefix(bucket_name)
+    activity_mask = activity['mask']
+    mask_values = None
 
     band = activity['band']
     numscenes = len(activity['scenes'])
-
+    # TODO: It must be changed since sen2cor values use 0 as nodata.
+    #       The activity_mask may store only nodata for cloud file.
     nodata = int(activity.get('nodata', -9999))
     if band == activity['quality_band']:
-        nodata = 255
+        nodata = activity_mask['nodata']
 
     # Check if band ARDfiles are in activity
     for datedataset in activity['scenes']:
@@ -680,8 +686,10 @@ def blend(self, activity):
         # The list will be ordered by efficacy/resolution
         masklist = []
         bandlist = []
+        dates = []
         for m in sorted(mask_tuples, reverse=True):
             key = m[1]
+            dates.append(key)
             efficacy = m[0]
             scene = activity['scenes'][key]
 
@@ -690,6 +698,11 @@ def blend(self, activity):
                 prefix + activity['dirname'],
                 scene['date'],
                 scene['ARDfiles'][activity['quality_band']])
+            quality_ref = rasterio.open(filename)
+
+            if mask_values is None:
+                mask_values = parse_mask(quality_ref.read(1), activity_mask)
+
             try:
                 masklist.append(rasterio.open(filename))
             except:
@@ -720,6 +733,9 @@ def blend(self, activity):
         # Build the raster to store the output images.
         width = profile['width']
         height = profile['height']
+
+        clear_values = mask_values['clear_data']
+        not_clear_values = mask_values['not_clear_data']
 
         # STACK and MED will be generated in memory
         stack_raster = numpy.full((height, width), dtype=profile['dtype'], fill_value=nodata)
@@ -764,10 +780,9 @@ def blend(self, activity):
                     copy_mask = numpy.array(mask, copy=True)
 
                 # Mask valid data (0 and 1) as True
-                mask[mask < 2] = 1
-                mask[mask == 3] = 1
+                mask[numpy.where(numpy.isin(mask, clear_values))] = 1
                 # Mask cloud/snow/shadow/no-data as False
-                mask[mask >= 2] = 0
+                mask[numpy.where(numpy.isin(mask, not_clear_values))] = 0
                 # Ensure that Raster noda value (-9999 maybe) is set to False
                 mask[raster == nodata] = 0
 
@@ -780,16 +795,14 @@ def blend(self, activity):
 
                 if build_total_observation:
                     # Copy Masked values in order to stack total observation
-                    copy_mask[copy_mask <= 4] = 1
-                    copy_mask[copy_mask >= 5] = 0
+                    copy_mask[copy_mask != nodata] = 1
+                    copy_mask[copy_mask == nodata] = 0
 
                     stack_total_observation[window.row_off: row_offset, window.col_off: col_offset] += copy_mask.astype(numpy.uint8)
 
                 # Get current observation file name
                 if build_provenance:
-                    file_name = Path(bandlist[order].name).stem
-                    file_date = file_name.split('_')[4]
-                    day_of_year = datetime.strptime(file_date, '%Y-%m-%d').timetuple().tm_yday
+                    day_of_year = datetime.strptime(dates[order], '%Y-%m-%d').timetuple().tm_yday
 
                 # Find all no data in destination STACK image
                 stack_raster_where_nodata = numpy.where(
@@ -797,9 +810,10 @@ def blend(self, activity):
                 )
 
                 # Turns into a 1-dimension
-                stack_raster_nodata_pos = numpy.ravel_multi_index(stack_raster_where_nodata,
-                                                                stack_raster[window.row_off: row_offset,
-                                                                window.col_off: col_offset].shape)
+                stack_raster_nodata_pos = numpy.ravel_multi_index(
+                    stack_raster_where_nodata,
+                    stack_raster[window.row_off: row_offset, window.col_off: col_offset].shape
+                )
 
                 # Find all valid/cloud in destination STACK image
                 raster_where_data = numpy.where(raster != nodata)
@@ -848,7 +862,11 @@ def blend(self, activity):
             masklist[order].close()
 
         # Evaluate cloud cover
-        efficacy, cloudcover = qa_statistics(stack_raster)
+        if activity['quality_band'] == band:
+            efficacy, cloud_cover = qa_statistics(stack_raster, mask_values)
+
+            activity['efficacy'] = efficacy
+            activity['cloudratio'] = cloud_cover
 
         # Upload the CLEAROB dataset
         if build_clear_observation:

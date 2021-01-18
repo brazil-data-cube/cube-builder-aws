@@ -171,8 +171,51 @@ def encode_key(activity, keylist):
     return dynamoKey
 
 
+def parse_mask(raster, mask):
+    """Parse input mask according to the raster.
+
+    This method expects a dict with contains the following keys:
+
+        clear_data - Array of clear data
+        nodata - Cloud mask nodata
+        not_clear (Optional) _ List of pixels to be not considered.
+
+    It will read the input array and get all unique values. Make sure to call for cloud file.
+    It may take too long do parse, according to the raster.
+    """
+    clear_data = numpy.array(mask['clear_data'])
+    not_clear_data = numpy.array(mask.get('not_clear_data', []))
+
+    if mask.get('nodata') is None:
+        raise RuntimeError('Excepted nodata value set to compute data set statistics.')
+
+    nodata = mask['nodata']
+
+    # TODO: This method may be slow. Maybe get difference between clear/not_clear/nodata on numpy.where
+    unique_values = numpy.unique(raster)
+
+    if not_clear_data.size == 0:
+        not_clear_data = numpy.setdiff1d(unique_values, clear_data)
+
+    # Not clear data cannot use no data
+    not_clear_data = numpy.setdiff1d(not_clear_data, numpy.array([nodata]))
+    # Store both clear_data, not clear data and no data.
+    useful_values = list(clear_data.tolist())
+    useful_values.extend(list(not_clear_data.tolist()))
+    useful_values.extend([nodata])
+    # Get all unspecified values
+    others_values = numpy.setdiff1d(unique_values, useful_values)
+
+    return dict(
+        clear_data=clear_data,
+        not_clear_data=not_clear_data,
+        nodata=nodata,
+        others=others_values
+    )
+
+
 ############################
-def qa_statistics(raster) -> Tuple[float, float]:
+def qa_statistics(raster, mask: dict, compute=False) -> Tuple[float, float]:
     """Retrieve raster statistics efficacy and not clear ratio, based in Fmask values.
 
     Notes:
@@ -180,26 +223,30 @@ def qa_statistics(raster) -> Tuple[float, float]:
         Values 2 and 4 are considered as `not clear data`
         The values for snow `3` and nodata `255` is not used to count efficacy and not clear ratio
     """
+    if compute:
+        mask = parse_mask(raster, mask)
+
+    # Compute how much data is for each class. It will be used as image area
+    clear_pixels = raster[numpy.where(numpy.isin(raster, mask['clear_data']))].size
+    not_clear_pixels = raster[numpy.where(numpy.isin(raster, mask['not_clear_data']))].size
+    others_pixels = raster[numpy.where(numpy.isin(raster, mask['others']))].size
+
+    # Total pixels used to retrieve data efficacy
     total_pixels = raster.size
-    clear_pixel = numpy.count_nonzero(raster < 2)
-    # TODO: Custom values mappings
-    cloud_pixels = raster[raster == 4].size
-    cloud_shadow = raster[raster == 2].size
-    snow_pixels = raster[raster == 3].size
-    not_clear_pixel = cloud_pixels + cloud_shadow
-    image_area = clear_pixel + not_clear_pixel + snow_pixels
+    # Image area is everything, except nodata.
+    image_area = clear_pixels + not_clear_pixels + others_pixels
     not_clear_ratio = 100
 
     if image_area != 0:
-        not_clear_ratio = round(100. * not_clear_pixel / image_area, 2)
+        not_clear_ratio = round(100. * not_clear_pixels / image_area, 2)
 
-    efficacy = round(100. * clear_pixel / total_pixels, 2)
+    efficacy = round(100. * clear_pixels / total_pixels, 2)
 
     return efficacy, not_clear_ratio
 
 
 ############################
-def getMask(raster, satellite):
+def getMask(raster, satellite, mask=None):
     """Retrieves and re-sample quality raster to well-known values used in Brazil Data Cube.
 
     We adopted the `Fmask <https://github.com/GERSL/Fmask>`_ (Function of Mask).
@@ -241,7 +288,6 @@ def getMask(raster, satellite):
         # 3 		Cloudy 			Target not visible, covered with cloud
         lut = numpy.array([255, 0, 0, 2, 4], dtype=numpy.uint8)
         rastercm = numpy.take(lut, raster+1).astype(numpy.uint8)
-
     elif 'CBERS' in satellite:
         # Key Summary        QA Description
         #   0 Fill/No Data - Not Processed
@@ -254,7 +300,7 @@ def getMask(raster, satellite):
         lut[255] = 4
         rastercm = numpy.take(lut, raster).astype(numpy.uint8)
 
-    efficacy, cloudratio = qa_statistics(rastercm)
+    efficacy, cloudratio = qa_statistics(rastercm, mask=mask)
 
     return rastercm.astype(numpy.uint8), efficacy, cloudratio
 
