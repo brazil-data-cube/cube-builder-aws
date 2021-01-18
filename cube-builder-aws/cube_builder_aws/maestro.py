@@ -353,18 +353,16 @@ def merge_warped(self, activity):
 
         transform = Affine(new_res_x, 0, xmin, 0, -new_res_y, ymax)
 
-        is_sentinel_landsat_quality_fmask = ('LANDSAT' in satellite or satellite == 'SENTINEL-2') and band == activity['quality_band']
+        is_sentinel_landsat_quality_fmask = ('LANDSAT' in satellite or satellite == 'SENTINEL-2') and \
+                                            (band == activity['quality_band'] and activity_mask['nodata'] != 0)
         source_nodata = 0
 
         # Quality band is resampled by nearest, other are bilinear
         if band == activity['quality_band']:
             resampling = Resampling.nearest
 
-            nodata = 0
-
-            if is_sentinel_landsat_quality_fmask:
-                nodata = 255  # temporally set nodata to 255 in order to reproject without losing valid 0 values
-                source_nodata = nodata
+            nodata = activity_mask['nodata']
+            source_nodata = nodata
 
             raster = numpy.zeros((numlin, numcol,), dtype=numpy.uint16)
             raster_merge = numpy.full((numlin, numcol,), dtype=numpy.uint16, fill_value=source_nodata)
@@ -437,7 +435,7 @@ def merge_warped(self, activity):
         if activity['band'] == activity['quality_band']:
             raster_merge, efficacy, cloudratio = getMask(raster_merge, satellite)
             template.update({'dtype': 'uint8'})
-            nodata = 255
+            nodata = activity_mask['nodata']
 
             # Save merged image on S3
             create_cog_in_s3(services, template, key, raster_merge, True, nodata, bucket_name)
