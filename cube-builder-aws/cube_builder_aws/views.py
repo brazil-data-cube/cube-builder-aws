@@ -7,7 +7,8 @@
 #
 
 # 3rdparty
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, current_app
+import base64
 import json
 
 from .controller import CubeController
@@ -41,6 +42,9 @@ def get_status():
     args = request.args.to_dict()
 
     errors = form.validate(args)
+    
+    if errors:
+        return errors, 400
 
     message, status = controller.get_cube_status(**args)
     return jsonify(message), status
@@ -75,7 +79,7 @@ def create_cube():
 
     data = form.load(args)
 
-    cubes, status = CubeController.create(data)
+    cubes, status = controller.create(data)
 
     return jsonify(cubes), status
 
@@ -175,7 +179,7 @@ def craete_grs():
 # Start Processing
 @bp.route("/start", methods=["POST"])
 def start():
-     """Define POST handler for datacube execution.
+    """Define POST handler for datacube execution.
     Expects a JSON that matches with ``DataCubeProcessForm``.
     """
     args = request.get_json()
@@ -231,6 +235,9 @@ def craete_bucket():
 
     errors = form.validate(args)
 
+    if errors:
+        return errors, 400
+
     message, status = controller.create_bucket(**args)
     return jsonify(message), status
 
@@ -271,7 +278,7 @@ def list_periods():
 # REQUEST -> from SQS trigger or Kinesis
 #########################################
 def continue_process(event, context):
-    with app.app_context():
+    with current_app.app_context():
         params_list = []
         if 'Records' in event:
             for record in event['Records']:

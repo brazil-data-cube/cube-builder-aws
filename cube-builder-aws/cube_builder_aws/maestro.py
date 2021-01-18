@@ -166,8 +166,8 @@ def prepare_merge(self, datacube, datasets, satellite, bands, indexes, quicklook
     # Build the basics of the merge activity
     activity = {}
     activity['action'] = 'merge'
-    activity['datacube_orig_name'] = datacube
-    activity['datacube'] = get_cube_name(datacube)
+    activity['datacube_orig_name'] = f'{datacube}-{functions[0]}'
+    activity['datacube'] = datacube
     activity['version'] = version
     activity['datasets'] = datasets
     activity['satellite'] = satellite.upper()

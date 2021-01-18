@@ -237,16 +237,13 @@ class CubeServices:
         )
         return True
 
-    def put_process_table(self, key, infos):
+    def put_process_table(self, key, datacube_id, i_datacube_id, infos):
         self.processTable.put_item(
             Item = {
                 'id': key,
-                'datacube': infos['datacube'],
-                'datacube_suffix': infos['datacube_suffix'],
-                'functions': json.dumps(infos['composite_function']),
-                'indexes': json.dumps(infos['indexes']),
-                'quality_band': infos['quality_band'],
-                'platform_code': infos['platform_code'],
+                'datacube_id': datacube_id,
+                'irregular_datacube_id': i_datacube_id,
+                'infos': infos
             }
         )
         return True

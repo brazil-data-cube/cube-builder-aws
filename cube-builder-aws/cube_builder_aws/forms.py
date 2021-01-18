@@ -58,6 +58,14 @@ class BandDefinition(Schema):
     metadata = fields.Dict(required=False, allow_none=False)
 
 
+class CustomMaskDefinition(Schema):
+    """Define a custom mask."""
+
+    clear_data = fields.List(fields.Integer, required=True, allow_none=False)
+    not_clear_data = fields.List(fields.Integer, required=True, allow_none=False)
+    others = fields.List(fields.Integer, required=False, allow_none=True)
+
+
 class DataCubeForm(Schema):
     """Define parser for datacube creation."""
 
@@ -78,6 +86,7 @@ class DataCubeForm(Schema):
     public = fields.Boolean(required=False, allow_none=False, default=True)
     # Is Data cube generated from Combined Collections?
     is_combined = fields.Boolean(required=False, allow_none=False, default=False)
+    mask = fields.Nested(CustomMaskDefinition)
 
     @pre_load
     def validate_indexes(self, data, **kwargs):
@@ -130,7 +139,8 @@ class DataCubeMetadataForm(Schema):
 class DataCubeProcessForm(Schema):
     """Define parser for datacube generation."""
 
-    datacube = fields.String(required=True, allow_none=False)
+    datacube_name = fields.String(required=True, allow_none=False)
+    datacube_version = fields.Integer(required=True, allow_none=False)
     collections = fields.List(fields.String, required=True, allow_none=False)
     tiles = fields.List(fields.String, required=True, allow_none=False)
     start_date = fields.Date()

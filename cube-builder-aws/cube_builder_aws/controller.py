@@ -28,7 +28,7 @@ from .constants import (CLEAR_OBSERVATION_ATTRIBUTES, PROVENANCE_ATTRIBUTES,
                         TOTAL_OBSERVATION_ATTRIBUTES, CLEAR_OBSERVATION_NAME, 
                         TOTAL_OBSERVATION_NAME, PROVENANCE_NAME, SRID_BDC_GRID, 
                         CENTER_WAVELENGTH, FULL_WIDTH_HALF_MAX, REVISIT_BY_SATELLITE,
-                        COG_MIME_TYPE, SRID_ALBERS_EQUAL_AREA)
+                        COG_MIME_TYPE, SRID_ALBERS_EQUAL_AREA, DATASOURCE_ATTRIBUTES)
 from .forms import CollectionForm
 from .utils.serializer import Serializer
 from .utils.image import validate_merges
@@ -165,8 +165,7 @@ class CubeController:
         return band
 
 
-    @classmethod
-    def _create_cube_definition(cls, cube_id: str, params: dict) -> dict:
+    def _create_cube_definition(self, cube_id: str, params: dict) -> dict:
         """Create a data cube definition.
         Basically, the definition consists in `Collection` and `Band` attributes.
         Note:
@@ -188,12 +187,12 @@ class CubeController:
         grs = GridRefSys.query().filter(GridRefSys.name == params['grs']).first()
 
         if grs is None:
-            abort(404, f'Grid {params["grs"]} not found.')
+            NotFound(f'Grid {params["grs"]} not found.')
 
         cube_function = CompositeFunction.query().filter(CompositeFunction.alias == function).first()
 
         if cube_function is None:
-            abort(404, f'Function {function} not found.')
+            NotFound(f'Function {function} not found.')
 
         data = dict(name='Meter', symbol='m')
         resolution_meter, _ = get_or_create_model(ResolutionUnit, defaults=data, symbol='m')
@@ -252,7 +251,7 @@ class CubeController:
                 )
 
                 if band.get('metadata'):
-                    band_model._metadata = cls._validate_band_metadata(deepcopy(band['metadata']), band_map)
+                    band_model._metadata = self._validate_band_metadata(deepcopy(band['metadata']), band_map)
 
                 band_model.save(commit=False)
                 bands.append(band_model)
@@ -273,23 +272,22 @@ class CubeController:
 
         # Create default Cube Bands
         if function != 'IDT':
-            _ = cls.get_or_create_band(cube.id, **CLEAR_OBSERVATION_ATTRIBUTES, resolution_unit_id=resolution_meter.id,
+            _ = self.get_or_create_band(cube.id, **CLEAR_OBSERVATION_ATTRIBUTES, resolution_unit_id=resolution_meter.id,
                                        resolution_x=params['resolution'], resolution_y=params['resolution'])
-            _ = cls.get_or_create_band(cube.id, **TOTAL_OBSERVATION_ATTRIBUTES, resolution_unit_id=resolution_meter.id,
+            _ = self.get_or_create_band(cube.id, **TOTAL_OBSERVATION_ATTRIBUTES, resolution_unit_id=resolution_meter.id,
                                        resolution_x=params['resolution'], resolution_y=params['resolution'])
 
             if function == 'STK':
-                _ = cls.get_or_create_band(cube.id, **PROVENANCE_ATTRIBUTES, resolution_unit_id=resolution_meter.id,
+                _ = self.get_or_create_band(cube.id, **PROVENANCE_ATTRIBUTES, resolution_unit_id=resolution_meter.id,
                                            resolution_x=params['resolution'], resolution_y=params['resolution'])
 
         if params.get('is_combined') and function != 'MED':
-            _ = cls.get_or_create_band(cube.id, **DATASOURCE_ATTRIBUTES, resolution_unit_id=resolution_meter.id,
+            _ = self.get_or_create_band(cube.id, **DATASOURCE_ATTRIBUTES, resolution_unit_id=resolution_meter.id,
                                        resolution_x=params['resolution'], resolution_y=params['resolution'])
 
         return CollectionForm().dump(cube)
 
-    @classmethod
-    def create(cls, params):
+    def create(self, params):
         """Create a data cube definition.
         Note:
             If you provide a data cube with composite function like MED, STK, it creates
@@ -306,7 +304,7 @@ class CubeController:
 
         with db.session.begin_nested():
             # Create data cube Identity
-            cube = cls._create_cube_definition(cube_name, params)
+            cube = self._create_cube_definition(cube_name, params)
 
             cube_serialized = [cube]
 
@@ -318,10 +316,26 @@ class CubeController:
                 cube_name_composite = f'{cube_name}_{temporal_str}_{params["composite_function"]}'
 
                 # Create data cube with temporal composition
-                cube_composite = cls._create_cube_definition(cube_name_composite, params)
+                cube_composite = self._create_cube_definition(cube_name_composite, params)
                 cube_serialized.append(cube_composite)
 
         db.session.commit()
+
+        # set infos in process table (dynamoDB)
+        # delete if exists
+        cube_identify = f'{cube_serialized[0]["name"]}-{cube_serialized[0]["version"]}'
+        response = self.services.get_process_by_datacube(cube_identify)
+        if 'Items' not in response or len(response['Items']) == 0:
+            for item in response['Items']:
+                self.services.remove_process_by_key(item['id'])
+
+        # add new process
+        self.services.put_process_table(
+            key=cube_identify,
+            datacube_id=cube_serialized[0]['id'],
+            i_datacube_id=cube_serialized[1]['id'],
+            infos=params
+        )
         
         return cube_serialized, 201
 
@@ -438,26 +452,21 @@ class CubeController:
 
     def start_process(self, params):
         response = {}
-        if params.get('process_id'):
-            response = self.services.get_process_by_id(params['process_id'])
+        datacube_identify = f'{params["datacube_name"]}-{params["datacube_version"]}'
+        response = self.services.get_process_by_id(datacube_identify)
 
         if 'Items' not in response or len(response['Items']) == 0:
-            raise NotFound('Process ID not found!')
+            raise NotFound('Datacube not found in proccess table!')
 
         # get process infos by dynameDB
         process_info = response['Items'][0]
-        functions = json.loads(process_info['functions'])
-        indexes = json.loads(process_info['indexes'])
-        quality_band = process_info['quality_band']
-        datacube_name = process_info['datacube'].split('_')[0]
-        version = int(process_info['datacube'].split('_')[1])
-        datacube_suffix = process_info['datacube_suffix']
-        satellite = process_info['platform_code']
+        process_params = json.loads(process_info['infos'])
+        indexes = process_params['indexes']
+        quality_band = process_params['quality_band']
+        functions = [process_params['composite_function'], 'IDT']
+        satellite = process_info['metadata']['platform']['code']
+        mask = process_info.get('mask', None)
 
-        # get one function if != IDT (IDENTITY)
-        datacube = f'{datacube_name}_{datacube_suffix}'
-        base_function = [func for func in functions if func != 'IDT'][0]
-        cube_full_name = get_cube_name(datacube, base_function)
         tiles = params['tiles']
         start_date = datetime.strptime(params['start_date'], '%Y-%m-%d').strftime('%Y-%m-%d')
         end_date = datetime.strptime(params['end_date'], '%Y-%m-%d').strftime('%Y-%m-%d') \
@@ -465,12 +474,10 @@ class CubeController:
 
         # verify cube info
         cube_infos = Collection.query().filter(
-            Collection.name == cube_full_name,
-            Collection.version == version
+            Collection.id == process_info['datacube_id']
         ).first()
         cube_infos_irregular = Collection.query().filter(
-            Collection.name == get_cube_name(datacube),
-            Collection.version == version
+            Collection.id == process_info['irregular_datacube_id']
         ).first()
         if not cube_infos or not cube_infos_irregular:
             return 'Cube not found!', 404
@@ -482,7 +489,7 @@ class CubeController:
         bands_list = []
         indexes_list = []
         for band in bands:
-            if band.name.upper() not in [i.upper() for i in indexes]:
+            if band.name.upper() not in [i['common_name'].upper() for i in indexes]:
                 bands_list.append(band.name)
             else:
                 indexes_available = {
@@ -526,11 +533,11 @@ class CubeController:
 
         # prepare merge
         crs = cube_infos.grs.crs
-        formatted_version = format_version(version)
-        prepare_merge(self, datacube, params['collections'], satellite, bands_list,
+        formatted_version = format_version(cube_infos.version)
+        prepare_merge(self, cube_infos['name'], params['collections'], satellite, bands_list,
             indexes_list, bands_ql_list, float(bands[0].resolution_x), float(bands[0].resolution_y), 
             int(bands[0].nodata), crs, quality_band, functions, formatted_version, 
-            params.get('force', False))
+            params.get('force', False), mask)
 
         return dict(
             message='Processing started with succesfully'
@@ -768,7 +775,7 @@ class CubeController:
 
         return buckets, 200
 
-    def check_for_invalid_merges(cls, cube_id: str, tile_id: str, start_date: str, end_date: str) -> Tuple[dict, int]:
+    def check_for_invalid_merges(self, cube_id: str, tile_id: str, start_date: str, end_date: str) -> Tuple[dict, int]:
         """List merge files used in data cube and check for invalid scenes.
         Args:
             datacube: Data cube name
@@ -792,7 +799,7 @@ class CubeController:
         cube = self.get_cube_or_404(cube_id=cube_id)
 
         where = [
-            Item.collection_id == cube_id,
+            Item.collection_id == cube.id,
             Tile.id == Item.tile_id
         ]
 
