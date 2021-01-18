@@ -7,31 +7,37 @@
 #
 
 import json
-import rasterio
 import sqlalchemy
+import rasterio
 from copy import deepcopy
 from datetime import datetime
 from geoalchemy2 import func
 from geoalchemy2.shape import from_shape
 from shapely.geometry import Polygon
 from werkzeug.exceptions import BadRequest, NotFound, Conflict
+from rasterio.crs import CRS
+from rasterio.warp import transform
+from typing import Tuple, Union
 
 from bdc_catalog.models.base_sql import BaseModel, db
 from bdc_catalog.models import (Collection, Band, BandSRC, GridRefSys, Tile, 
                                 CompositeFunction, MimeType, ResolutionUnit, 
-                                Quicklook, Item)
+                                Quicklook, Item, SpatialRefSys)
 
 from .constants import (CLEAR_OBSERVATION_ATTRIBUTES, PROVENANCE_ATTRIBUTES, 
                         TOTAL_OBSERVATION_ATTRIBUTES, CLEAR_OBSERVATION_NAME, 
                         TOTAL_OBSERVATION_NAME, PROVENANCE_NAME, SRID_BDC_GRID, 
                         CENTER_WAVELENGTH, FULL_WIDTH_HALF_MAX, REVISIT_BY_SATELLITE,
-                        COG_MIME_TYPE)
+                        COG_MIME_TYPE, SRID_ALBERS_EQUAL_AREA)
 from .forms import CollectionForm
 from .utils.serializer import Serializer
-from .utils.processing import get_or_create_model, get_date, get_cube_name, get_cube_parts, decode_periods, generate_hash_md5, format_version
 from .utils.image import validate_merges
-from .maestro import orchestrate, prepare_merge, \
-    merge_warped, solo, blend, posblend, publish
+from .utils.timeline import Timeline
+from .maestro import (orchestrate, prepare_merge, merge_warped, solo, blend,
+                      posblend, publish)
+from .utils.processing import (get_or_create_model, get_date, get_cube_name, 
+                               get_cube_parts, decode_periods, generate_hash_md5,
+                               format_version)
 from .services import CubeServices
 
 class CubeController:
@@ -40,6 +46,35 @@ class CubeController:
         self.score = {}
 
         self.services = CubeServices(url_stac, bucket)
+
+
+    def continue_process_stream(self, params_list):
+        params = params_list[0]
+        if 'channel' in params and params['channel'] == 'kinesis':
+            solo(self, params_list)
+
+        # dispatch MERGE
+        elif params['action'] == 'merge':
+            merge_warped(self, params)
+
+        # dispatch BLEND
+        elif params['action'] == 'blend':
+            blend(self, params)
+
+        # dispatch POS BLEND
+        elif params['action'] == 'posblend':
+            posblend(self, params)
+
+        # dispatch PUBLISH
+        elif params['action'] == 'publish':
+            publish(self, params)
+
+        return {
+            "statusCode": 200,
+            "body": json.dumps({
+                "message": 'Succesfully'
+            }),
+        }
 
 
     @staticmethod
@@ -307,7 +342,9 @@ class CubeController:
             
         db.session.commit()
 
-        return {'message': 'Updated cube!'}, 200
+        return dict(
+            message='Updated cube!'
+        ), 200
 
 
     def get_cube_status(self, cube_name):
@@ -484,7 +521,8 @@ class CubeController:
 
         # items => old mosaic
         # orchestrate
-        self.score['items'] = orchestrate(cub_ref, tiles, start_date, end_date, functions)
+        shape = params.get('shape', None)
+        self.score['items'] = orchestrate(cub_ref, tiles, start_date, end_date, functions, shape)
 
         # prepare merge
         crs = cube_infos.grs.crs
@@ -494,37 +532,13 @@ class CubeController:
             int(bands[0].nodata), crs, quality_band, functions, formatted_version, 
             params.get('force', False))
 
-        return 'Succesfully', 201
+        return dict(
+            message='Processing started with succesfully'
+        ), 201
 
-    def continue_process_stream(self, params_list):
-        params = params_list[0]
-        if 'channel' in params and params['channel'] == 'kinesis':
-            solo(self, params_list)
-
-        # dispatch MERGE
-        elif params['action'] == 'merge':
-            merge_warped(self, params)
-
-        # dispatch BLEND
-        elif params['action'] == 'blend':
-            blend(self, params)
-
-        # dispatch POS BLEND
-        elif params['action'] == 'posblend':
-            posblend(self, params)
-
-        # dispatch PUBLISH
-        elif params['action'] == 'publish':
-            publish(self, params)
-
-        return {
-            "statusCode": 200,
-            "body": json.dumps({
-                "message": 'Succesfully'
-            }),
-        }
-
-    def create_grs(self, name, description, projection, meridian, degreesx, degreesy, bbox):
+    @classmethod
+    def create_grs_schema(cls, name, description, projection, meridian, degreesx, degreesy, bbox, srid=SRID_ALBERS_EQUAL_AREA):
+        """Create a Brazil Data Cube Grid Schema."""
         bbox = bbox.split(',')
         bbox_obj = {
             "w": float(bbox[0]),
@@ -539,66 +553,60 @@ class CubeController:
             tile_srs_p4 = "+proj=sinu +lon_0={} +x_0=0 +y_0=0 +a=6371007.181 +b=6371007.181 +units=m +no_defs".format(meridian)
 
         # Number of tiles and base tile
-        num_tiles_x = int(360./degreesx)
-        num_tiles_y = int(180./degreesy)
-        h_base = num_tiles_x/2
-        v_base = num_tiles_y/2
+        num_tiles_x = int(360. / degreesx)
+        num_tiles_y = int(180. / degreesy)
+        h_base = num_tiles_x / 2
+        v_base = num_tiles_y / 2
 
         # Tile size in meters (dx,dy) at center of system (argsmeridian,0.)
         src_crs = '+proj=longlat +ellps=GRS80 +datum=GRS80 +no_defs'
         dst_crs = tile_srs_p4
-        xs = [(meridian - degreesx/2), (meridian + degreesx/2), meridian, meridian, 0.]
-        ys = [0., 0., -degreesy/2, degreesy/2, 0.]
-        out = rasterio.warp.transform(src_crs, dst_crs, xs, ys, zs=None)
+        xs = [(meridian - degreesx / 2), (meridian + degreesx / 2), meridian, meridian, 0.]
+        ys = [0., 0., -degreesy / 2, degreesy / 2, 0.]
+        out = transform(src_crs, dst_crs, xs, ys, zs=None)
         x1 = out[0][0]
         x2 = out[0][1]
         y1 = out[1][2]
         y2 = out[1][3]
-        dx = x2-x1
-        dy = y2-y1
+        dx = x2 - x1
+        dy = y2 - y1
 
         # Coordinates of WRS center (0.,0.) - top left coordinate of (h_base,v_base)
-        xCenter =  out[0][4]
-        yCenter =  out[1][4]
+        x_center = out[0][4]
+        y_center = out[1][4]
         # Border coordinates of WRS grid
-        xMin = xCenter - dx*h_base
-        yMax = yCenter + dy*v_base
+        x_min = x_center - dx * h_base
+        y_max = y_center + dy * v_base
+
 
         # Upper Left is (xl,yu) Bottom Right is (xr,yb)
         xs = [bbox_obj['w'], bbox_obj['e'], meridian, meridian]
         ys = [0., 0., bbox_obj['n'], bbox_obj['s']]
-        out = rasterio.warp.transform(src_crs, dst_crs, xs, ys, zs=None)
+        out = transform(src_crs, dst_crs, xs, ys, zs=None)
         xl = out[0][0]
         xr = out[0][1]
         yu = out[1][2]
         yb = out[1][3]
-        hMin = int((xl - xMin)/dx)
-        hMax = int((xr - xMin)/dx)
-        vMin = int((yMax - yu)/dy)
-        vMax = int((yMax - yb)/dy)
+        h_min = int((xl - x_min) / dx)
+        h_max = int((xr - x_min) / dx)
+        v_min = int((y_max - yu) / dy)
+        v_max = int((y_max - yb) / dy)
 
         tiles = []
         features = []
         dst_crs = '+proj=longlat +ellps=GRS80 +datum=GRS80 +no_defs'
         src_crs = tile_srs_p4
-        for ix in range(hMin, hMax+1):
-            x1 = xMin + ix*dx
+
+        for ix in range(h_min, h_max+1):
+            x1 = x_min + ix*dx
             x2 = x1 + dx
-            for iy in range(vMin,vMax+1):
-                y1 = yMax - iy*dy
+            for iy in range(v_min, v_max+1):
+                y1 = y_max - iy*dy
                 y2 = y1 - dy
                 # Evaluate the bounding box of tile in longlat
-                xs = [x1,x2,x2,x1]
-                ys = [y1,y1,y2,y2]
-                out = rasterio.warp.transform(src_crs, dst_crs, xs, ys, zs=None)
-                UL_lon = out[0][0]
-                UL_lat = out[1][0]
-                UR_lon = out[0][1]
-                UR_lat = out[1][1]
-                LR_lon = out[0][2]
-                LR_lat = out[1][2]
-                LL_lon = out[0][3]
-                LL_lat = out[1][3]
+                xs = [x1, x2, x2, x1]
+                ys = [y1, y1, y2, y2]
+                out = transform(src_crs, dst_crs, xs, ys, zs=None)
 
                 polygon = from_shape(
                     Polygon(
@@ -610,7 +618,7 @@ class CubeController:
                             (x1, y2)
                         ]
                     ), 
-                    srid=SRID_BDC_GRID
+                    srid=srid
                 )
 
                 # Insert tile
@@ -624,22 +632,37 @@ class CubeController:
                 ))
         
         with db.session.begin_nested():
-            grs = GridRefSys.create_geometry_table(table_name=name.lower(), features=features, srid=SRID_BDC_GRID)
+            crs = CRS.from_proj4(tile_srs_p4)
+            data = dict(
+                auth_name='Albers Equal Area',
+                auth_srid=srid,
+                srid=srid,
+                srtext=crs.to_wkt(),
+                proj4text=tile_srs_p4
+            )
+
+            spatial_index, _ = get_or_create_model(SpatialRefSys, defaults=data, srid=srid)
+
+            grs = GridRefSys.create_geometry_table(table_name=name, features=features, srid=srid)
             grs.description = description
             db.session.add(grs)
 
             [db.session.add(Tile(**tile, grs=grs)) for tile in tiles]
         db.session.commit()        
 
-        return 'Grid {} created with successfully'.format(name), 201
+        return dict(
+            message='Grid {} created with successfully'.format(name)
+        ), 201
 
-    def list_grs_schemas(self):
+    @classmethod
+    def list_grs_schemas(cls):
         """Retrieve a list of available Grid Schema on Brazil Data Cube database."""
         schemas = GridRefSys.query().all()
 
         return [dict(**Serializer.serialize(schema), crs=schema.crs) for schema in schemas], 200
 
-    def get_grs_schema(self, grs_id):
+    @classmethod
+    def get_grs_schema(cls, grs_id):
         """Retrieves a Grid Schema definition with tiles associated."""
         schema = GridRefSys.query().filter(GridRefSys.id == grs_id).first()
 
@@ -708,17 +731,19 @@ class CubeController:
 
         return dump_cube, 200
 
-    def list_tiles_cube(self, cube_id: int):
-        cube = self.get_cube_or_404(cube_id)
-
-        geom_table = cube.grs.geom_table
+    @classmethod
+    def list_tiles_cube(cls, cube_id: int, only_ids=False):
+        """Retrieve all tiles (as GeoJSON) that belongs to a data cube."""
         features = db.session.query(
-            func.ST_AsGeoJSON(func.ST_Transform(geom_table.c.geom, 4326), 6, 3).cast(sqlalchemy.JSON)
-        ).all()
+            Item.tile_id, 
+            Tile,
+            func.ST_AsGeoJSON(Item.geom, 6, 3).cast(sqlalchemy.JSON).label('geom')
+        ).distinct(Item.tile_id).filter(Item.collection_id == cube_id, Item.tile_id == Tile.id).all()
 
-        return [feature[0] for feature in features], 200
+        return [feature.Tile.name if only_ids else feature.geom for feature in features], 200
 
-    def list_composite_functions(self):
+    @classmethod
+    def list_composite_functions(cls):
         """Retrieve a list of available Composite Functions on Brazil Data Cube database."""
         schemas = CompositeFunction.query().all()
 
@@ -729,9 +754,13 @@ class CubeController:
 
         status = service.create_bucket(name, requester_pay)
         if not status:
-            return 'Bucket {} already exists.'.format(name), 409
+            return dict(
+                message='Bucket {} already exists.'.format(name)
+            ), 409
 
-        return 'Bucket created with successfully', 201
+        return dict(
+            message='Bucket created with successfully'
+        ), 201
 
     def list_buckets(self):
         """Retrieve a list of available bucket in aws account."""
@@ -739,18 +768,19 @@ class CubeController:
 
         return buckets, 200
 
-    def list_merges(self, cube_id: str, tile_id: str, start: str, end: str):
+    def check_for_invalid_merges(cls, cube_id: str, tile_id: str, start_date: str, end_date: str) -> Tuple[dict, int]:
+        """List merge files used in data cube and check for invalid scenes.
+        Args:
+            datacube: Data cube name
+            tile: Brazil Data Cube Tile identifier
+            start_date: Activity start date (period)
+            end_date: Activity End (period)
+        Returns:
+            List of Images used in period
+        """
         cube = self.get_cube_or_404(cube_id)
 
-        parts = get_cube_parts(cube.name)
-
-        # Temp workaround to remove composite function from data cube name
-        if len(parts) == 4:
-            data_cube = '_'.join(parts[:-2])
-        elif len(parts) == 3:
-            data_cube = '_'.join(parts[:-1])
-
-        items = self.services.get_merges(data_cube, tile_id, start, end)
+        items = self.services.get_merges(cube.name, tile_id, start_date[:10], end_date[:10])
 
         result = validate_merges(items)
 
@@ -758,7 +788,8 @@ class CubeController:
 
     def list_cube_items(self, cube_id: str, bbox: str = None, start: str = None,
                         end: str = None, tiles: str = None, page: int = 1, per_page: int = 10):
-        cube = self.get_cube_or_404(cube_id)
+        """Retrieve all data cube items done."""
+        cube = self.get_cube_or_404(cube_id=cube_id)
 
         where = [
             Item.collection_id == cube_id,
@@ -793,10 +824,10 @@ class CubeController:
 
         result = []
         for item in paginator.items:
-            item.geom = None
-            item.min_convex_hull = None
-            item.tile_id = item.tile.name
             obj = Serializer.serialize(item)
+            obj['geom'] = None
+            obj['min_convex_hull'] = None
+            obj['tile_id'] = item.tile.name
             if item.assets.get('thumbnail'):
                 obj['quicklook'] = item.assets['thumbnail']['href']
             del obj['assets']
@@ -811,40 +842,25 @@ class CubeController:
             total_pages=paginator.pages
         ), 200
 
-    def list_timeline(self, schema: str, step: int, start: str = None, end: str = None):
+    def generate_periods(self, schema: str, step: int, start: str = None, end: str = None):
         """Generate data cube periods using temporal composition schema.
-
         Args:
-            schema: Temporal Schema (M, A)
+            schema: Temporal Schema (continuous, cyclic)
             step: Temporal Step
-            start: Start date offset. Default is '2016-01-01'.
-            end: End data offset. Default is '2019-12-31'
-
+            unit: Temporal Unit (day, month, year)
+            start_date: Start date offset. Default is '2016-01-01'.
+            last_date: End data offset. Default is '2019-12-31'
         Returns:
             List of periods between start/last date
         """
-        start_date = start or '2016-01-01'
-        last_date = end or '2019-12-31'
+        start_date = datetime.strptime((start_date or '2016-01-01')[:10], '%Y-%m-%d').date()
+        last_date = datetime.strptime((last_date or '2019-12-31')[:10], '%Y-%m-%d').date()
 
-        total_periods = decode_periods(schema, start_date, last_date, int(step))
+        periods = Timeline(schema, start_date, last_date, unit, int(step), cycle, intervals).mount()
 
-        periods = set()
-
-        for period_array in total_periods.values():
-            for period in period_array:
-                date = period.split('_')[0]
-
-                periods.add(date)
-
-        return sorted(list(periods)), 200
-
-    def list_cube_items_tiles(self, cube_id: int):
-        """Retrieve the tiles which data cube is generated."""
-        tiles = db.session.query(Item)\
-            .filter(Item.collection_id == cube_id)\
-            .all()
-
-        return set([t.tile.name for t in tiles]), 200
+        return dict(
+            timeline=[[str(period[0]), str(period[1])] for period in periods]
+        )
 
     def get_cube_meta(self, cube_id: str):
         """Retrieve the data cube metadata used to build a data cube items.
