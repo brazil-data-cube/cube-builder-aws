@@ -214,12 +214,8 @@ def prepare_merge(self, datacube, datasets, satellite, bands, indexes, quicklook
                 self.services.remove_control_by_key(merge_control_key)
                 self.services.remove_control_by_key(blend_control_key)
 
-            # Search all images
-            options = dict()
-            if secondary_catalog:
-                options.update(secondary_catalog)
-
-            self.score['items'][tile_name]['periods'][periodkey]['scenes'] = services.search_STAC(activity, options)
+            self.score['items'][tile_name]['periods'][periodkey]['scenes'] = services.search_STAC(activity,
+                                                                                                  secondary_catalog)
 
             # Evaluate the number of dates, the number of scenes for each date and
             # the total amount merges that will be done
