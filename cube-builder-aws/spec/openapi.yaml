@@ -10,7 +10,7 @@ info:
   license:
     name: MIT
     url: https://opensource.org/licenses/MIT
-    
+
 servers:
   - url: 'https://localhost'
     description: Dev Server
@@ -42,52 +42,50 @@ paths:
                   version:
                     type: string
 
-  /create-grs:
-    post:
+  /cube-status:
+    get:
       tags:
-        - "cube_builder"
-      summary: "Create GRS"
-      description: "Create base GRS (Geographic Reference System)"
-      requestBody:
-        description: "Initial informations to create GRS"
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/request/schemas/GRS"
+        - "cube-status"
+      summary: "Data Cube Status"
+      description: "Retrieve the data cube processing state, which refers the total of items and numbers of tasks to be done."
       responses:
-        201:
-          description: "Successfully"
+        200:
           content:
             application/json:
               schema:
-                type: string
+                type: object
+                properties:
+                  finished:
+                    type: boolean
+                  start_date:
+                    type: string
+                  last_date:
+                    type: string
+                  done:
+                    type: number
+                  duration:
+                    type: string
+                  collection_item:
+                    type: number
+        400:
+          $ref: '#/components/responses/BadRequestError'
+        404:
+          $ref: '#/components/responses/NotFoundError'
 
-  /create-raster-size:
-    post:
+  /cubes:
+    get:
       tags:
-        - "cube_builder"
-      summary: "Create Raster Size Schema"
-      description: "Create base Raster Size"
-      requestBody:
-        description: "Initial informations to create Raster Size"
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/request/schemas/raster_size"
+        - "get-cubes"
+      summary: The data cubes available
       responses:
-        201:
-          description: "Successfully"
-          content:
-            application/json:
-              schema:
-                type: string
+        200:
+          $ref: '#/components/responses/DataCubes'
+        500:
+          $ref: '#/components/responses/ServerError'
 
-  /create:
     post:
       tags:
-        - "cube_builder"
+        - "create-cube"
       summary: "Create Cube"
       description: "Create cube metadata"
       requestBody:
@@ -96,7 +94,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/request/schemas/cube"
+              $ref: "#/components/schemas/CubeCreation"
       responses:
         201:
           description: "Successfully"
@@ -105,14 +103,176 @@ paths:
               schema:
                 type: object
                 properties:
-                  cubes: 
+                  cubes:
                     type: array
                     description: list of cubes created
+
+  /cubes/{cubeId}:
+    get:
+      tags:
+        - "get-cubes"
+      summary: The Data Cube definition.
+      parameters:
+        - $ref: '#/components/parameters/cubeId'
+      responses:
+        200:
+          $ref: '#/components/responses/DataCube'
+        404:
+          $ref: '#/components/responses/NotFoundError'
+        500:
+          $ref: '#/components/responses/ServerError'
+
+  /cubes/{cubeId}/metadata:
+    get:
+      tags:
+        - "get-cubes"
+      summary: The parameters used to generate the given data cube.
+      parameters:
+        - $ref: '#/components/parameters/cubeId'
+      responses:
+        200:
+          $ref: '#/components/responses/DataCubeMeta'
+        404:
+          $ref: '#/components/responses/NotFoundError'
+
+  /cubes/{cubeId}/tiles:
+    get:
+      tags:
+        - "get-cubes"
+      summary: The tiles which has any data cube item generated.
+      parameters:
+        - $ref: '#/components/parameters/cubeId'
+      responses:
+        200:
+          $ref: '#/components/responses/DataCubeTiles'
+        404:
+          $ref: '#/components/responses/NotFoundError'
+
+  /cubes/{cubeId}/tiles/geom:
+    get:
+      tags:
+        - "get-cubes"
+      summary: The GeoJSON features of data cube tiles.
+      parameters:
+        - $ref: '#/components/parameters/cubeId'
+      responses:
+        200:
+          $ref: '#/components/responses/DataCubeTilesFeature'
+        404:
+          $ref: '#/components/responses/NotFoundError'
+
+  /cubes/{cubeId}/items:
+    get:
+      tags:
+        - "get-cubes"
+      summary: The data cube items available
+      parameters:
+        - $ref: '#/components/parameters/cubeId'
+      responses:
+        200:
+          $ref: '#/components/responses/DataCubeItems'
+        404:
+          $ref: '#/components/responses/NotFoundError'
+
+  /composite-functions:
+    get:
+      tags:
+        - "get-composite-functions"
+      summary: The supported composite functions for data cube generation.
+      responses:
+        200:
+          type: array
+          items:
+            type: string
+        500:
+          $ref: '#/components/responses/ServerError'
+
+  /list-buckets:
+    get:
+      tags:
+        - "create-cube"
+      summary: The available buckets managed by Cube Builder.
+      responses:
+        200:
+          type: array
+          items:
+            type: string
+        500:
+          $ref: '#/components/responses/ServerError'
+
+  /create-bucket:
+    post:
+      tags:
+        - "create-cube"
+      summary: Create a bucket on AWS environment and set to be managed by Cube Builder.
+      responses:
+        200:
+          type: object
+          properties:
+            name:
+              description: Bucket name
+              type: string
+            requester_pay:
+              description: Flag to create bucket as Requester-Pay. Default is True.
+              type: boolean
+              default: true
+        500:
+          $ref: '#/components/responses/ServerError'
+
+  /create-grs:
+    post:
+      tags:
+        - "get-grids"
+      summary: "Create GRS"
+      description: |-
+        Create BDC GRS (Geographic Reference System)
+
+        You may follow the [BDC-Grid](https://brazil-data-cube.github.io/products/specifications/bdc-grid.html)
+        for further details how a BDC Grid works.
+      requestBody:
+        description: "Initial informations to create GRS"
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GRS"
+      responses:
+        201:
+          description: "Successfully"
+          content:
+            application/json:
+              schema:
+                type: string
+
+  /grids:
+    get:
+      tags:
+        - "get-grids"
+      summary: The available Grid System for data cubes.
+      responses:
+        200:
+          $ref: '#/components/responses/Grids'
+        500:
+          $ref: '#/components/responses/ServerError'
+
+  /grids/{gridId}:
+    get:
+      tags:
+        - "get-grids"
+      summary: The Grid System definition
+      operationId: getGrid
+      parameters:
+        - $ref: '#/components/parameters/gridId'
+      responses:
+        200:
+          $ref: '#/components/responses/Grid'
+        404:
+          $ref: '#/components/responses/NotFoundError'
 
   /start:
     get:
       tags:
-        - "cube_builder"
+        - "create-cube"
       summary: "Start Process"
       description: "Start process to generate cube"
       parameters:
@@ -144,8 +304,342 @@ paths:
               schema:
                 type: string
 
-request:
+  /list-merges:
+    get:
+      tags:
+        - "cube-status"
+      summary: Retrieve all the data cube Identity scenes built along given period and space.
+      parameters:
+        - $ref: '#/components/parameters/cubeId'
+        - $ref: '#/components/parameters/tileId'
+        - $ref: '#/components/parameters/startDate'
+        - $ref: '#/components/parameters/endDate'
+      responses:
+        200:
+          $ref: '#/components/responses/ListMerges'
+        500:
+          $ref: '#/components/responses/ServerError'
+
+components:
+  parameters:
+    cubeId:
+      name: cubeId
+      in: path
+      description: local identifier of a data cube
+      required: true
+      schema:
+        type: number
+    gridId:
+      name: gridId
+      in: path
+      description: local identifier of a grid reference system
+      required: true
+      schema:
+        type: number
+    tileId:
+      name: tileId
+      in: path
+      description: local identifier for Tile or pathrow of a data cube
+      required: true
+      schema:
+        type: number
+    startDate:
+      name: startDate
+      in: path
+      description: local identifier for representing start period
+      required: true
+      schema:
+        type: string
+    endDate:
+      name: endDate
+      in: path
+      description: local identifier for representing end period
+      required: true
+      schema:
+        type: string
+
+  responses:
+    ListMerges:
+      description: Response the data cube identity scenes built.
+      content:
+        application/json:
+          schema:
+            type: array
+            items:
+              $ref: '#/components/schemas/MergeResult'
+
+    Grid:
+      description: Response a Grid Reference System instance.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Grid'
+
+    Grids:
+      description: Response a List of available Grid Reference System.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Grids'
+
+    DataCube:
+      description: The data cube definition
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Cube'
+
+    DataCubes:
+      description: The list of data cubes definition
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Cubes'
+
+    DataCubeMeta:
+      description: The list of parameters used in data cube generation
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/CubeParameter'
+
+    DataCubeTiles:
+      description: The list of tiles of data cube already done.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/CubeTiles'
+
+    DataCubeItems:
+      description: The list of tiles of data cube already done.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/CubeItems'
+
+    DataCubeTilesFeature:
+      description: GeoJSON features.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/CubeTileFeatures'
+
+    BadRequestError:
+      description: The requested resource requires parameters that was not satisfied.
+      type: array
+      minItems: 1
+      items:
+        type: object
+        properties:
+          message:
+            type: string
+    NotFoundError:
+      description: The requested resource was not found.
+    ServerError:
+      description: A server error occurred
+      content:
+        text/html:
+          schema:
+            type: string
   schemas:
+    MergeResult:
+      description: The origin scenes used to build the given merge.
+      type: object
+      required:
+        - bands
+        - collections
+        - errors
+      properties:
+        bands:
+          type: array
+          items:
+            type: object
+            properties:
+              merge:
+                description: Absolute path to the data cube scene identity.
+                type: string
+              scenes:
+                type: array
+                items:
+                  description: List of origin scenes used to built the current identity.
+                  type: string
+        collections:
+          type: array
+          minItems: 1
+          items:
+            description: List of data sets used to generate these Identity scenes.
+            type: string
+        errors:
+          type: array
+          items:
+            description: The errors occurred in the generation or for accessing the resource.
+            type: string
+
+    Grid:
+      description: Define a structure for Grid Reference System used to build data cubes.
+      type: object
+      required:
+        - id
+        - name
+        - description
+        - table_id
+      properties:
+        id:
+          type: number
+        name:
+          description: The unique Grid Reference System name.
+          type: string
+        description:
+          description: The description of a Grid Reference System.
+          type: number
+        table_id:
+          description: The table object identifier of the Grid.
+          type: string
+
+    Grids:
+      description: List of Grid Reference System
+      type: array
+      items:
+        $ref: '#/components/schemas/Grid'
+
+    Item:
+      description: Define the BDC Item
+      type: object
+      required:
+        - id
+        - name
+        - cloud_cover
+        - start_date
+        - end_date
+        - tile_id
+        - srid
+      properties:
+        id:
+          type: number
+        name:
+          description: The data cube scene identifier
+          type: string
+        cloud_cover:
+          description: The data cube cloud cover factor
+          type: number
+        start_date:
+          description: The data cube start period
+          type: string
+        end_date:
+          description: The data cube end period
+          type: string
+        tile_id:
+          description: The tile name
+          type: string
+        srid:
+          description: The Spatial Reference System
+
+    CubeItems:
+      description: List the data cube items.
+      type: array
+      items:
+        $ref: '#/components/schemas/Item'
+
+    TileFeature:
+      description: A GeoJSON feature definition
+      type: object
+      required:
+        - type
+        - coordinates
+      properties:
+        type:
+          type: string
+        coordinates:
+          type: array
+
+    CubeParameter:
+      description: The parameters used to build the data cube.
+      type: object
+      properties:
+        url_stac:
+          type: string
+        collections:
+          type: string
+        bucket:
+          type: string
+        satellite:
+          type: string
+
+    CubeTileFeatures:
+      description: List of tiles as GeoJSON features
+      type: array
+      items:
+        $ref: '#/components/schemas/TileFeature'
+
+    CubeTiles:
+      description: The parameters used to build the data cube.
+      type: array
+      items:
+        description: Tile name
+        type: string
+
+    Band:
+      description: "The band definition"
+      type: object
+      properties:
+        name:
+          type: string
+        common_name:
+          type: string
+        mime_type:
+          type: string
+        nodata:
+          type: number
+        min_value:
+          type: number
+        max_value:
+          type: number
+    Cube:
+      description: "The data cube definition metadata."
+      type: object
+      required:
+        - id
+        - name
+        - title
+        - collection_type
+        - is_public
+        - version
+        - grid
+      properties:
+        id:
+          type: number
+        name:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        temporal_composition_schema:
+          type: object
+        collection_type:
+          type: string
+        metadata:
+          type: object
+        is_public:
+          type: boolean
+        version:
+          type: number
+        composite_function:
+          type: string
+        grid:
+          type: string
+        quicklook:
+          type: array
+          items:
+            type: string
+        bands:
+          type: array
+          items:
+            $ref: '#/components/schemas/Band'
+    Cubes:
+      type: array
+      items:
+        $ref: '#/components/schemas/Cube'
     GRS:
       type: object
       required:
@@ -200,38 +694,79 @@ request:
           type: number
           description: chunk size Y
 
-    cube:
+    BandCreation:
+      type: object
+      required:
+        - name
+        - common_name
+        - data_type
+      properties:
+        name:
+          type: string
+        common_name:
+          type: string
+        data_type:
+          type: string
+        metadata:
+          type: object
+
+    CubeCreation:
       type: object
       required:
         - datacube
+        - title
+        - version
         - grs
         - resolution
-        - temporal_schema
-        - bands_quicklook
+        - temporal_composition
+        - composite_function
         - bands
+        - quality_band
+        - indexes
+        - metadata
+        - bands_quicklook
         - description
         - license
       properties:
         datacube:
           type: string
           description: Cube name (without 'composite_function' in the name)
+        title:
+          type: string
+          description: The data cube title
+        version:
+          type: number
+          description: Data cube version number.
         grs:
           type: string
           description: name of grs_schema
         resolution:
           type: number
           description: Spatial Resolution of cube
-        temporal_schema:
+        temporal_composition:
+          type: object
+          description: The temporal schema definition
+        composite_function:
           type: string
-          description: name of temporal_schema (e.g. M1month)
+          description: The name of Composite Function. (IDT, STK, etc)
+        bands:
+          type: array
+          description: List of bands to be related with data cube.
+          items:
+            $ref: '#/components/schemas/BandCreation'
+        quality_band:
+          type: string
+          description: The name of cloud masking band. (Must exists in the property "bands")
+        indexes:
+          type: array
+          items:
+            $ref: '#/components/schemas/BandCreation'
+        metadata:
+          type: object
+          description: Extra metadata for data cube.
         bands_quicklook:
           type: array
           description: list of bands (common name) to composite quicklook (RGB)
-          items:
-            type: string
-        bands:
-          type: array
-          description: list of bands (common name)
           items:
             type: string
         description:
@@ -240,6 +775,25 @@ request:
         license:
           type: string
           description: license of cube
-        oauth_scope:
-          type: string
-          description: oauth scope (OBT) to cube access
+        public:
+          type: boolean
+          description: Set the collection visibility
+        mask:
+          type: object
+          description: Set the data cube masking.
+          properties:
+            clear_data:
+              type: array
+              description: List of values to be considered as valid data and also as clear data.
+              items:
+                type: number
+            not_clear_data:
+              type: array
+              description: List of values to be considered as Invalid data.
+              items:
+                type: number
+            others:
+              type: array
+              description: LIst of values to be considered as valid data but not as clear data.
+              items:
+                type: number
