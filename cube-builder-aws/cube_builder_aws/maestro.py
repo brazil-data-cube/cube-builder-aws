@@ -1217,7 +1217,7 @@ def publish(self, activity):
                         application_id=APPLICATION_ID
                     )
 
-                thumbnail, _ = create_asset_definition(
+                thumbnail, _, _ = create_asset_definition(
                     services, bucket_name, str(s3_pngname), 'image/png', ['thumbnail'], quicklook_url)
                 assets = dict(thumbnail=thumbnail)
 
@@ -1237,7 +1237,7 @@ def publish(self, activity):
 
                     relative_path = activity["blended"][band][function + "file"]        
                     full_path = f'{bucket_name}/{relative_path}'
-                    assets[band_model.name], item.geom = create_asset_definition(
+                    assets[band_model.name], item.geom, item.min_convex_hull = create_asset_definition(
                         services, bucket_name,
                         relative_path, COG_MIME_TYPE, ['data'],
                         full_path, is_raster=True
@@ -1304,7 +1304,7 @@ def publish(self, activity):
                         application_id=APPLICATION_ID
                     )
 
-                thumbnail, _ = create_asset_definition(
+                thumbnail, _, _ = create_asset_definition(
                     services, bucket_name, str(s3_pngname), 'image/png', ['thumbnail'], quicklook_url)
                 assets = dict(thumbnail=thumbnail)
 
@@ -1323,7 +1323,7 @@ def publish(self, activity):
                     
                     relative_path = os.path.join(activity['dirname'], str(scene['date'])[0:10], scene['ARDfiles'][band])
                     full_path = f'{bucket_name}/{relative_path}'
-                    assets[band_model.name], item.geom = create_asset_definition(
+                    assets[band_model.name], item.geom, item.min_convex_hull = create_asset_definition(
                         services, bucket_name,
                         relative_path, COG_MIME_TYPE, ['data'],
                         full_path, is_raster=True

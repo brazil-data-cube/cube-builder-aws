@@ -559,6 +559,7 @@ def create_asset_definition(services, bucket_name: str, href: str, mime_type: st
     }
 
     geom = None
+    min_convex_hull = None
 
     if is_raster:
         with rasterio.open(f's3://{absolute_path}') as data_set:
@@ -571,9 +572,24 @@ def create_asset_definition(services, bucket_name: str, href: str, mime_type: st
             geom_shape = shapely.geometry.shape(rasterio.warp.transform_geom(data_set.crs, 'EPSG:4326', _geom))
             geom = from_shape(geom_shape, srid=4326)
 
+            data = data_set.read(1, masked=True, out_dtype=numpy.uint8)
+            data[data == numpy.ma.masked] = 0
+            data[data != numpy.ma.masked] = 1
+            geoms = []
+            for _geom, _ in rasterio.features.shapes(data, mask=data, transform=data_set.transform):
+                _geom = rasterio.warp.transform_geom(data_set.crs, 'EPSG:4326', _geom, precision=6)
+
+                geoms.append(shapely.geometry.shape(geom))
+
+            # TODO: Simplify geometries
+            if len(geoms) == 1:
+                min_convex_hull = geoms[0].convex_hull
+            else:
+                min_convex_hull = shapely.geometry.MultiPolygon(geoms).convex_hull
+
             chunk_x, chunk_y = data_set.profile.get('blockxsize'), data_set.profile.get('blockxsize')
 
             if chunk_x and chunk_x:
                 asset['bdc:chunk_size'] = dict(x=chunk_x, y=chunk_y)
     
-    return asset, geom
+    return asset, geom, min_convex_hull
