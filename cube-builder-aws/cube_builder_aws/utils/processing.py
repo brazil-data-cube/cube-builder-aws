@@ -29,6 +29,9 @@ from rio_cogeo.profiles import cog_profiles
 
 
 #############################
+from cube_builder_aws.utils.interpreter import execute
+
+
 def get_date(str_date):
     return datetime.datetime.strptime(str_date, '%Y-%m-%d %H:%M:%S')
 
@@ -449,68 +452,89 @@ def create_cog_in_s3(services, profile, path, raster, is_quality, nodata, bucket
     return True
 
 
+class AutoCloseDataSet:
+    def __init__(self, file_path: str, mode: str = 'r', **options):
+        self.options = options
+        self.mode = mode
+        self.dataset = rasterio.open(str(file_path), mode=mode, **options)
+
+    def __del__(self):
+        """Close dataset on delete object."""
+        self.close()
+
+    def close(self):
+        """Close rasterio data set."""
+        if not self.dataset.closed:
+            self.dataset.close()
+
+
 ############################
-def create_index(services, index, bands, bucket_name):
+def create_index(services, index, band_expressions, bands, bucket_name):
+    """Generate data cube custom bands based in string-expression.
+
+    This method seeks for custom bands on Collection Band definition. A custom band must have
+    `metadata` property filled out according the ``bdc_catalog.jsonschemas.band-metadata.json``.
+
+    Args:
+        services - AWS service wrapper
+        index - The band name
+        band_expressions - Map of band expressions
+        bands - Map of data cube bands path
+        bucket_name - Bucket name where the data cube is stored.
+
+    Raises:
+        RuntimeError when an error occurs while interpreting the band expression in Python Virtual Machine.
+
+    Returns:
+        A dict values with generated bands.
+    """
     prefix = services.get_s3_prefix(bucket_name)
 
-    red_band_name = bands['red'] if bands.get('red') else bands['RED']
-    red_band_path = os.path.join(prefix + red_band_name)
-    nir_band_name = bands['nir'] if bands.get('nir') else bands['NIR']
-    nir_band_path = os.path.join(prefix + nir_band_name)
+    map_data_set_context = dict()
+    band_definition = band_expressions[index]
+    band_expression = band_definition['expression']['value']
+    band_data_type = band_definition['data_type']
+    data_type_info = numpy.iinfo(band_data_type)
+    data_type_max_value = data_type_info.max
+    data_type_min_value = data_type_info.min
 
-    raster = None
+    ref_file = None
+    profile = blocks = None
 
-    if index.upper() == 'EVI':
-        blue_bland_path = bands['blue'] if bands.get('blue') else bands['BLUE']
-        blue_bland_path = os.path.join(prefix + blue_bland_path) 
+    for _band, relative_path in bands.items():
+        absolute_path = os.path.join(prefix, str(relative_path))
+        map_data_set_context[_band] = AutoCloseDataSet(absolute_path)
 
-        with rasterio.open(nir_band_path) as ds_nir, rasterio.open(red_band_path) as ds_red,\
-            rasterio.open(blue_bland_path) as ds_blue:
+        if profile is None:
+            profile = map_data_set_context[_band].dataset.profile
+            blocks = map_data_set_context[_band].dataset.block_windows()
+            ref_file = relative_path
 
-            profile = ds_nir.profile
-            nodata = int(profile['nodata'])
-            blocks = ds_nir.block_windows()
-            data_type = profile['dtype']
+    file_path = '_'.join(ref_file.split('_')[:-1]) + '_{}.tif'.format(index)
+    profile['dtype'] = band_data_type
+    raster = numpy.full((profile['height'], profile['width']), dtype=band_data_type, fill_value=profile['nodata'])
 
-            raster = numpy.full((profile['height'], profile['width']), dtype=data_type, fill_value=nodata)
+    for _, window in blocks:
+        row_offset = window.row_off + window.height
+        col_offset = window.col_off + window.width
 
-            for _, block in blocks:
-                row_offset = block.row_off + block.height
-                col_offset = block.col_off + block.width
+        machine_context = {
+            k: ds.dataset.read(1, masked=True, window=window).astype(numpy.float32)
+            for k, ds in map_data_set_context.items()
+        }
 
-                nir = ds_nir.read(1, masked=True, window=block)
-                red = ds_red.read(1, masked=True, window=block)
-                blue = ds_blue.read(1, masked=True, window=block)
+        expr = f'{index} = {band_expression}'
+        result = execute(expr, context=machine_context)
+        raster_block = result[index]
+        raster_block[raster_block == numpy.ma.masked] = profile['nodata']
+        # Persist the expected band data type to cast value safely.
+        # TODO: Should we use consider band min_value/max_value?
+        raster_block[raster_block < data_type_min_value] = data_type_min_value
+        raster_block[raster_block > data_type_max_value] = data_type_max_value
 
-                # Calculate EVI
-                raster_block = (10000. * 2.5 * (nir - red) / (nir + 6. * red - 7.5 * blue + 10000.)).astype(numpy.int16)
-                raster_block[raster_block == numpy.ma.masked] = nodata
-                raster[block.row_off: row_offset, block.col_off: col_offset] = raster_block
+        raster[window.row_off: row_offset, window.col_off: col_offset] = raster_block
 
-    if index.upper() == 'NDVI':
-        with rasterio.open(nir_band_path) as ds_nir, rasterio.open(red_band_path) as ds_red:
-            profile = ds_nir.profile
-            nodata = int(profile['nodata'])
-            blocks = ds_nir.block_windows()
-            data_type = profile['dtype']
-
-            raster = numpy.full((profile['height'], profile['width']), dtype=data_type, fill_value=nodata)
-
-            for _, block in blocks:
-                row_offset = block.row_off + block.height
-                col_offset = block.col_off + block.width
-
-                nir = ds_nir.read(1, masked=True, window=block)
-                red = ds_red.read(1, masked=True, window=block)
-
-                # Calculate NDVI
-                raster_block = (10000. * ((nir - red) / (nir + red))).astype(numpy.int16)
-                raster_block[raster_block == numpy.ma.masked] = nodata
-                raster[block.row_off: row_offset, block.col_off: col_offset] = raster_block
-
-    file_path = '_'.join(red_band_name.split('_')[:-1]) + '_{}.tif'.format(index)                
-    create_cog_in_s3(
-        services, profile, file_path, raster.astype(numpy.int16), False, None, bucket_name)
+    create_cog_in_s3(services, profile, file_path, raster.astype(numpy.int16), False, None, bucket_name)
 
 
 ############################

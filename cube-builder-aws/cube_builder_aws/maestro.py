@@ -1014,6 +1014,7 @@ def posblend(self, activity):
     bucket_name = activity['bucket_name']
     mystart = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     reprocessed = False
+    band_expressions = activity['band_expressions']
 
     try:
         sk = activity['sk']
@@ -1029,7 +1030,7 @@ def posblend(self, activity):
 
                     file_path = '_'.join(ref_file_path.split('_')[:-1]) + '_{}.tif'.format(sk.replace(date, ''))
                     if force or not services.s3_file_exists(bucket_name=bucket_name, key=file_path):
-                        create_index(services, sk.replace(date, ''), bands, bucket_name)
+                        create_index(services, band_expressions, bands, bucket_name)
                         reprocessed = True
         else:
             index = activity['indexesToBe'][sk]
@@ -1040,7 +1041,7 @@ def posblend(self, activity):
                 ref_file_path = bands['red'] if bands.get('red') else bands['RED']
                 file_path = '_'.join(ref_file_path.split('_')[:-1]) + '_{}.tif'.format(sk)
                 if force or not services.s3_file_exists(bucket_name=bucket_name, key=file_path):
-                    create_index(services, sk, bands, bucket_name)
+                    create_index(services, band_expressions, bands, bucket_name)
                     reprocessed = True
                 
         # Update status and end time in DynamoDB
