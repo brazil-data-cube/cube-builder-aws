@@ -486,11 +486,18 @@ class CubeController:
         bands = Band.query().filter(
             Band.collection_id == cube_infos_irregular.id
         ).all()
+
+        bands_expressions = dict()
+
         bands_list = []
         indexes_list = []
         for band in bands:
             if band.name.upper() not in [i['common_name'].upper() for i in indexes]:
                 bands_list.append(band.name)
+            elif band._metadata and band._metadata.get('expression') and band._metadata['expression'].get('value'):
+                meta = deepcopy(band._metadata)
+                meta['data_type'] = band.data_type
+                bands_expressions[band.name] = meta
             else:
                 indexes_available = {
                     'NDVI': ['NIR', 'RED'],
@@ -537,7 +544,7 @@ class CubeController:
         prepare_merge(self, cube_infos['name'], params['collections'], satellite, bands_list,
             indexes_list, bands_ql_list, float(bands[0].resolution_x), float(bands[0].resolution_y), 
             int(bands[0].nodata), crs, quality_band, functions, formatted_version, 
-            params.get('force', False), mask)
+            params.get('force', False), mask, bands_expressions=bands_expressions)
 
         return dict(
             message='Processing started with succesfully'

@@ -159,7 +159,8 @@ def next_step(services, activity):
 # MERGE
 ###############################
 def prepare_merge(self, datacube, datasets, satellite, bands, indexes, quicklook, resx,
-                  resy, nodata, crs, quality_band, functions, version, force=False, mask=None, secondary_catalog=None):
+                  resy, nodata, crs, quality_band, functions, version, force=False,
+                  mask=None, secondary_catalog=None, bands_expressions=dict()):
     services = self.services
 
     # Build the basics of the merge activity
@@ -171,6 +172,7 @@ def prepare_merge(self, datacube, datasets, satellite, bands, indexes, quicklook
     activity['datasets'] = datasets
     activity['satellite'] = satellite.upper()
     activity['bands'] = bands
+    activity['bands_expressions'] = bands_expressions
     activity['indexes'] = indexes
     activity['quicklook'] = quicklook
     activity['resx'] = resx
@@ -358,11 +360,9 @@ def merge_warped(self, activity):
             new_res_y = dist_y / num_pixel_y
 
             transform = Affine(new_res_x, 0, xmin, 0, -new_res_y, ymax)
-        
+
         numcol = num_pixel_x
         numlin = num_pixel_y
-
-        transform = Affine(new_res_x, 0, xmin, 0, -new_res_y, ymax)
 
         is_sentinel_landsat_quality_fmask = ('LANDSAT' in satellite or satellite == 'SENTINEL-2') and \
                                             (band == activity['quality_band'] and activity_mask['nodata'] != 0)
