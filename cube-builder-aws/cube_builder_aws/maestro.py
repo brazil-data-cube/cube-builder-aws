@@ -159,7 +159,8 @@ def next_step(services, activity):
 # MERGE
 ###############################
 def prepare_merge(self, datacube, datasets, satellite, bands, indexes, quicklook, resx,
-                  resy, nodata, crs, quality_band, functions, version, force=False, mask=None, secondary_catalog=None):
+                  resy, nodata, crs, quality_band, functions, version, force=False,
+                  mask=None, secondary_catalog=None, bands_expressions=dict()):
     services = self.services
 
     # Build the basics of the merge activity
@@ -171,6 +172,7 @@ def prepare_merge(self, datacube, datasets, satellite, bands, indexes, quicklook
     activity['datasets'] = datasets
     activity['satellite'] = satellite.upper()
     activity['bands'] = bands
+    activity['bands_expressions'] = bands_expressions
     activity['indexes'] = indexes
     activity['quicklook'] = quicklook
     activity['resx'] = resx
@@ -358,11 +360,9 @@ def merge_warped(self, activity):
             new_res_y = dist_y / num_pixel_y
 
             transform = Affine(new_res_x, 0, xmin, 0, -new_res_y, ymax)
-        
+
         numcol = num_pixel_x
         numlin = num_pixel_y
-
-        transform = Affine(new_res_x, 0, xmin, 0, -new_res_y, ymax)
 
         is_sentinel_landsat_quality_fmask = ('LANDSAT' in satellite or satellite == 'SENTINEL-2') and \
                                             (band == activity['quality_band'] and activity_mask['nodata'] != 0)
@@ -1014,6 +1014,7 @@ def posblend(self, activity):
     bucket_name = activity['bucket_name']
     mystart = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     reprocessed = False
+    band_expressions = activity['band_expressions']
 
     try:
         sk = activity['sk']
@@ -1029,7 +1030,7 @@ def posblend(self, activity):
 
                     file_path = '_'.join(ref_file_path.split('_')[:-1]) + '_{}.tif'.format(sk.replace(date, ''))
                     if force or not services.s3_file_exists(bucket_name=bucket_name, key=file_path):
-                        create_index(services, sk.replace(date, ''), bands, bucket_name)
+                        create_index(services, band_expressions, bands, bucket_name)
                         reprocessed = True
         else:
             index = activity['indexesToBe'][sk]
@@ -1040,7 +1041,7 @@ def posblend(self, activity):
                 ref_file_path = bands['red'] if bands.get('red') else bands['RED']
                 file_path = '_'.join(ref_file_path.split('_')[:-1]) + '_{}.tif'.format(sk)
                 if force or not services.s3_file_exists(bucket_name=bucket_name, key=file_path):
-                    create_index(services, sk, bands, bucket_name)
+                    create_index(services, band_expressions, bands, bucket_name)
                     reprocessed = True
                 
         # Update status and end time in DynamoDB
