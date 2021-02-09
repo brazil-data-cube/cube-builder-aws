@@ -30,7 +30,7 @@ from .utils.processing import encode_key, \
 from .utils.timeline import Timeline
 
 
-def orchestrate(cube_infos, tiles, start_date, end_date, functions, shape=None):
+def orchestrate(cube_infos, tiles, start_date, end_date, shape=None, item_prefix=None):
     formatted_version = format_version(cube_infos.version)
 
     tiles_by_grs = db.session() \
@@ -41,7 +41,6 @@ def orchestrate(cube_infos, tiles, start_date, end_date, functions, shape=None):
             GridRefSys.id == Tile.grid_ref_sys_id
         ).all()
 
-    collection_tiles = []
     tiles_infos = []
     for tile in tiles_by_grs:
         grid_table = tile.GridRefSys.geom_table
@@ -74,6 +73,7 @@ def orchestrate(cube_infos, tiles, start_date, end_date, functions, shape=None):
 
     # create collection items (old model => mosaic)
     items_id = []
+    prefix = '' if item_prefix is None else str(item_prefix)
     items = {}
     for datekey in sorted(timeline):
         requestedperiod = timeline[datekey]
@@ -110,7 +110,7 @@ def orchestrate(cube_infos, tiles, start_date, end_date, functions, shape=None):
                         'id': item_id,
                         'composite_start': p_startdate,
                         'composite_end': p_enddate,
-                        'dirname': f'{cube_infos.name}/{formatted_version}/{tile_name}/'
+                        'dirname': os.path.join(prefix, cube_infos.name, formatted_version, tile_name)
                     }
                     if shape:
                         items[tile_name]['periods'][periodkey]['shape'] = shape

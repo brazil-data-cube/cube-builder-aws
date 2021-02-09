@@ -24,7 +24,8 @@ from bdc_catalog.models import (Collection, Band, BandSRC, GridRefSys, Tile,
                                 CompositeFunction, MimeType, ResolutionUnit, 
                                 Quicklook, Item, SpatialRefSys)
 
-from .constants import (CLEAR_OBSERVATION_ATTRIBUTES, PROVENANCE_ATTRIBUTES, 
+from .config import ITEM_PREFIX
+from .constants import (CLEAR_OBSERVATION_ATTRIBUTES, PROVENANCE_ATTRIBUTES,
                         TOTAL_OBSERVATION_ATTRIBUTES, CLEAR_OBSERVATION_NAME, 
                         TOTAL_OBSERVATION_NAME, PROVENANCE_NAME, SRID_BDC_GRID, 
                         CENTER_WAVELENGTH, FULL_WIDTH_HALF_MAX, REVISIT_BY_SATELLITE,
@@ -466,6 +467,7 @@ class CubeController:
         functions = [process_params['composite_function'], 'IDT']
         satellite = process_info['metadata']['platform']['code']
         mask = process_info.get('mask', None)
+        secondary_catalog = process_info.get('secondary_catalog')
 
         tiles = params['tiles']
         start_date = datetime.strptime(params['start_date'], '%Y-%m-%d').strftime('%Y-%m-%d')
@@ -536,7 +538,7 @@ class CubeController:
         # items => old mosaic
         # orchestrate
         shape = params.get('shape', None)
-        self.score['items'] = orchestrate(cub_ref, tiles, start_date, end_date, functions, shape)
+        self.score['items'] = orchestrate(cub_ref, tiles, start_date, end_date, shape, item_prefix=ITEM_PREFIX)
 
         # prepare merge
         crs = cube_infos.grs.crs
@@ -544,7 +546,7 @@ class CubeController:
         prepare_merge(self, cube_infos['name'], params['collections'], satellite, bands_list,
             indexes_list, bands_ql_list, float(bands[0].resolution_x), float(bands[0].resolution_y), 
             int(bands[0].nodata), crs, quality_band, functions, formatted_version, 
-            params.get('force', False), mask, bands_expressions=bands_expressions)
+            params.get('force', False), mask, secondary_catalog, bands_expressions=bands_expressions)
 
         return dict(
             message='Processing started with succesfully'
