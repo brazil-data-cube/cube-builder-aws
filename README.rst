@@ -12,7 +12,11 @@ Cube Builder AWS
 
 .. image:: https://img.shields.io/badge/license-MIT-green
         :target: https://github.com//brazil-data-cube/cube-builder-aws/blob/master/LICENSE
-        :alt: Documentation Status
+        :alt: Software License
+
+.. image:: https://drone.dpi.inpe.br/api/badges/brazil-data-cube/cube-builder-aws/status.svg
+        :target: https://drone.dpi.inpe.br/brazil-data-cube/cube-builder-aws
+        :alt: Testing Status
 
 .. image:: https://img.shields.io/badge/lifecycle-experimental-orange.svg
         :target: https://www.tidyverse.org/lifecycle/#experimental
@@ -22,13 +26,9 @@ Cube Builder AWS
         :target: https://github.com/brazil-data-cube/cube-builder-aws/releases
         :alt: Release
 
-.. image:: https://badges.gitter.im/brazil-data-cube/community.png
-        :target: https://gitter.im/brazil-data-cube/community#
-        :alt: Join the chat
-
-
-.. role:: raw-html(raw)
-    :format: html
+.. image:: https://img.shields.io/discord/689541907621085198?logo=discord&logoColor=ffffff&color=7389D8
+        :target: https://discord.com/channels/689541907621085198#
+        :alt: Join us at Discord
     
 
 About
