@@ -37,7 +37,7 @@ Clone the software repository
 
 Use ``git`` to clone the software repository::
 
-    git clone https://github.com/brazil-data-cube/bdc-tiler.git
+    git clone https://github.com/brazil-data-cube/cube-builder-aws.git
 
 
 Build the Documentation
