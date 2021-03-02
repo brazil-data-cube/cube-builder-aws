@@ -32,8 +32,40 @@ The ``Cube Builder AWS`` depends essentially on:
 - `Rio-cogeo <https://pypi.org/project/rio-cogeo/>`_
 
 
-Prepare environment
-===================
+Clone the software repository
++++++++++++++++++++++++++++++
+
+Use ``git`` to clone the software repository::
+
+    git clone https://github.com/brazil-data-cube/bdc-tiler.git
+
+
+Build the Documentation
++++++++++++++++++++++++
+
+
+Install dependencies to generate documentation::
+
+    $ pip3 install -r docs/requirements.txt 
+
+
+You can generate the documentation based on Sphinx with the following command::
+
+    $ sphinx-build ./docs/sphinx docs/sphinx/_build
+
+
+The above command will generate the documentation in HTML and it will place it under::
+
+    docs/sphinx/_build/html/
+
+
+You can open the above documentation in your favorite browser, as::
+
+    firefox docs/sphinx/_build/html/index.html
+
+
+Prepare environment to deploy
++++++++++++++++++++++++++++++
 
 Prepare your AWS account and HOST to deploy application.
 

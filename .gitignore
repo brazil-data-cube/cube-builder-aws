@@ -3,3 +3,6 @@ spec/dist
 
 # debug
 .vscode/
+
+# Sphinx documentation
+docs/sphinx/_build/*
