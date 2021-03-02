@@ -16,7 +16,7 @@ Cube Builder AWS
 
 .. image:: https://drone.dpi.inpe.br/api/badges/brazil-data-cube/cube-builder-aws/status.svg
         :target: https://drone.dpi.inpe.br/brazil-data-cube/cube-builder-aws
-        :alt: Testing Status
+        :alt: Tests Status
 
 .. image:: https://img.shields.io/badge/lifecycle-experimental-orange.svg
         :target: https://www.tidyverse.org/lifecycle/#experimental
