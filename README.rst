@@ -1,6 +1,6 @@
 ..
     This file is part of Python Module for Cube Builder AWS.
-    Copyright (C) 2019-2020 INPE.
+    Copyright (C) 2019-2021 INPE.
 
     Cube Builder is free software; you can redistribute it and/or modify it
     under the terms of the MIT License; see LICENSE file for more details.
@@ -31,6 +31,9 @@ Cube Builder AWS
     :format: html
     
 
+About
+=====
+
 Application to generate data cubes on AWS environment. 
 Using the services: Lambda, S3, SQS, DynamoDB and Kinesis.
 
@@ -44,20 +47,14 @@ See `INSTALL.rst <./INSTALL.rst>`_.
 Running
 =======
 
-See `RUNNING.rst <./RUNNING.rst>`_.
-
-
-API SPEC
-========
-
-See a SPEC API in: {your-lambda-endpoint}/docs
+See `DEPLOY.rst <./DEPLOY.rst>`_.
 
 
 License
 =======
 
 .. admonition::
-    Copyright (C) 2019-2020 INPE.
+    Copyright (C) 2019-2021 INPE.
 
-    Cube Builder free software; you can redistribute it and/or modify it
+    Cube Builder AWS free software; you can redistribute it and/or modify it
     under the terms of the MIT License; see LICENSE file for more details.
