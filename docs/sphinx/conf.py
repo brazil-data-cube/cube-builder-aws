@@ -117,7 +117,7 @@ copybutton_prompt_is_regexp = True
 #doctest_global_setup = '''
 #import os
 #
-#BDC_TILER_EXAMPLE_URL = os.getenv('BDC_TILER_EXAMPLE_URL', None)
+#BDC_EXAMPLE_URL = os.getenv('BDC_EXAMPLE_URL', None)
 #'''
 
 #todo_include_todos = True
