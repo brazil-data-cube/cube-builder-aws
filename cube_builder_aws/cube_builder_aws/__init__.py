@@ -6,15 +6,15 @@
 # under the terms of the MIT License; see LICENSE file for more details.
 #
 
+import json
 from datetime import date
 from json import JSONEncoder
-import json
 
-from flask import Flask, request, jsonify
 from bdc_catalog import BDCCatalog
+from flask import Flask, jsonify, request
 from werkzeug.exceptions import HTTPException
 
-from .config import USER, PASSWORD, HOST, DBNAME, PORT
+from .config import DBNAME, HOST, PASSWORD, PORT, USER
 from .logger import logger
 
 

@@ -5,8 +5,9 @@
 # Cube Builder AWS is free software; you can redistribute it and/or modify it
 # under the terms of the MIT License; see LICENSE file for more details.
 #
+"""Config module."""
 
-import os 
+import os
 
 AWS_KEY_ID = os.environ.get('KEY_ID', '')
 AWS_SECRET_KEY = os.environ.get('SECRET_KEY', '')

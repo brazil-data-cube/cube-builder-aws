@@ -7,21 +7,22 @@
 #
 
 import datetime
+import hashlib
+import os
 from typing import List, Tuple
 
 import numpy
-import hashlib
-import os
+import rasterio
+import rasterio.features
+import rasterio.warp
+import shapely.geometry
 from bdc_catalog.models import db
-from bdc_catalog.utils import multihash_checksum_sha256 as _multihash_checksum_sha256
+from bdc_catalog.utils import \
+    multihash_checksum_sha256 as _multihash_checksum_sha256
 from dateutil.relativedelta import relativedelta
 from flask import abort
 from geoalchemy2.shape import from_shape
 from numpngw import write_png
-import rasterio
-import rasterio.warp
-import rasterio.features
-import shapely.geometry
 from rasterio.io import MemoryFile
 from rasterio.warp import Resampling
 from rio_cogeo.cogeo import cog_translate

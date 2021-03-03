@@ -27,6 +27,13 @@ share/python-wheels/
 *.egg
 MANIFEST
 
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+
 spec/node_modules
 spec/dist
 
