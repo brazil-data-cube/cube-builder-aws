@@ -9,6 +9,9 @@
 
 import os
 
+# Prefix to be set on Item and in the bucket alias.
+ITEM_PREFIX = os.getenv('ITEM_PREFIX')
+
 AWS_KEY_ID = os.environ.get('KEY_ID', '')
 AWS_SECRET_KEY = os.environ.get('SECRET_KEY', '')
 

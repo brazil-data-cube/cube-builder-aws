@@ -25,6 +25,7 @@ from rasterio.warp import transform
 from shapely.geometry import Polygon
 from werkzeug.exceptions import BadRequest, Conflict, NotFound
 
+from .config import ITEM_PREFIX
 from .constants import (CENTER_WAVELENGTH, CLEAR_OBSERVATION_ATTRIBUTES,
                         CLEAR_OBSERVATION_NAME, COG_MIME_TYPE,
                         DATASOURCE_ATTRIBUTES, FULL_WIDTH_HALF_MAX,
@@ -471,6 +472,7 @@ class CubeController:
         functions = [process_params['composite_function'], 'IDT']
         satellite = process_info['metadata']['platform']['code']
         mask = process_info.get('mask', None)
+        secondary_catalog = process_info.get('secondary_catalog')
 
         tiles = params['tiles']
         start_date = datetime.strptime(params['start_date'], '%Y-%m-%d').strftime('%Y-%m-%d')
@@ -491,11 +493,18 @@ class CubeController:
         bands = Band.query().filter(
             Band.collection_id == cube_infos_irregular.id
         ).all()
+
+        bands_expressions = dict()
+
         bands_list = []
         indexes_list = []
         for band in bands:
             if band.name.upper() not in [i['common_name'].upper() for i in indexes]:
                 bands_list.append(band.name)
+            elif band._metadata and band._metadata.get('expression') and band._metadata['expression'].get('value'):
+                meta = deepcopy(band._metadata)
+                meta['data_type'] = band.data_type
+                bands_expressions[band.name] = meta
             else:
                 indexes_available = {
                     'NDVI': ['NIR', 'RED'],
@@ -534,7 +543,7 @@ class CubeController:
         # items => old mosaic
         # orchestrate
         shape = params.get('shape', None)
-        self.score['items'] = orchestrate(cub_ref, tiles, start_date, end_date, functions, shape)
+        self.score['items'] = orchestrate(cub_ref, tiles, start_date, end_date, shape, item_prefix=ITEM_PREFIX)
 
         # prepare merge
         crs = cube_infos.grs.crs
@@ -542,7 +551,7 @@ class CubeController:
         prepare_merge(self, cube_infos['name'], params['collections'], satellite, bands_list,
             indexes_list, bands_ql_list, float(bands[0].resolution_x), float(bands[0].resolution_y), 
             int(bands[0].nodata), crs, quality_band, functions, formatted_version, 
-            params.get('force', False), mask)
+            params.get('force', False), mask, secondary_catalog, bands_expressions=bands_expressions)
 
         return dict(
             message='Processing started with succesfully'

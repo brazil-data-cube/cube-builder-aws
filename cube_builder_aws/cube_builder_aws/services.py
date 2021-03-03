@@ -366,50 +366,91 @@ class CubeServices:
         _ = self.stac.catalog
         return self.stac.collection(collection_id)
 
-    def search_STAC(self, activity):
+    def _parse_stac_result(self, items, dataset, bands, quality_band):
+        scenes = dict()
+
+        for f in items['features']:
+            if f['type'] == 'Feature':
+                id = f['id']
+                date = f['properties']['datetime']
+
+                # Get file link and name
+                assets = f['assets']
+                for band in bands:
+                    band_obj = assets.get(band, None)
+                    if not band_obj: continue
+
+                    scenes[band] = scenes.get(band, {})
+                    scenes[band][dataset] = scenes[band].get(dataset, {})
+
+                    scene = {}
+                    scene['sceneid'] = id
+                    scene['date'] = date
+                    scene['band'] = band
+                    scene['link'] = band_obj['href']
+                    if dataset == 'MOD13Q1' and band == quality_band:
+                        scene['link'] = scene['link'].replace(quality_band, 'reliability')
+
+                    # TODO: verify if scene['link'] exist
+
+                    if date not in scenes[band][dataset]:
+                        scenes[band][dataset][date] = []
+                    scenes[band][dataset][date].append(scene)
+
+        return scenes
+
+    def search_STAC(self, activity, extra_catalogs=None):
+        """Search for activity in remote STAC server.
+
+        Notes:
+            By default, uses entire activity to search for data catalog.
+            When the parameter ``extra_catalog`` is set, this function will seek
+            into given catalogs and then merge the result as a single query server.
+            It may be useful if you have a collection in different server provider.
+
+        Args:
+            activity (dict): Current activity scope with default STAC server and stac collection
+                **Make sure that ``bbox`` property is a GeoJSON Feature.
+            extra_catalogs (List[dict]): Extra catalogs to seek for collection. Default is None.
+        """
         # Get DATACUBE params
         _ = self.stac.catalog
         bands = activity['bands']
         datasets = activity['datasets']
-        bbox = activity['bbox']
+        bbox_feature = activity['bbox']
         time = '{}/{}'.format(activity['start'], activity['end'])
 
         scenes = {}
+        filter_opts = dict(
+            datetime=time,
+            intersects=bbox_feature,
+            limit=10000
+        )
+
         for dataset in datasets:
-            filter_opts = dict(
-                time=time,
-                bbox=bbox,
-                limit=10000
-            )
-            items = self.stac.collection(dataset).get_items(filter=filter_opts)
+            filter_opts['collections'] = [dataset]
+            items = self.stac.search(filter=filter_opts)
 
-            for f in items['features']:
-                if f['type'] == 'Feature':
-                    id = f['id']
-                    date = f['properties']['datetime'] 
-                    
-                    # Get file link and name
-                    assets = f['assets']
-                    for band in bands:
-                        band_obj = assets.get(band, None)
-                        if not band_obj: continue
+            scenes.update(**self._parse_stac_result(items, dataset, bands, activity['quality_band']))
 
-                        scenes[band] = scenes.get(band, {})
-                        scenes[band][dataset] = scenes[band].get(dataset, {})
+        if extra_catalogs:
+            for catalog in extra_catalogs:
+                stac_url = catalog['stac_url']
+                stac_token = catalog.get('token')
+                stac_dataset = catalog['dataset']
+                filter_opts['collections'] = [stac_dataset]
 
-                        scene = {}
-                        scene['sceneid'] = id
-                        scene['date'] = date
-                        scene['band'] = band
-                        scene['link'] = band_obj['href']
-                        if dataset == 'MOD13Q1' and band == activity['quality_band']:
-                            scene['link'] = scene['link'].replace(activity['quality_band'],'reliability')
+                stac = STAC(stac_url, access_token=stac_token)
 
-                        # TODO: verify if scene['link'] exist 
+                items = stac.search(filter=filter_opts)
 
-                        if date not in scenes[band][dataset]:
-                            scenes[band][dataset][date] = []
-                        scenes[band][dataset][date].append(scene)
+                res = self._parse_stac_result(items, stac_dataset, bands, activity['quality_band'])
+
+                for band, datasets in res.items():
+                    internal_dataset = list(datasets.keys())[0]
+
+                    scenes[band][dataset].update(datasets[internal_dataset])
+
         return scenes
     
     ## ----------------------

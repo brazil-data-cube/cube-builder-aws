@@ -31,7 +31,7 @@ from .utils.processing import (create_asset_definition, create_cog_in_s3,
 from .utils.timeline import Timeline
 
 
-def orchestrate(cube_infos, tiles, start_date, end_date, functions, shape=None):
+def orchestrate(cube_infos, tiles, start_date, end_date, shape=None, item_prefix=None):
     formatted_version = format_version(cube_infos.version)
 
     tiles_by_grs = db.session() \
@@ -42,7 +42,6 @@ def orchestrate(cube_infos, tiles, start_date, end_date, functions, shape=None):
             GridRefSys.id == Tile.grid_ref_sys_id
         ).all()
 
-    collection_tiles = []
     tiles_infos = []
     for tile in tiles_by_grs:
         grid_table = tile.GridRefSys.geom_table
@@ -52,7 +51,7 @@ def orchestrate(cube_infos, tiles, start_date, end_date, functions, shape=None):
             (func.ST_YMax(grid_table.c.geom)).label('max_y'),
             (func.ST_XMax(grid_table.c.geom) - func.ST_XMin(grid_table.c.geom)).label('dist_x'),
             (func.ST_YMax(grid_table.c.geom) - func.ST_YMin(grid_table.c.geom)).label('dist_y'),
-            (func.ST_AsText(func.ST_BoundingDiagonal(func.ST_Transform(grid_table.c.geom, 4326)))).label('bbox')
+            (func.ST_AsGeoJSON(func.ST_Transform(grid_table.c.geom, 4326))).label('feature')
         ).filter(
             grid_table.c.tile == tile.Tile.name
         ).first()
@@ -75,6 +74,7 @@ def orchestrate(cube_infos, tiles, start_date, end_date, functions, shape=None):
 
     # create collection items (old model => mosaic)
     items_id = []
+    prefix = '' if item_prefix is None else str(item_prefix)
     items = {}
     for datekey in sorted(timeline):
         requestedperiod = timeline[datekey]
@@ -88,11 +88,10 @@ def orchestrate(cube_infos, tiles, start_date, end_date, functions, shape=None):
                 tile_id = tile['id']
                 tile_name = tile['name']
                 tile_stats = tile['stats']
-                bbox = tile_stats.bbox
-                bbox_formated = bbox[bbox.find('(') + 1:bbox.find(')')].replace(' ', ',')
+                feature = tile_stats.feature
 
                 items[tile_name] = items.get(tile_name, {})
-                items[tile_name]['bbox'] = bbox_formated
+                items[tile_name]['bbox'] = feature
                 items[tile_name]['xmin'] = tile_stats.min_x
                 items[tile_name]['ymax'] = tile_stats.max_y
                 items[tile_name]['dist_x'] = tile_stats.dist_x
@@ -112,7 +111,7 @@ def orchestrate(cube_infos, tiles, start_date, end_date, functions, shape=None):
                         'id': item_id,
                         'composite_start': p_startdate,
                         'composite_end': p_enddate,
-                        'dirname': f'{cube_infos.name}/{formatted_version}/{tile_name}/'
+                        'dirname': os.path.join(prefix, cube_infos.name, formatted_version, tile_name)
                     }
                     if shape:
                         items[tile_name]['periods'][periodkey]['shape'] = shape
@@ -161,7 +160,8 @@ def next_step(services, activity):
 # MERGE
 ###############################
 def prepare_merge(self, datacube, datasets, satellite, bands, indexes, quicklook, resx,
-                  resy, nodata, crs, quality_band, functions, version, force=False, mask=None):
+                  resy, nodata, crs, quality_band, functions, version, force=False,
+                  mask=None, secondary_catalog=None, bands_expressions=dict()):
     services = self.services
 
     # Build the basics of the merge activity
@@ -173,6 +173,7 @@ def prepare_merge(self, datacube, datasets, satellite, bands, indexes, quicklook
     activity['datasets'] = datasets
     activity['satellite'] = satellite.upper()
     activity['bands'] = bands
+    activity['bands_expressions'] = bands_expressions
     activity['indexes'] = indexes
     activity['quicklook'] = quicklook
     activity['resx'] = resx
@@ -216,8 +217,8 @@ def prepare_merge(self, datacube, datasets, satellite, bands, indexes, quicklook
                 self.services.remove_control_by_key(merge_control_key)
                 self.services.remove_control_by_key(blend_control_key)
 
-            # Search all images
-            self.score['items'][tile_name]['periods'][periodkey]['scenes'] = services.search_STAC(activity)
+            self.score['items'][tile_name]['periods'][periodkey]['scenes'] = services.search_STAC(activity,
+                                                                                                  secondary_catalog)
 
             # Evaluate the number of dates, the number of scenes for each date and
             # the total amount merges that will be done
@@ -360,11 +361,9 @@ def merge_warped(self, activity):
             new_res_y = dist_y / num_pixel_y
 
             transform = Affine(new_res_x, 0, xmin, 0, -new_res_y, ymax)
-        
+
         numcol = num_pixel_x
         numlin = num_pixel_y
-
-        transform = Affine(new_res_x, 0, xmin, 0, -new_res_y, ymax)
 
         is_sentinel_landsat_quality_fmask = ('LANDSAT' in satellite or satellite == 'SENTINEL-2') and \
                                             (band == activity['quality_band'] and activity_mask['nodata'] != 0)
@@ -1016,6 +1015,7 @@ def posblend(self, activity):
     bucket_name = activity['bucket_name']
     mystart = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     reprocessed = False
+    band_expressions = activity['band_expressions']
 
     try:
         sk = activity['sk']
@@ -1031,7 +1031,7 @@ def posblend(self, activity):
 
                     file_path = '_'.join(ref_file_path.split('_')[:-1]) + '_{}.tif'.format(sk.replace(date, ''))
                     if force or not services.s3_file_exists(bucket_name=bucket_name, key=file_path):
-                        create_index(services, sk.replace(date, ''), bands, bucket_name)
+                        create_index(services, band_expressions, bands, bucket_name)
                         reprocessed = True
         else:
             index = activity['indexesToBe'][sk]
@@ -1042,7 +1042,7 @@ def posblend(self, activity):
                 ref_file_path = bands['red'] if bands.get('red') else bands['RED']
                 file_path = '_'.join(ref_file_path.split('_')[:-1]) + '_{}.tif'.format(sk)
                 if force or not services.s3_file_exists(bucket_name=bucket_name, key=file_path):
-                    create_index(services, sk, bands, bucket_name)
+                    create_index(services, band_expressions, bands, bucket_name)
                     reprocessed = True
                 
         # Update status and end time in DynamoDB
@@ -1219,7 +1219,7 @@ def publish(self, activity):
                         application_id=APPLICATION_ID
                     )
 
-                thumbnail, _ = create_asset_definition(
+                thumbnail, _, _ = create_asset_definition(
                     services, bucket_name, str(s3_pngname), 'image/png', ['thumbnail'], quicklook_url)
                 assets = dict(thumbnail=thumbnail)
 
@@ -1239,7 +1239,7 @@ def publish(self, activity):
 
                     relative_path = activity["blended"][band][function + "file"]        
                     full_path = f'{bucket_name}/{relative_path}'
-                    assets[band_model.name], item.geom = create_asset_definition(
+                    assets[band_model.name], item.geom, item.min_convex_hull = create_asset_definition(
                         services, bucket_name,
                         relative_path, COG_MIME_TYPE, ['data'],
                         full_path, is_raster=True
@@ -1306,7 +1306,7 @@ def publish(self, activity):
                         application_id=APPLICATION_ID
                     )
 
-                thumbnail, _ = create_asset_definition(
+                thumbnail, _, _ = create_asset_definition(
                     services, bucket_name, str(s3_pngname), 'image/png', ['thumbnail'], quicklook_url)
                 assets = dict(thumbnail=thumbnail)
 
@@ -1325,7 +1325,7 @@ def publish(self, activity):
                     
                     relative_path = os.path.join(activity['dirname'], str(scene['date'])[0:10], scene['ARDfiles'][band])
                     full_path = f'{bucket_name}/{relative_path}'
-                    assets[band_model.name], item.geom = create_asset_definition(
+                    assets[band_model.name], item.geom, item.min_convex_hull = create_asset_definition(
                         services, bucket_name,
                         relative_path, COG_MIME_TYPE, ['data'],
                         full_path, is_raster=True
