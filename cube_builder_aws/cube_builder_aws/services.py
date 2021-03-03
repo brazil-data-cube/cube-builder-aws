@@ -6,19 +6,19 @@
 # under the terms of the MIT License; see LICENSE file for more details.
 #
 
-import json
 import base64
+import json
+
 import boto3
 import botocore
 import requests
-
-from boto3.dynamodb.conditions import Key, Attr
+from boto3.dynamodb.conditions import Attr, Key
 from botocore.errorfactory import ClientError
 from stac import STAC
 
-from .config import DYNAMO_TB_ACTIVITY, DBNAME_TB_CONTROL, DBNAME_TB_PROCESS, \
-    QUEUE_NAME, KINESIS_NAME, LAMBDA_FUNCTION_NAME, \
-    AWS_KEY_ID, AWS_SECRET_KEY
+from .config import (AWS_KEY_ID, AWS_SECRET_KEY, DBNAME_TB_CONTROL,
+                     DBNAME_TB_PROCESS, DYNAMO_TB_ACTIVITY, KINESIS_NAME,
+                     LAMBDA_FUNCTION_NAME, QUEUE_NAME)
 
 
 class CubeServices:

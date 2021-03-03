@@ -12,6 +12,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Tuple
+
 import rasterio
 
 from ..logger import logger as logging

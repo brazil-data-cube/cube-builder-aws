@@ -5,43 +5,48 @@
 # Cube Builder AWS is free software; you can redistribute it and/or modify it
 # under the terms of the MIT License; see LICENSE file for more details.
 #
+"""Controller module."""
 
 import json
-import sqlalchemy
-import rasterio
 from copy import deepcopy
 from datetime import datetime
-from geoalchemy2 import func
-from geoalchemy2.shape import from_shape
-from shapely.geometry import Polygon
-from werkzeug.exceptions import BadRequest, NotFound, Conflict
-from rasterio.crs import CRS
-from rasterio.warp import transform
 from typing import Tuple, Union
 
+import rasterio
+import sqlalchemy
+from bdc_catalog.models import (Band, BandSRC, Collection, CompositeFunction,
+                                GridRefSys, Item, MimeType, Quicklook,
+                                ResolutionUnit, SpatialRefSys, Tile)
 from bdc_catalog.models.base_sql import BaseModel, db
-from bdc_catalog.models import (Collection, Band, BandSRC, GridRefSys, Tile, 
-                                CompositeFunction, MimeType, ResolutionUnit, 
-                                Quicklook, Item, SpatialRefSys)
+from geoalchemy2 import func
+from geoalchemy2.shape import from_shape
+from rasterio.crs import CRS
+from rasterio.warp import transform
+from shapely.geometry import Polygon
+from werkzeug.exceptions import BadRequest, Conflict, NotFound
 
 from .config import ITEM_PREFIX
-from .constants import (CLEAR_OBSERVATION_ATTRIBUTES, PROVENANCE_ATTRIBUTES,
-                        TOTAL_OBSERVATION_ATTRIBUTES, CLEAR_OBSERVATION_NAME, 
-                        TOTAL_OBSERVATION_NAME, PROVENANCE_NAME, SRID_BDC_GRID, 
-                        CENTER_WAVELENGTH, FULL_WIDTH_HALF_MAX, REVISIT_BY_SATELLITE,
-                        COG_MIME_TYPE, SRID_ALBERS_EQUAL_AREA, DATASOURCE_ATTRIBUTES)
+from .constants import (CENTER_WAVELENGTH, CLEAR_OBSERVATION_ATTRIBUTES,
+                        CLEAR_OBSERVATION_NAME, COG_MIME_TYPE,
+                        DATASOURCE_ATTRIBUTES, FULL_WIDTH_HALF_MAX,
+                        PROVENANCE_ATTRIBUTES, PROVENANCE_NAME,
+                        REVISIT_BY_SATELLITE, SRID_ALBERS_EQUAL_AREA,
+                        SRID_BDC_GRID, TOTAL_OBSERVATION_ATTRIBUTES,
+                        TOTAL_OBSERVATION_NAME)
 from .forms import CollectionForm
-from .utils.serializer import Serializer
-from .utils.image import validate_merges
-from .utils.timeline import Timeline
-from .maestro import (orchestrate, prepare_merge, merge_warped, solo, blend,
-                      posblend, publish)
-from .utils.processing import (get_or_create_model, get_date, get_cube_name, 
-                               get_cube_parts, decode_periods, generate_hash_md5,
-                               format_version)
+from .maestro import (blend, merge_warped, orchestrate, posblend,
+                      prepare_merge, publish, solo)
 from .services import CubeServices
+from .utils.image import validate_merges
+from .utils.processing import (decode_periods, format_version,
+                               generate_hash_md5, get_cube_name,
+                               get_cube_parts, get_date, get_or_create_model)
+from .utils.serializer import Serializer
+from .utils.timeline import Timeline
+
 
 class CubeController:
+    """Controller class."""
 
     def __init__(self, url_stac=None, bucket=None):
         self.score = {}

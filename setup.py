@@ -9,6 +9,7 @@
 """Python Module for Cube Builder AWS."""
 
 import os
+
 from setuptools import find_packages, setup
 
 readme = open('README.rst').read()
@@ -60,7 +61,7 @@ install_requires = [
 
 packages = find_packages()
 
-with open(os.path.join('cube-builder-aws', 'cube_builder_aws', 'version.py'), 'rt') as fp:
+with open(os.path.join('cube_builder_aws', 'cube_builder_aws', 'version.py'), 'rt') as fp:
     g = {}
     exec(fp.read(), g)
     version = g['__version__']
@@ -79,7 +80,11 @@ setup(
     zip_safe=False,
     include_package_data=True,
     platforms='any',
-    entry_points={},
+    entry_points={
+        'console_scripts': [
+            'cube-builder-aws = cube_builder_aws.cube_builder_aws.cli:cli'
+        ]
+    },
     extras_require=extras_require,
     install_requires=install_requires,
     setup_requires=setup_requires,

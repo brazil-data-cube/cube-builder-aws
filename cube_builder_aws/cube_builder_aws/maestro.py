@@ -8,25 +8,26 @@
 
 import json
 import os
-import numpy
-import rasterio
-
 from datetime import datetime
 from pathlib import Path
-from geoalchemy2 import func
-from rasterio.transform import Affine 
-from rasterio.warp import reproject, Resampling, transform
-from rasterio.merge import merge 
-from rasterio.io import MemoryFile
 
+import numpy
+import rasterio
+from bdc_catalog.models import Band, Collection, GridRefSys, Item, Tile
 from bdc_catalog.models.base_sql import db
-from bdc_catalog.models import Collection, Tile, GridRefSys, Item, Band
+from geoalchemy2 import func
+from rasterio.io import MemoryFile
+from rasterio.merge import merge
+from rasterio.transform import Affine
+from rasterio.warp import Resampling, reproject, transform
 
+from .constants import (APPLICATION_ID, COG_MIME_TYPE, RESOLUTION_BY_SATELLITE,
+                        SRID_BDC_GRID)
 from .logger import logger
-from .constants import RESOLUTION_BY_SATELLITE, COG_MIME_TYPE, SRID_BDC_GRID, APPLICATION_ID
-from .utils.processing import encode_key, \
-    qa_statistics, getMask, generateQLook, get_cube_name, \
-    create_cog_in_s3, create_index, format_version, create_asset_definition, parse_mask
+from .utils.processing import (create_asset_definition, create_cog_in_s3,
+                               create_index, encode_key, format_version,
+                               generateQLook, get_cube_name, getMask,
+                               parse_mask, qa_statistics)
 from .utils.timeline import Timeline
 
 

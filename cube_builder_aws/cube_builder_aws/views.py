@@ -6,14 +6,15 @@
 # under the terms of the MIT License; see LICENSE file for more details.
 #
 
-# 3rdparty
-from flask import Blueprint, jsonify, request, current_app
 import base64
 import json
 
+from flask import Blueprint, current_app, jsonify, request
+
 from .controller import CubeController
-from .forms import (CubeStatusForm, DataCubeForm, DataCubeMetadataForm, GridRefSysForm,
-                    CubeItemsForm, BucketForm, PeriodForm, StartProcessForm, DataCubeProcessForm)
+from .forms import (BucketForm, CubeItemsForm, CubeStatusForm, DataCubeForm,
+                    DataCubeMetadataForm, DataCubeProcessForm, GridRefSysForm,
+                    PeriodForm, StartProcessForm)
 from .version import __version__
 
 controller = CubeController()
