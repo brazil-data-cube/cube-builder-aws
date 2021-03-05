@@ -11,7 +11,7 @@ steps:
     - ./run-tests.sh
 
 - name: discord-finished
-  image: mzaglia/drone-discord-embed
+  image: brazildatacube/bdc-drone-discord
   settings:
     webhook:
       from_secret: discord_webhook
