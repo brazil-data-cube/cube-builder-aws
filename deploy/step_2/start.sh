@@ -18,21 +18,23 @@ echo 'Set RDS_PASSWORD'
 echo "if you don't know look at 'deploy/step_1/create_rds_db.sh'"
 read PASSWORD
 
-docker rmi bdc_start_db
-cd generate-db
-docker build -t bdc_start_db .
+SQLALCHEMY_DATABASE_URI="postgresql://${USER}:${PASSWORD}@${HOST}:54320/${DBNAME}" \
+bdc-catalog db init
 
-docker rm bdc_start_db_container
-docker run --name bdc_start_db_container \
-    -e RDS_HOST=${HOST} \
-    -e RDS_DBNAME=${DBNAME} \
-    -e RDS_USER=${USER} \
-    -e RDS_PASSWORD=${PASSWORD} bdc_start_db
-    
-docker stop bdc_start_db_container
-docker rm bdc_start_db_container
-docker rmi bdc_start_db
-cd ..
+SQLALCHEMY_DATABASE_URI="postgresql://${USER}:${PASSWORD}@${HOST}:54320/${DBNAME}" \
+bdc-catalog db init
 
-echo
-echo 'RESTORE COMPLETED'
+SQLALCHEMY_DATABASE_URI="postgresql://${USER}:${PASSWORD}@${HOST}:54320/${DBNAME}" \
+bdc-catalog db create-namespaces
+
+SQLALCHEMY_DATABASE_URI="postgresql://${USER}:${PASSWORD}@${HOST}:54320/${DBNAME}" \
+bdc-catalog db create-extension-postgis
+
+SQLALCHEMY_DATABASE_URI="postgresql://${USER}:${PASSWORD}@${HOST}:54320/${DBNAME}" \
+cube-builder-aws alembic upgrade
+
+SQLALCHEMY_DATABASE_URI="postgresql://${USER}:${PASSWORD}@${HOST}:54320/${DBNAME}" \
+bdc-catalog db create-triggers
+
+SQLALCHEMY_DATABASE_URI="postgresql://${USER}:${PASSWORD}@${HOST}:54320/${DBNAME}" \
+cube-builder-aws load-data

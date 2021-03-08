@@ -14,7 +14,7 @@ read AWS_REGION
 
 echo
 echo 'Set project name:'
-echo 'obs: one word all tiny'
+echo 'obs: one word - all tiny'
 read AWS_PROJECT_NAME
 
 echo
