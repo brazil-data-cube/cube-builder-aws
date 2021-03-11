@@ -439,7 +439,7 @@ def create_cog_in_s3(services, profile, path, raster, is_quality, nodata, bucket
                     mem.nodata = nodata
                 mem.write_band(1, raster)
                 
-                dst_profile = cog_profiles.get("lzw")        
+                dst_profile = cog_profiles.get("deflate")        
                 cog_translate(
                     mem,
                     dst_file.name,
