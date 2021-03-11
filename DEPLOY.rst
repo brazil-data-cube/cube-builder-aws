@@ -32,6 +32,13 @@ Create infrastructure
 Create database structure
 -------------------------
 
+Install dependences
+
+.. code-block:: shell
+        
+        $ pip install -e .
+
+
 Create initial database structure to catalog the cubes to be generated
 
 .. code-block:: shell

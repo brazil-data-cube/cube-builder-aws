@@ -5,7 +5,8 @@
 # CREATE BUCKET (S3)
 aws --profile $AWS_PROFILE s3api create-bucket \
     --bucket $AWS_BUCKET_NAME \
-    --region $AWS_REGION
+    --region $AWS_REGION \
+    --create-bucket-configuration LocationConstraint=$AWS_REGION
 echo " create s3 $AWS_BUCKET_NAME"
 
 sleep 5s
