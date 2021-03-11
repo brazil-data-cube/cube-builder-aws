@@ -6,8 +6,16 @@
 AWS_REGION="${AWS_REGION}b"
 RDS_NAME="bdc"
 RDS_ID="${AWS_PROJECT_NAME}-db"
-USER="postgres"
-PASSWORD="postgres"
+
+
+echo
+echo 'Set RDS user:'
+read RDS_USER
+
+echo
+echo 'Set RDS password:'
+read RDS_PASSWORD
+
 
 SUBNET_GROUP_NAME="${AWS_PROJECT_NAME}SubnetGroup"
 
@@ -26,8 +34,8 @@ aws --profile $AWS_PROFILE rds create-db-instance \
     --allocated-storage 20 \
     --db-instance-class db.t2.micro \
     --engine postgres \
-    --master-username $USER \
-    --master-user-password $PASSWORD \
+    --master-username $RDS_USER \
+    --master-user-password $RDS_PASSWORD \
     --publicly-accessible \
     --vpc-security-group-ids $GROUP_ID \
     --db-subnet-group-name $SUBNET_GROUP_NAME \
