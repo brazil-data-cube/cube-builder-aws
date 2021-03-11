@@ -8,6 +8,7 @@
 
 import base64
 import json
+import re
 
 import boto3
 import botocore
@@ -15,6 +16,7 @@ import requests
 from boto3.dynamodb.conditions import Attr, Key
 from botocore.errorfactory import ClientError
 from stac import STAC
+from urllib.parse import urlparse
 
 from .config import (AWS_KEY_ID, AWS_SECRET_KEY, DBNAME_TB_CONTROL,
                      DBNAME_TB_PROCESS, DYNAMO_TB_ACTIVITY, KINESIS_NAME,
@@ -38,6 +40,7 @@ class CubeServices:
         self.dynamoDBResource = session.resource('dynamodb')
 
         self.QueueUrl = {}
+
         self.bucket_name = bucket
 
         # ---------------------------
@@ -55,7 +58,6 @@ class CubeServices:
             self.stac = STAC(url_stac)
 
     def get_s3_prefix(self, bucket):
-        # prefix = 'https://s3.amazonaws.com/{}/'.format(bucket)
         prefix = 's3://{}/'.format(bucket)
         return prefix
     
@@ -388,8 +390,10 @@ class CubeServices:
                     scene['date'] = date
                     scene['band'] = band
                     scene['link'] = band_obj['href']
-                    if dataset == 'MOD13Q1' and band == quality_band:
-                        scene['link'] = scene['link'].replace(quality_band, 'reliability')
+
+                    if re.match(r'https://([a-zA-Z0-9-_]{1,}).s3.([a-zA-Z0-9-_]{1,}).amazonaws.com/([-.a-zA-Z0-9\/_]{1,})', scene['link']):
+                        parser = urlparse(scene['link'])
+                        scene['link'] = f's3://{parser.hostname.split(".")[0]}{parser.path}'
 
                     # TODO: verify if scene['link'] exist
 
@@ -410,14 +414,14 @@ class CubeServices:
 
         Args:
             activity (dict): Current activity scope with default STAC server and stac collection
-                **Make sure that ``bbox`` property is a GeoJSON Feature.
+                **Make sure that ``geom`` property is a GeoJSON Feature.
             extra_catalogs (List[dict]): Extra catalogs to seek for collection. Default is None.
         """
         # Get DATACUBE params
         _ = self.stac.catalog
         bands = activity['bands']
         datasets = activity['datasets']
-        bbox_feature = activity['bbox']
+        bbox_feature = activity['geom']
         time = '{}/{}'.format(activity['start'], activity['end'])
 
         scenes = {}

@@ -141,6 +141,8 @@ class DataCubeProcessForm(Schema):
 
     datacube_name = fields.String(required=True, allow_none=False)
     datacube_version = fields.Integer(required=True, allow_none=False)
+    url_stac = fields.String(required=True, allow_none=False)
+    bucket = fields.String(required=True, allow_none=False)
     collections = fields.List(fields.String, required=True, allow_none=False)
     tiles = fields.List(fields.String, required=True, allow_none=False)
     start_date = fields.Date()

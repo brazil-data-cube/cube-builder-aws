@@ -466,17 +466,17 @@ class CubeController:
 
         # get process infos by dynameDB
         process_info = response['Items'][0]
-        process_params = json.loads(process_info['infos'])
+        process_params = process_info['infos']
         indexes = process_params['indexes']
         quality_band = process_params['quality_band']
         functions = [process_params['composite_function'], 'IDT']
-        satellite = process_info['metadata']['platform']['code']
-        mask = process_info.get('mask', None)
-        secondary_catalog = process_info.get('secondary_catalog')
+        satellite = process_params['metadata']['platform']['code']
+        mask = process_params.get('mask', None)
+        secondary_catalog = process_params.get('secondary_catalog')
 
         tiles = params['tiles']
-        start_date = datetime.strptime(params['start_date'], '%Y-%m-%d').strftime('%Y-%m-%d')
-        end_date = datetime.strptime(params['end_date'], '%Y-%m-%d').strftime('%Y-%m-%d') \
+        start_date = params['start_date'].strftime('%Y-%m-%d')
+        end_date = params['end_date'].strftime('%Y-%m-%d') \
             if params.get('end_date') else datetime.now().strftime('%Y-%m-%d')
 
         # verify cube info
@@ -540,7 +540,7 @@ class CubeController:
 
         cub_ref = cube_infos or cube_infos_irregular
 
-        # items => old mosaic
+        # items => { 'tile_id': bbox, xmin, ..., periods: {'start_end': collection, ... } }
         # orchestrate
         shape = params.get('shape', None)
         self.score['items'] = orchestrate(cub_ref, tiles, start_date, end_date, shape, item_prefix=ITEM_PREFIX)
@@ -548,7 +548,7 @@ class CubeController:
         # prepare merge
         crs = cube_infos.grs.crs
         formatted_version = format_version(cube_infos.version)
-        prepare_merge(self, cube_infos['name'], params['collections'], satellite, bands_list,
+        prepare_merge(self, cube_infos.name, params['collections'], satellite, bands_list,
             indexes_list, bands_ql_list, float(bands[0].resolution_x), float(bands[0].resolution_y), 
             int(bands[0].nodata), crs, quality_band, functions, formatted_version, 
             params.get('force', False), mask, secondary_catalog, bands_expressions=bands_expressions)
@@ -567,7 +567,7 @@ class CubeController:
             "e": float(bbox[2]),
             "s": float(bbox[3])
         }
-        tile_srs_p4 = "+proj=longlat +ellps=GRS80 +datum=GRS80 +no_defs"
+        tile_srs_p4 = "+proj=longlat +ellps=GRS80 +no_defs"
         if projection == 'aea':
             tile_srs_p4 = "+proj=aea +lat_0=-12 +lon_0={} +lat_1=-2 +lat_2=-22 +x_0=5000000 +y_0=10000000 +ellps=GRS80 +units=m +no_defs".format(meridian)
         elif projection == 'sinu':
@@ -580,7 +580,7 @@ class CubeController:
         v_base = num_tiles_y / 2
 
         # Tile size in meters (dx,dy) at center of system (argsmeridian,0.)
-        src_crs = '+proj=longlat +ellps=GRS80 +datum=GRS80 +no_defs'
+        src_crs = '+proj=longlat +ellps=GRS80 +no_defs'
         dst_crs = tile_srs_p4
         xs = [(meridian - degreesx / 2), (meridian + degreesx / 2), meridian, meridian, 0.]
         ys = [0., 0., -degreesy / 2, degreesy / 2, 0.]
@@ -615,7 +615,6 @@ class CubeController:
 
         tiles = []
         features = []
-        dst_crs = '+proj=longlat +ellps=GRS80 +datum=GRS80 +no_defs'
         src_crs = tile_srs_p4
 
         for ix in range(h_min, h_max+1):

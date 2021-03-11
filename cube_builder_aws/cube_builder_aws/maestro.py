@@ -76,45 +76,47 @@ def orchestrate(cube_infos, tiles, start_date, end_date, shape=None, item_prefix
     items_id = []
     prefix = '' if item_prefix is None else str(item_prefix)
     items = {}
-    for datekey in sorted(timeline):
-        requestedperiod = timeline[datekey]
-        for periodkey in requestedperiod:
-            (p_basedate, p_startdate, p_enddate) = periodkey.split('_')
+    for interval in sorted(timeline):
+        
+        interval_start = interval[0]
+        interval_end = interval[1]
 
-            if start_date is not None and p_startdate < start_date : continue
-            if end_date is not None and p_enddate > end_date : continue
+        if start_date is not None and interval_start < start_date : continue
+        if end_date is not None and interval_end > end_date : continue
 
-            for tile in tiles_infos:
-                tile_id = tile['id']
-                tile_name = tile['name']
-                tile_stats = tile['stats']
-                feature = tile_stats.feature
+        for tile in tiles_infos:
+            tile_id = tile['id']
+            tile_name = tile['name']
+            tile_stats = tile['stats']
+            feature = tile_stats.feature
 
-                items[tile_name] = items.get(tile_name, {})
-                items[tile_name]['bbox'] = feature
-                items[tile_name]['xmin'] = tile_stats.min_x
-                items[tile_name]['ymax'] = tile_stats.max_y
-                items[tile_name]['dist_x'] = tile_stats.dist_x
-                items[tile_name]['dist_y'] = tile_stats.dist_y
-                items[tile_name]['periods'] = items[tile_name].get('periods', {})
+            items[tile_name] = items.get(tile_name, {})
+            items[tile_name]['geom'] = feature
+            items[tile_name]['xmin'] = tile_stats.min_x
+            items[tile_name]['ymax'] = tile_stats.max_y
+            items[tile_name]['dist_x'] = tile_stats.dist_x
+            items[tile_name]['dist_y'] = tile_stats.dist_y
+            items[tile_name]['periods'] = items[tile_name].get('periods', {})
 
-                item_id = f'{cube_infos.name}_{tile_name}_{p_basedate}'
-                if item_id not in items_id:
-                    items_id.append(item_id)
-                    items[tile_name]['periods'][periodkey] = {
-                        'collection': cube_infos.name,
-                        'version': cube_infos.version,
-                        'collection_id': cube_infos.id,
-                        'tile_id': tile_id,
-                        'tile_name': tile_name,
-                        'item_date': p_basedate,
-                        'id': item_id,
-                        'composite_start': p_startdate,
-                        'composite_end': p_enddate,
-                        'dirname': os.path.join(prefix, cube_infos.name, formatted_version, tile_name)
-                    }
-                    if shape:
-                        items[tile_name]['periods'][periodkey]['shape'] = shape
+            period = f'{interval_start}_{interval_end}'
+
+            item_id = f'{cube_infos.name}_{formatted_version}_{tile_name}_{period}'
+            if item_id not in items_id:
+                items_id.append(item_id)
+                items[tile_name]['periods'][period] = {
+                    'collection': cube_infos.name,
+                    'version': cube_infos.version,
+                    'collection_id': cube_infos.id,
+                    'tile_id': tile_id,
+                    'tile_name': tile_name,
+                    'item_date': period,
+                    'id': item_id,
+                    'composite_start': interval_start,
+                    'composite_end': interval_end,
+                    'dirname': os.path.join(prefix, cube_infos.name, formatted_version, tile_name)
+                }
+                if shape:
+                    items[tile_name]['periods'][period]['shape'] = shape
 
     return items
 
@@ -196,7 +198,7 @@ def prepare_merge(self, datacube, datasets, satellite, bands, indexes, quicklook
         activity['mask'] = mask
 
         # GET bounding box - tile ID
-        activity['bbox'] = self.score['items'][tile_name]['bbox']
+        activity['geom'] = self.score['items'][tile_name]['geom']
         activity['xmin'] = self.score['items'][tile_name]['xmin']
         activity['ymax'] = self.score['items'][tile_name]['ymax']
         activity['dist_x'] = self.score['items'][tile_name]['dist_x']
@@ -229,10 +231,15 @@ def prepare_merge(self, datacube, datasets, satellite, bands, indexes, quicklook
                 for date in self.score['items'][tile_name]['periods'][periodkey]['scenes'][first_band][dataset].keys():
                     list_dates.append(str(date)[:10])
                     number_of_datasets_dates += 1
+            
             activity['instancesToBeDone'] = number_of_datasets_dates
             activity['totalInstancesToBeDone'] = number_of_datasets_dates * len(activity['bands'])
 
+            activity['list_dates'] = sorted(list(set(list_dates)), reverse=True)
+
             # Reset mycount in activitiesControlTable
+            activity['start'] = activity['start'].strftime('%Y-%m-%d')
+            activity['end'] = activity['end'].strftime('%Y-%m-%d')
             activities_control_table_key = encode_key(activity, ['action','datacube','tileid','start','end'])
             services.put_control_table(activities_control_table_key, 0)
 
@@ -252,7 +259,6 @@ def prepare_merge(self, datacube, datasets, satellite, bands, indexes, quicklook
 
             # Build each merge activity
             # For all bands
-            activity['list_dates'] = list_dates
             for band in self.score['items'][tile_name]['periods'][periodkey]['scenes']:
                 activity['band'] = band
 

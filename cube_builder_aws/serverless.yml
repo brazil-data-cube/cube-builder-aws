@@ -18,7 +18,7 @@ custom:
 
 provider:
   name: aws
-  runtime: python3.6
+  runtime: python3.8
   stage: ${env:STAGE}
   region: ${env:REGION}
   apiKeys:
@@ -41,6 +41,14 @@ provider:
     TOKEN: ${env:TOKEN}
 
   iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:ListBucket"
+        - "s3:GetObject"
+      Resource:
+        - "arn:aws:s3:::*"
+        - "arn:aws:s3:::*"
+        
     - Effect: "Allow"
       Action:
         - sqs:SendMessage

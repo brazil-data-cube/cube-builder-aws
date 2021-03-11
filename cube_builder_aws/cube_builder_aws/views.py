@@ -9,7 +9,7 @@
 import base64
 import json
 
-from flask import Blueprint, current_app, jsonify, request
+from flask import Blueprint, jsonify, request
 
 from .controller import CubeController
 from .forms import (BucketForm, CubeItemsForm, CubeStatusForm, DataCubeForm,
@@ -273,26 +273,3 @@ def list_periods():
 
 #     message, status = controller.estimate_cost(**data)
 #     return jsonify(message), status
-
-
-#########################################
-# REQUEST -> from SQS trigger or Kinesis
-#########################################
-def continue_process(event, context):
-    with current_app.app_context():
-        params_list = []
-        if 'Records' in event:
-            for record in event['Records']:
-                if 'kinesis' in record:
-                    payload=base64.b64decode(record["kinesis"]["data"])
-                    params = json.loads(payload)
-                    params_list.append(params)
-                else:
-                    params = json.loads(record['body'])
-                    params_list.append(params)
-        else:
-            params = event
-            params_list.append(params)
-
-        message = controller.continue_process_stream(params_list)
-        return message
