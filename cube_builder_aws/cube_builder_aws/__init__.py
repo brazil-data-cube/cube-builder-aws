@@ -14,7 +14,7 @@ from bdc_catalog import BDCCatalog
 from flask import Flask, jsonify, request
 from werkzeug.exceptions import HTTPException
 
-from .config import DBNAME, HOST, PASSWORD, PORT, USER
+from .config import SQLALCHEMY_DATABASE_URI
 from .logger import logger
 
 
@@ -25,9 +25,7 @@ def create_app():
     """
     app = Flask(__name__)
 
-    app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://{}:{}@{}:{}/{}'.format(
-        USER, PASSWORD, HOST, PORT,  DBNAME
-    )
+    app.config['SQLALCHEMY_DATABASE_URI'] = SQLALCHEMY_DATABASE_URI
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = True
 
     with app.app_context():

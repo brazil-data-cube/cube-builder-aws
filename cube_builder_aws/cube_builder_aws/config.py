@@ -15,11 +15,7 @@ ITEM_PREFIX = os.getenv('ITEM_PREFIX')
 AWS_KEY_ID = os.environ.get('KEY_ID', '')
 AWS_SECRET_KEY = os.environ.get('SECRET_KEY', '')
 
-HOST = os.environ.get('RDS_HOST', '')
-PORT = os.environ.get('RDS_PORT', '5432')
-DBNAME = os.environ.get('RDS_DBNAME', '')
-USER = os.environ.get('RDS_USER', '')
-PASSWORD = os.environ.get('RDS_PASSWORD', '')
+SQLALCHEMY_DATABASE_URI = os.environ.get('SQLALCHEMY_DATABASE_URI', 'postgresql://postgres:postgres@localhost:5432/bdc_catalog')
 
 LAMBDA_FUNCTION_NAME = os.environ.get('LAMBDA_FUNCTION_NAME', '')
 QUEUE_NAME = os.environ.get('QUEUE_NAME', '')

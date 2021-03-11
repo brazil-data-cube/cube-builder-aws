@@ -37,11 +37,7 @@ provider:
     DBNAME_TB_PROCESS: ${self:service}-${self:provider.stage}-process
     KEY_ID: ${env:KEY_ID}
     SECRET_KEY: ${env:SECRET_KEY}
-    RDS_HOST: ${env:RDS_HOST}
-    RDS_PORT: ${env:RDS_PORT}
-    RDS_DBNAME: ${env:RDS_DBNAME}
-    RDS_USER: ${env:RDS_USER}
-    RDS_PASSWORD: ${env:RDS_PASSWORD}
+    SQLALCHEMY_DATABASE_URI: ${env:SQLALCHEMY_DATABASE_URI}
     TOKEN: ${env:TOKEN}
 
   iamRoleStatements:
