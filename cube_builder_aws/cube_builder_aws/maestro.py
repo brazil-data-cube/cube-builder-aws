@@ -27,7 +27,7 @@ from .logger import logger
 from .utils.processing import (create_asset_definition, create_cog_in_s3,
                                create_index, encode_key, format_version,
                                generateQLook, get_cube_name, getMask,
-                               parse_mask, qa_statistics)
+                               qa_statistics)
 from .utils.timeline import Timeline
 
 
@@ -128,6 +128,7 @@ def solo(self, activitylist):
 def next_step(services, activity):
     activitiesControlTableKey = activity['dynamoKey']\
             .replace(activity['band'], '')
+
     if activity['action'] == 'merge':
         activitiesControlTableKey = activitiesControlTableKey.replace(
             activity['date'], '{}{}'.format(activity['start'], activity['end']))
@@ -141,14 +142,17 @@ def next_step(services, activity):
     )
     if 'Attributes' in response and 'mycount' in response['Attributes']:
         mycount = int(response['Attributes']['mycount'])
+
         if mycount >= activity['totalInstancesToBeDone']:
             if activity['action'] == 'merge':
                 next_blend(services, activity)
+
             elif activity['action'] == 'blend':
-                if activity.get('indexes') and len(activity['indexes']) > 0:
+                if activity.get('bands_expressions') and len(activity['bands_expressions'].keys()) > 0:
                     next_posblend(services, activity)
                 else:
                     next_publish(services, activity)
+
             elif activity['action'] == 'posblend':
                 next_publish(services, activity)
 
@@ -322,12 +326,12 @@ def merge_warped(self, activity):
                 with rasterio.open('{}{}'.format(prefix, key)) as src:
                     values = src.read(1)
                     if activity['band'] == activity['quality_band']:
-                        efficacy, cloudratio = qa_statistics(values, mask=activity_mask, compute=True)
+                        efficacy, cloudratio = qa_statistics(values, mask=activity_mask, blocks=list(src.block_windows()))
 
                 # Update entry in DynamoDB
                 activity['myend'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                activity['efficacy'] = '{}'.format(int(efficacy))
-                activity['cloudratio'] = '{}'.format(int(cloudratio))
+                activity['efficacy'] = str(efficacy)
+                activity['cloudratio'] = str(cloudratio)
                 services.put_item_kinesis(activity)
 
                 key = '{}activities/{}{}.json'.format(activity['dirname'], activity['dynamoKey'], activity['date'])
@@ -385,11 +389,13 @@ def merge_warped(self, activity):
 
         # For all files
         template = None
+        raster_blocks = None
 
         for url in activity['links']:
 
             with rasterio.Env(CPL_CURL_VERBOSE=False):
                 with rasterio.open(url) as src:
+
                     kwargs = src.meta.copy()
                     kwargs.update({
                         'width': numcol,
@@ -433,6 +439,8 @@ def merge_warped(self, activity):
                             if band != activity['quality_band'] or is_sentinel_landsat_quality_fmask:
                                 valid_data_scene = raster[raster != nodata]
                                 raster_merge[raster != nodata] = valid_data_scene.reshape(numpy.size(valid_data_scene))
+
+                                valid_data_scene = None
                             else:
                                 factor = raster * raster_mask
 
@@ -441,6 +449,8 @@ def merge_warped(self, activity):
 
                             if template is None:
                                 template = dst.profile
+
+                                raster_blocks = list(src.block_windows())
 
                                 if band != activity['quality_band']:
                                     template.update({'dtype': 'int16'})
@@ -453,7 +463,7 @@ def merge_warped(self, activity):
         efficacy = 0
         cloudratio = 100
         if activity['band'] == activity['quality_band']:
-            raster_merge, efficacy, cloudratio = getMask(raster_merge, satellite, mask=activity_mask, compute=True)
+            raster_merge, efficacy, cloudratio = getMask(raster_merge, mask=activity_mask, blocks=raster_blocks)
             template.update({'dtype': 'uint8'})
             nodata = activity_mask['nodata']
 
@@ -464,8 +474,8 @@ def merge_warped(self, activity):
 
         # Update entry in DynamoDB
         activity['myend'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        activity['efficacy'] = str(int(efficacy))
-        activity['cloudratio'] = str(int(cloudratio))
+        activity['efficacy'] = str(efficacy)
+        activity['cloudratio'] = str(cloudratio)
         activity['new_resolution_x'] = str(new_res_x)
         activity['new_resolution_y'] = str(new_res_y)
         services.put_item_kinesis(activity)
@@ -483,6 +493,8 @@ def merge_warped(self, activity):
         activity['myend'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         services.put_item_kinesis(activity)
 
+        logger.error(str(e), exc_info=True)
+
 
 ###############################
 # BLEND
@@ -493,8 +505,10 @@ def next_blend(services, mergeactivity):
     blendactivity['action'] = 'blend'
     for key in ['datasets', 'satellite', 'bands', 'quicklook', 'srs', 'functions',
                 'tileid', 'start', 'end', 'dirname', 'nodata', 'bucket_name', 'quality_band',
-                'internal_bands', 'indexes', 'force', 'version', 'datacube', 'irregular_datacube']:
+                'internal_bands', 'force', 'version', 'datacube', 'irregular_datacube', 'mask',
+                'bands_expressions']:
         blendactivity[key] = mergeactivity.get(key, '')
+
     blendactivity['totalInstancesToBeDone'] = len(blendactivity['bands']) + len(blendactivity['internal_bands'])
 
     # Create  dynamoKey for the blendactivity record
@@ -552,6 +566,7 @@ def next_blend(services, mergeactivity):
                 if func == 'IDT' or (func == 'MED' and internal_band == 'PROVENANCE'): continue
                 if not services.s3_file_exists(bucket_name=mergeactivity['bucket_name'], key=blendactivity['{}file'.format(func)]):
                     exists = False
+
             if not blendactivity.get('force') and exists:
                 blendactivity['mystatus'] = 'DONE'
                 next_step(services, blendactivity)
@@ -565,9 +580,10 @@ def next_blend(services, mergeactivity):
         blendactivity['cloudratio'] = '100'
         blendactivity['mylaunch'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-        # Create an entry in dynamoDB for each band blend activity (quality band is not an entry in DynamoDB)
+        # Create an entry in dynamoDB for each band blend activity
         key = '{}activities/{}.json'.format(blendactivity['dirname'], blendactivity['dynamoKey'])
         services.save_file_S3(bucket_name=blendactivity['bucket_name'], key=key, activity=blendactivity)
+
         services.put_item_kinesis(blendactivity)
         services.send_to_sqs(blendactivity)
 
@@ -593,7 +609,7 @@ def fill_blend(services, mergeactivity, blendactivity, internal_band=False):
         # verify if internal process
         if internal_band:
             blendactivity['internal_band'] = internal_band
-        dynamoKey = encode_key(mergeactivity, ['action','datacube','tileid','date_formated','band'])
+        dynamoKey = encode_key(mergeactivity, ['action','irregular_datacube','tileid','date_formated','band'])
         
         response = services.get_activities_by_key(dynamoKey)
         if 'Items' not in response or len(response['Items']) == 0:
@@ -631,7 +647,6 @@ def fill_blend(services, mergeactivity, blendactivity, internal_band=False):
             cube_id, blendactivity['tileid'], blendactivity['start'], blendactivity['end'], band, cube_version)
     return True
 
-
 def blend(self, activity):
     logger.info('==> start BLEND')
     services = self.services
@@ -641,12 +656,10 @@ def blend(self, activity):
     bucket_name = activity['bucket_name']
     prefix = services.get_s3_prefix(bucket_name)
     activity_mask = activity['mask']
-    mask_values = None
 
     band = activity['band']
     numscenes = len(activity['scenes'])
-    # TODO: It must be changed since sen2cor values use 0 as nodata.
-    #       The activity_mask may store only nodata for cloud file.
+    
     nodata = int(activity.get('nodata', -9999))
     if band == activity['quality_band']:
         nodata = activity_mask['nodata']
@@ -678,8 +691,8 @@ def blend(self, activity):
         mask_tuples = []
         for key in activity['scenes']:
             scene = activity['scenes'][key]
-            efficacy = int(scene['efficacy'])
-            resolution = int(scene['resolution'])
+            efficacy = float(scene['efficacy'])
+            resolution = 10
             mask_tuples.append((100. * efficacy / resolution, key))
 
         # Open all input files and save the datasets in two lists, one for masks and other for the current band.
@@ -689,7 +702,7 @@ def blend(self, activity):
         dates = []
         for m in sorted(mask_tuples, reverse=True):
             key = m[1]
-            dates.append(key)
+            dates.append(key[:10])
             efficacy = m[0]
             scene = activity['scenes'][key]
 
@@ -699,9 +712,6 @@ def blend(self, activity):
                 scene['date'],
                 scene['ARDfiles'][activity['quality_band']])
             quality_ref = rasterio.open(filename)
-
-            if mask_values is None:
-                mask_values = parse_mask(quality_ref.read(1), activity_mask)
 
             try:
                 masklist.append(rasterio.open(filename))
@@ -734,8 +744,8 @@ def blend(self, activity):
         width = profile['width']
         height = profile['height']
 
-        clear_values = mask_values['clear_data']
-        not_clear_values = mask_values['not_clear_data']
+        clear_values = numpy.array(activity_mask['clear_data'])
+        not_clear_values = numpy.array(activity_mask['not_clear_data'])
 
         # STACK and MED will be generated in memory
         stack_raster = numpy.full((height, width), dtype=profile['dtype'], fill_value=nodata)
@@ -863,10 +873,10 @@ def blend(self, activity):
 
         # Evaluate cloud cover
         if activity['quality_band'] == band:
-            efficacy, cloud_cover = qa_statistics(stack_raster, mask_values)
+            efficacy, cloud_cover = qa_statistics(stack_raster, mask=activity_mask, blocks=tilelist)
 
-            activity['efficacy'] = efficacy
-            activity['cloudratio'] = cloud_cover
+            activity['efficacy'] = str(efficacy)
+            activity['cloudratio'] = str(cloud_cover)
 
         # Upload the CLEAROB dataset
         if build_clear_observation:
@@ -930,6 +940,8 @@ def blend(self, activity):
         )
         activity['myend'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         services.put_item_kinesis(activity)
+
+        logger.error(str(e), exc_info=True)
 
 
 ###############################

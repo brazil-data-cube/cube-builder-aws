@@ -38,8 +38,7 @@ from .maestro import (blend, merge_warped, orchestrate, posblend,
                       prepare_merge, publish, solo)
 from .services import CubeServices
 from .utils.image import validate_merges
-from .utils.processing import (decode_periods, format_version,
-                               generate_hash_md5, get_cube_name,
+from .utils.processing import (format_version, generate_hash_md5, get_cube_name,
                                get_cube_parts, get_date, get_or_create_model)
 from .utils.serializer import Serializer, DecimalEncoder
 from .utils.timeline import Timeline

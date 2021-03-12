@@ -37,136 +37,6 @@ def get_date(str_date):
 
 
 #############################
-def days_in_month(date):
-    year = int(date.split('-')[0])
-    month = int(date.split('-')[1])
-    nday = int(date.split('-')[2])
-    if month == 12:
-        nmonth = 1
-        nyear = year +1
-    else:
-        nmonth = month + 1
-        nyear = year
-    ndate = '{0:4d}-{1:02d}-{2:02d}'.format(nyear,nmonth,nday)
-    td = numpy.datetime64(ndate) - numpy.datetime64(date)
-    return td
-
-
-#############################
-def decode_periods(temporal_schema, start_date, end_date, time_step):
-    """
-    Retrieve datacube temporal resolution by periods.
-    """
-    requested_periods = {}
-    if isinstance(start_date, datetime.date):
-        start_date = start_date.strftime('%Y-%m-%d')
-
-    td_time_step = datetime.timedelta(days=time_step)
-    steps_per_period = int(round(365./time_step))
-
-    if end_date is None:
-        end_date = datetime.datetime.now().strftime('%Y-%m-%d')
-    if isinstance(end_date, datetime.date):
-        end_date = end_date.strftime('%Y-%m-%d')
-
-    if temporal_schema is None:
-        periodkey = start_date + '_' + start_date + '_' + end_date
-        requested_period = list()
-        requested_period.append(periodkey)
-        requested_periods[start_date] = requested_period
-        return requested_periods
-
-    if temporal_schema == 'M':
-        start_date = datetime.datetime.strptime(start_date, '%Y-%m-%d')
-        end_date = datetime.datetime.strptime(end_date, '%Y-%m-%d')
-        delta = relativedelta(months=time_step)
-        requested_period = []
-        while start_date <= end_date:
-            next_date = start_date + delta
-            periodkey = str(start_date)[:10] + '_' + str(start_date)[:10] + '_' + str(next_date - relativedelta(days=1))[:10]
-            requested_period.append(periodkey)
-            requested_periods[start_date] = requested_period
-            start_date = next_date
-        return requested_periods
-
-    # Find the exact start_date based on periods that start on yyyy-01-01
-    firstyear = start_date.split('-')[0]
-    new_start_date = datetime.datetime.strptime(start_date, '%Y-%m-%d')
-    if temporal_schema == 'A':
-        dbase = datetime.datetime.strptime(firstyear+'-01-01', '%Y-%m-%d')
-        while dbase < new_start_date:
-            dbase += td_time_step
-        if dbase > new_start_date:
-            dbase -= td_time_step
-        start_date = dbase.strftime('%Y-%m-%d')
-        new_start_date = dbase
-
-    # Find the exact end_date based on periods that start on yyyy-01-01
-    lastyear = end_date.split('-')[0]
-    new_end_date = datetime.datetime.strptime(end_date, '%Y-%m-%d')
-    if temporal_schema == 'A':
-        dbase = datetime.datetime.strptime(lastyear+'-12-31', '%Y-%m-%d')
-        while dbase > new_end_date:
-            dbase -= td_time_step
-        end_date = dbase
-        if end_date == start_date:
-            end_date += td_time_step - datetime.timedelta(days=1)
-        end_date = end_date.strftime('%Y-%m-%d')
-
-    # For annual periods
-    if temporal_schema == 'A':
-        dbase = new_start_date
-        yearold = dbase.year
-        count = 0
-        requested_period = []
-        while dbase < new_end_date:
-            if yearold != dbase.year:
-                dbase = datetime.datetime(dbase.year,1,1)
-            yearold = dbase.year
-            dstart = dbase
-            dend = dbase + td_time_step - datetime.timedelta(days=1)
-            dend = min(datetime.datetime(dbase.year, 12, 31), dend)
-            basedate = dbase.strftime('%Y-%m-%d')
-            start_date = dstart.strftime('%Y-%m-%d')
-            end_date = dend.strftime('%Y-%m-%d')
-            periodkey = basedate + '_' + start_date + '_' + end_date
-            if count % steps_per_period == 0:
-                count = 0
-                requested_period = []
-                requested_periods[basedate] = requested_period
-            requested_period.append(periodkey)
-            count += 1
-            dbase += td_time_step
-        if len(requested_periods) == 0 and count > 0:
-            requested_periods[basedate].append(requested_period)
-    else:
-        yeari = start_date.year
-        yearf = end_date.year
-        monthi = start_date.month
-        monthf = end_date.month
-        dayi = start_date.day
-        dayf = end_date.day
-        for year in range(yeari,yearf+1):
-            dbase = datetime.datetime(year,monthi,dayi)
-            if monthi <= monthf:
-                dbasen = datetime.datetime(year,monthf,dayf)
-            else:
-                dbasen = datetime.datetime(year+1,monthf,dayf)
-            while dbase < dbasen:
-                dstart = dbase
-                dend = dbase + td_time_step - datetime.timedelta(days=1)
-                basedate = dbase.strftime('%Y-%m-%d')
-                start_date = dstart.strftime('%Y-%m-%d')
-                end_date = dend.strftime('%Y-%m-%d')
-                periodkey = basedate + '_' + start_date + '_' + end_date
-                requested_period = []
-                requested_periods[basedate] = requested_period
-                requested_periods[basedate].append(periodkey)
-                dbase += td_time_step
-    return requested_periods
-
-
-#############################
 def encode_key(activity, keylist):
     dynamoKey = ''
     for key in keylist:
@@ -174,51 +44,8 @@ def encode_key(activity, keylist):
     return dynamoKey
 
 
-def parse_mask(raster, mask):
-    """Parse input mask according to the raster.
-
-    This method expects a dict with contains the following keys:
-
-        clear_data - Array of clear data
-        nodata - Cloud mask nodata
-        not_clear (Optional) _ List of pixels to be not considered.
-
-    It will read the input array and get all unique values. Make sure to call for cloud file.
-    It may take too long do parse, according to the raster.
-    """
-    clear_data = numpy.array(mask['clear_data'])
-    not_clear_data = numpy.array(mask.get('not_clear_data', []))
-
-    if mask.get('nodata') is None:
-        raise RuntimeError('Excepted nodata value set to compute data set statistics.')
-
-    nodata = mask['nodata']
-
-    # TODO: This method may be slow. Maybe get difference between clear/not_clear/nodata on numpy.where
-    unique_values = numpy.unique(raster)
-
-    if not_clear_data.size == 0:
-        not_clear_data = numpy.setdiff1d(unique_values, clear_data)
-
-    # Not clear data cannot use no data
-    not_clear_data = numpy.setdiff1d(not_clear_data, numpy.array([nodata]))
-    # Store both clear_data, not clear data and no data.
-    useful_values = list(clear_data.tolist())
-    useful_values.extend(list(not_clear_data.tolist()))
-    useful_values.extend([nodata])
-    # Get all unspecified values
-    others_values = numpy.setdiff1d(unique_values, useful_values)
-
-    return dict(
-        clear_data=clear_data,
-        not_clear_data=not_clear_data,
-        nodata=nodata,
-        others=others_values
-    )
-
-
 ############################
-def qa_statistics(raster, mask: dict, compute=False) -> Tuple[float, float]:
+def qa_statistics(raster, mask, blocks) -> Tuple[float, float]:
     """Retrieve raster statistics efficacy and not clear ratio, based in Fmask values.
 
     Notes:
@@ -226,62 +53,44 @@ def qa_statistics(raster, mask: dict, compute=False) -> Tuple[float, float]:
         Values 2 and 4 are considered as `not clear data`
         The values for snow `3` and nodata `255` is not used to count efficacy and not clear ratio
     """
-    if compute:
-        mask = parse_mask(raster, mask)
-
     # Compute how much data is for each class. It will be used as image area
-    clear_pixels = raster[numpy.where(numpy.isin(raster, mask['clear_data']))].size
-    not_clear_pixels = raster[numpy.where(numpy.isin(raster, mask['not_clear_data']))].size
-    others_pixels = raster[numpy.where(numpy.isin(raster, mask['others']))].size
+    clear_pixels = 0
+    not_clear_pixels = 0
 
-    # Total pixels used to retrieve data efficacy
-    total_pixels = raster.size
+    for _, window in blocks:
+        row_offset = window.row_off + window.height
+        col_offset = window.col_off + window.width
+
+        raster_block = raster[window.row_off: row_offset, window.col_off: col_offset]
+
+        clear_pixels += raster_block[numpy.where(numpy.isin(raster_block, mask['clear_data']))].size
+        not_clear_pixels += raster_block[numpy.where(numpy.isin(raster_block, mask['not_clear_data']))].size
+
     # Image area is everything, except nodata.
-    image_area = clear_pixels + not_clear_pixels + others_pixels
-    not_clear_ratio = 100
+    image_area = clear_pixels + not_clear_pixels
 
+    not_clear_ratio = 100
     if image_area != 0:
         not_clear_ratio = round(100. * not_clear_pixels / image_area, 2)
 
-    efficacy = round(100. * clear_pixels / total_pixels, 2)
+    efficacy = round(100. * clear_pixels / raster.size, 2)
 
     return efficacy, not_clear_ratio
 
 
 ############################
-def getMask(raster, satellite, mask=None, compute=False):
+def getMask(raster, mask, blocks):
     """Retrieves and re-sample quality raster to well-known values used in Brazil Data Cube.
-
-    We adopted the `Fmask <https://github.com/GERSL/Fmask>`_ (Function of Mask).
-    TODO: Add paper/authors reference
-
-    In the Fmask output product, the following classes are presented in a normative quality:
-
-    - 0: Clear Land Pixel
-    - 1: Clear Water Pixel
-    - 2: Cloud Shadow
-    - 3: Snow-ice
-    - 4: Cloud
-    - 255: no observation
-
-    For satellite which does not supports these values, consider to expose individual values.
-    For example:
-        CBERS does not have `Snow-ice`, `Water` or `Cloud Shadow` pixel values. The following values are described
-        in CBERS quality band:
-        - `0`: Fill/Nodata. Re-sample to `No observation` (255);
-        - `127: Valid Data. Re-sample to `Clear Land Pixel` (0);
-        - `255`: Cloudy. Re-sample to `Cloud` (4)
 
     Args:
         raster - Raster with Quality band values
-        satellite - Satellite Type
 
     Returns:
         Tuple containing formatted quality raster, efficacy and cloud ratio, respectively
     """
     rastercm = raster
 
-    efficacy, cloudratio = qa_statistics(rastercm, mask=mask, compute=compute)
+    efficacy, cloudratio = qa_statistics(rastercm, mask=mask, blocks=blocks)
 
     return rastercm.astype(numpy.uint8), efficacy, cloudratio
 
