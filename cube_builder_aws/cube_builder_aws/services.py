@@ -374,7 +374,7 @@ class CubeServices:
         for f in items['features']:
             if f['type'] == 'Feature':
                 id = f['id']
-                date = f['properties']['datetime']
+                date = f['properties']['datetime'][:10]
 
                 # Get file link and name
                 assets = f['assets']

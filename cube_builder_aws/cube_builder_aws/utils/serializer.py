@@ -1,3 +1,4 @@
+import json
 from decimal import Decimal
 
 from sqlalchemy.inspection import inspect
@@ -17,3 +18,10 @@ class Serializer(object):
     @staticmethod
     def serialize_list(l):
         return [m.serialize() for m in l]
+
+
+class DecimalEncoder(json.JSONEncoder):
+    def default(self, o):
+        if isinstance(o, Decimal):
+            return float(o) if '.' in str(o) else int(o)
+        return super(DecimalEncoder, self).default(o)

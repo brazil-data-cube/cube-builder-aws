@@ -31,13 +31,13 @@ from .utils.processing import (create_asset_definition, create_cog_in_s3,
 from .utils.timeline import Timeline
 
 
-def orchestrate(cube_infos, tiles, start_date, end_date, shape=None, item_prefix=None):
-    formatted_version = format_version(cube_infos.version)
+def orchestrate(cube_irregular_infos, temporal_schema, tiles, start_date, end_date, shape=None, item_prefix=None):
+    formatted_version = format_version(cube_irregular_infos.version)
 
     tiles_by_grs = db.session() \
         .query(Tile, GridRefSys) \
         .filter(
-            Tile.grid_ref_sys_id == cube_infos.grid_ref_sys_id,
+            Tile.grid_ref_sys_id == cube_irregular_infos.grid_ref_sys_id,
             Tile.name.in_(tiles),
             GridRefSys.id == Tile.grid_ref_sys_id
         ).all()
@@ -66,8 +66,6 @@ def orchestrate(cube_infos, tiles, start_date, end_date, shape=None, item_prefix
     start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
 
     end_date = datetime.strptime(end_date, '%Y-%m-%d').date()
-
-    temporal_schema = cube_infos.temporal_composition_schema
 
     # Get/Mount timeline from given parameters
     timeline = Timeline(**temporal_schema, start_date=start_date, end_date=end_date).mount()
@@ -100,20 +98,17 @@ def orchestrate(cube_infos, tiles, start_date, end_date, shape=None, item_prefix
 
             period = f'{interval_start}_{interval_end}'
 
-            item_id = f'{cube_infos.name}_{formatted_version}_{tile_name}_{period}'
+            item_id = f'{cube_irregular_infos.name}_{formatted_version}_{tile_name}_{period}'
             if item_id not in items_id:
                 items_id.append(item_id)
                 items[tile_name]['periods'][period] = {
-                    'collection': cube_infos.name,
-                    'version': cube_infos.version,
-                    'collection_id': cube_infos.id,
                     'tile_id': tile_id,
                     'tile_name': tile_name,
                     'item_date': period,
                     'id': item_id,
                     'composite_start': interval_start,
                     'composite_end': interval_end,
-                    'dirname': os.path.join(prefix, cube_infos.name, formatted_version, tile_name)
+                    'dirname': f'{os.path.join(prefix, cube_irregular_infos.name, formatted_version, tile_name)}/'
                 }
                 if shape:
                     items[tile_name]['periods'][period]['shape'] = shape
@@ -161,7 +156,7 @@ def next_step(services, activity):
 ###############################
 # MERGE
 ###############################
-def prepare_merge(self, datacube, datasets, satellite, bands, indexes, quicklook, resx,
+def prepare_merge(self, datacube, irregular_datacube, datasets, satellite, bands, quicklook, resx,
                   resy, nodata, crs, quality_band, functions, version, force=False,
                   mask=None, secondary_catalog=None, bands_expressions=dict()):
     services = self.services
@@ -169,14 +164,13 @@ def prepare_merge(self, datacube, datasets, satellite, bands, indexes, quicklook
     # Build the basics of the merge activity
     activity = {}
     activity['action'] = 'merge'
-    activity['datacube_orig_name'] = f'{datacube}-{functions[0]}'
     activity['datacube'] = datacube
+    activity['irregular_datacube'] = irregular_datacube
     activity['version'] = version
     activity['datasets'] = datasets
     activity['satellite'] = satellite.upper()
     activity['bands'] = bands
     activity['bands_expressions'] = bands_expressions
-    activity['indexes'] = indexes
     activity['quicklook'] = quicklook
     activity['resx'] = resx
     activity['resy'] = resy
@@ -211,11 +205,14 @@ def prepare_merge(self, datacube, datasets, satellite, bands, indexes, quicklook
             activity['dirname'] = self.score['items'][tile_name]['periods'][periodkey]['dirname']
             activity['shape'] = self.score['items'][tile_name]['periods'][periodkey].get('shape')
 
+            # convert to string
+            activity['start'] = activity['start'].strftime('%Y-%m-%d')
+            activity['end'] = activity['end'].strftime('%Y-%m-%d')
+
             # When force is True, we must rebuild the merge
             if force:
-                merge_control_key = encode_key(activity, ['action', 'datacube', 'tileid', 'start', 'end'])
-                blend_control_key = 'blend{}_1M{}'.format(activity['datacube'],
-                                                          encode_key(activity, ['tileid', 'start', 'end']))
+                merge_control_key = encode_key(activity, ['action', 'irregular_datacube', 'tileid', 'start', 'end'])
+                blend_control_key = 'blend{}_{}'.format(activity['datacube'], encode_key(activity, ['tileid', 'start', 'end']))
                 self.services.remove_control_by_key(merge_control_key)
                 self.services.remove_control_by_key(blend_control_key)
 
@@ -226,26 +223,22 @@ def prepare_merge(self, datacube, datasets, satellite, bands, indexes, quicklook
             # the total amount merges that will be done
             number_of_datasets_dates = 0
             first_band = list(self.score['items'][tile_name]['periods'][periodkey]['scenes'].keys())[0]
-            list_dates = []
+            activity['list_dates'] = []
             for dataset in self.score['items'][tile_name]['periods'][periodkey]['scenes'][first_band].keys():
                 for date in self.score['items'][tile_name]['periods'][periodkey]['scenes'][first_band][dataset].keys():
-                    list_dates.append(str(date)[:10])
+                    activity['list_dates'].append(date)
                     number_of_datasets_dates += 1
             
             activity['instancesToBeDone'] = number_of_datasets_dates
             activity['totalInstancesToBeDone'] = number_of_datasets_dates * len(activity['bands'])
 
-            activity['list_dates'] = sorted(list(set(list_dates)), reverse=True)
-
             # Reset mycount in activitiesControlTable
-            activity['start'] = activity['start'].strftime('%Y-%m-%d')
-            activity['end'] = activity['end'].strftime('%Y-%m-%d')
-            activities_control_table_key = encode_key(activity, ['action','datacube','tileid','start','end'])
+            activities_control_table_key = encode_key(activity, ['action','irregular_datacube','tileid','start','end'])
             services.put_control_table(activities_control_table_key, 0)
 
             # Save the activity in DynamoDB if no scenes are available
             if number_of_datasets_dates == 0:
-                dynamo_key = encode_key(activity, ['action','datacube','tileid','start','end'])
+                dynamo_key = encode_key(activity, ['action','irregular_datacube','tileid','start','end'])
                 activity['dynamoKey'] = dynamo_key
                 activity['sk'] = 'NOSCENES'
                 activity['mystatus'] = 'ERROR'
@@ -266,23 +259,21 @@ def prepare_merge(self, datacube, datasets, satellite, bands, indexes, quicklook
                 for dataset in self.score['items'][tile_name]['periods'][periodkey]['scenes'][band]:
                     activity['dataset'] = dataset
 
-                    # get resolution by satellite
-                    activity['resolution'] = RESOLUTION_BY_SATELLITE.get(activity['satellite'])
                     # For all dates
                     for date in self.score['items'][tile_name]['periods'][periodkey]['scenes'][band][dataset]:
                         activity['date'] = date[0:10]
                         activity['links'] = []
 
                         # Create the dynamoKey for the activity in DynamoDB
-                        activity['dynamoKey'] = encode_key(activity, ['action','datacube','tileid','date','band'])
+                        activity['dynamoKey'] = encode_key(activity, ['action','irregular_datacube','tileid','date','band'])
 
                         # Get all scenes that were acquired in the same date
                         for scene in self.score['items'][tile_name]['periods'][periodkey]['scenes'][band][dataset][date]:
                             activity['links'].append(scene['link'])
 
                         # Continue filling the activity
-                        activity['ARDfile'] = activity['dirname']+'{}/{}_{}_{}_{}_{}.tif'.format(date[0:10],
-                            activity['datacube'], version, activity['tileid'], date[0:10], band)
+                        activity['ARDfile'] = activity['dirname']+'{}/{}_{}_{}_{}_{}.tif'.format(activity['date'],
+                            activity['irregular_datacube'], version, activity['tileid'], activity['date'], band)
                         activity['sk'] = activity['date'] + activity['dataset']
                         activity['mylaunch'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
@@ -359,6 +350,7 @@ def merge_warped(self, activity):
         if shape:
             num_pixel_x = shape[0]
             num_pixel_y = shape[1]
+
         else:
             num_pixel_x = round(dist_x / resx)
             num_pixel_y = round(dist_y / resy)
@@ -385,6 +377,7 @@ def merge_warped(self, activity):
             raster = numpy.zeros((numlin, numcol,), dtype=numpy.uint16)
             raster_merge = numpy.full((numlin, numcol,), dtype=numpy.uint16, fill_value=source_nodata)
             raster_mask = numpy.ones((numlin, numcol,), dtype=numpy.uint16)
+        
         else:
             resampling = Resampling.bilinear
             raster = numpy.zeros((numlin, numcol,), dtype=numpy.int16)
@@ -394,6 +387,7 @@ def merge_warped(self, activity):
         template = None
 
         for url in activity['links']:
+
             with rasterio.Env(CPL_CURL_VERBOSE=False):
                 with rasterio.open(url) as src:
                     kwargs = src.meta.copy()
@@ -440,7 +434,9 @@ def merge_warped(self, activity):
                                 valid_data_scene = raster[raster != nodata]
                                 raster_merge[raster != nodata] = valid_data_scene.reshape(numpy.size(valid_data_scene))
                             else:
-                                raster_merge = raster_merge + raster * raster_mask
+                                factor = raster * raster_mask
+
+                                raster_merge = raster_merge + factor
                                 raster_mask[raster != nodata] = 0
 
                             if template is None:
@@ -457,7 +453,7 @@ def merge_warped(self, activity):
         efficacy = 0
         cloudratio = 100
         if activity['band'] == activity['quality_band']:
-            raster_merge, efficacy, cloudratio = getMask(raster_merge, satellite)
+            raster_merge, efficacy, cloudratio = getMask(raster_merge, satellite, mask=activity_mask, compute=True)
             template.update({'dtype': 'uint8'})
             nodata = activity_mask['nodata']
 
@@ -495,10 +491,9 @@ def next_blend(services, mergeactivity):
     # Fill the blend activity from merge activity
     blendactivity = {}
     blendactivity['action'] = 'blend'
-    blendactivity['datacube'] = mergeactivity['datacube_orig_name']
     for key in ['datasets', 'satellite', 'bands', 'quicklook', 'srs', 'functions',
                 'tileid', 'start', 'end', 'dirname', 'nodata', 'bucket_name', 'quality_band',
-                'internal_bands', 'indexes', 'force', 'version']:
+                'internal_bands', 'indexes', 'force', 'version', 'datacube', 'irregular_datacube']:
         blendactivity[key] = mergeactivity.get(key, '')
     blendactivity['totalInstancesToBeDone'] = len(blendactivity['bands']) + len(blendactivity['internal_bands'])
 
@@ -617,7 +612,6 @@ def fill_blend(services, mergeactivity, blendactivity, internal_band=False):
             blendactivity['scenes'][datedataset]['dataset'] = activity['dataset']
             blendactivity['scenes'][datedataset]['satellite'] = activity['satellite']
             blendactivity['scenes'][datedataset]['cloudratio'] = item['cloudratio']
-            blendactivity['scenes'][datedataset]['resolution'] = activity['resolution']
         if 'ARDfiles' not in blendactivity['scenes'][datedataset]:
             blendactivity['scenes'][datedataset]['ARDfiles'] = {}
         basename = os.path.basename(activity['ARDfile'])
@@ -627,12 +621,12 @@ def fill_blend(services, mergeactivity, blendactivity, internal_band=False):
     if band != blendactivity['quality_band']:
         for function in blendactivity['functions']:
             if func == 'IDT': continue
-            cube_id = '{}_{}'.format(blendactivity['datacube'], function)
+            cube_id = '{}_{}'.format('_'.join(blendactivity['datacube'].split('_')[:-1]), function)
             blendactivity['{}file'.format(function)] = '{0}/{5}/{1}/{2}_{3}/{0}_{5}_{1}_{2}_{3}_{4}.tif'.format(
                 cube_id, blendactivity['tileid'], blendactivity['start'], blendactivity['end'], band, cube_version)
     else:
         # quality band generate only STK composite
-        cube_id = '{}_{}'.format(blendactivity['datacube'], 'STK')
+        cube_id = '{}_{}'.format('_'.join(blendactivity['datacube'].split('_')[:-1]), 'STK')
         blendactivity['{}file'.format('STK')] = '{0}/{5}/{1}/{2}_{3}/{0}_{5}_{1}_{2}_{3}_{4}.tif'.format(
             cube_id, blendactivity['tileid'], blendactivity['start'], blendactivity['end'], band, cube_version)
     return True

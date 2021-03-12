@@ -41,7 +41,7 @@ from .utils.image import validate_merges
 from .utils.processing import (decode_periods, format_version,
                                generate_hash_md5, get_cube_name,
                                get_cube_parts, get_date, get_or_create_model)
-from .utils.serializer import Serializer
+from .utils.serializer import Serializer, DecimalEncoder
 from .utils.timeline import Timeline
 
 
@@ -466,12 +466,14 @@ class CubeController:
 
         # get process infos by dynameDB
         process_info = response['Items'][0]
-        process_params = process_info['infos']
+        process_params = json.dumps(process_info['infos'], cls=DecimalEncoder) 
+        process_params = json.loads(process_params)
+
         indexes = process_params['indexes']
         quality_band = process_params['quality_band']
         functions = [process_params['composite_function'], 'IDT']
         satellite = process_params['metadata']['platform']['code']
-        mask = process_params.get('mask', None)
+        mask = process_params.get('mask')
         secondary_catalog = process_params.get('secondary_catalog')
 
         tiles = params['tiles']
@@ -497,7 +499,6 @@ class CubeController:
         bands_expressions = dict()
 
         bands_list = []
-        indexes_list = []
         for band in bands:
             if band.name.upper() not in [i['common_name'].upper() for i in indexes]:
                 bands_list.append(band.name)
@@ -505,28 +506,6 @@ class CubeController:
                 meta = deepcopy(band._metadata)
                 meta['data_type'] = band.data_type
                 bands_expressions[band.name] = meta
-            else:
-                indexes_available = {
-                    'NDVI': ['NIR', 'RED'],
-                    'EVI': ['NIR', 'RED', 'BLUE']
-                }
-                if not indexes_available.get(band.name.upper()):
-                    return 'Index not available', 400
-                
-                index = dict(
-                    name=band.name,
-                    bands=[
-                        dict(
-                            name=b.name,
-                            common_name=b.common_name
-                        ) for b in bands \
-                            if b.common_name.upper() in indexes_available[band.name.upper()]
-                    ]
-                )
-                if len(index['bands']) != len(indexes_available[band.name.upper()]):
-                    return 'bands: {}, are needed to create the {} index'.format(
-                        ','.join(indexes_available[band.name.upper()]), band.name), 400
-                indexes_list.append(index)
 
         # get quicklook bands
         bands_ql = Quicklook.query().filter(
@@ -538,18 +517,17 @@ class CubeController:
             list(filter(lambda b: b.id == bands_ql.blue, bands))[0].name
         ]
 
-        cub_ref = cube_infos or cube_infos_irregular
-
         # items => { 'tile_id': bbox, xmin, ..., periods: {'start_end': collection, ... } }
         # orchestrate
         shape = params.get('shape', None)
-        self.score['items'] = orchestrate(cub_ref, tiles, start_date, end_date, shape, item_prefix=ITEM_PREFIX)
+        temporal_schema = cube_infos.temporal_composition_schema
+        self.score['items'] = orchestrate(cube_infos_irregular, temporal_schema, tiles, start_date, end_date, shape, item_prefix=ITEM_PREFIX)
 
         # prepare merge
         crs = cube_infos.grs.crs
         formatted_version = format_version(cube_infos.version)
-        prepare_merge(self, cube_infos.name, params['collections'], satellite, bands_list,
-            indexes_list, bands_ql_list, float(bands[0].resolution_x), float(bands[0].resolution_y), 
+        prepare_merge(self, cube_infos.name, cube_infos_irregular.name, params['collections'], satellite,
+            bands_list, bands_ql_list, float(bands[0].resolution_x), float(bands[0].resolution_y), 
             int(bands[0].nodata), crs, quality_band, functions, formatted_version, 
             params.get('force', False), mask, secondary_catalog, bands_expressions=bands_expressions)
 

@@ -249,7 +249,7 @@ def qa_statistics(raster, mask: dict, compute=False) -> Tuple[float, float]:
 
 
 ############################
-def getMask(raster, satellite, mask=None):
+def getMask(raster, satellite, mask=None, compute=False):
     """Retrieves and re-sample quality raster to well-known values used in Brazil Data Cube.
 
     We adopted the `Fmask <https://github.com/GERSL/Fmask>`_ (Function of Mask).
@@ -280,30 +280,8 @@ def getMask(raster, satellite, mask=None):
         Tuple containing formatted quality raster, efficacy and cloud ratio, respectively
     """
     rastercm = raster
-    if satellite == 'MODIS':
-        # MOD13Q1 Pixel Reliability !!!!!!!!!!!!!!!!!!!!
-        # Note that 1 was added to this image in downloadModis because of warping
-        # Rank/Key Summary QA 		Description
-        # -1 		Fill/No Data 	Not Processed
-        # 0 		Good Data 		Use with confidence
-        # 1 		Marginal data 	Useful, but look at other QA information
-        # 2 		Snow/Ice 		Target covered with snow/ice
-        # 3 		Cloudy 			Target not visible, covered with cloud
-        lut = numpy.array([255, 0, 0, 2, 4], dtype=numpy.uint8)
-        rastercm = numpy.take(lut, raster+1).astype(numpy.uint8)
-    elif 'CBERS' in satellite:
-        # Key Summary        QA Description
-        #   0 Fill/No Data - Not Processed
-        # 127 Good Data    - Use with confidence
-        # 255 Cloudy       - Target not visible, covered with cloud
-        # fill = 0  # warped images have 0 as fill area
-        lut = numpy.zeros(256, dtype=numpy.uint8)
-        lut[0] = 255
-        lut[127] = 0
-        lut[255] = 4
-        rastercm = numpy.take(lut, raster).astype(numpy.uint8)
 
-    efficacy, cloudratio = qa_statistics(rastercm, mask=mask)
+    efficacy, cloudratio = qa_statistics(rastercm, mask=mask, compute=compute)
 
     return rastercm.astype(numpy.uint8), efficacy, cloudratio
 
