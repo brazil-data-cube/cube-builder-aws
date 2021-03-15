@@ -498,9 +498,11 @@ class CubeController:
         bands_expressions = dict()
 
         bands_list = []
+        bands_ids_list = {}
         for band in bands:
             if band.name.upper() not in [i['common_name'].upper() for i in indexes]:
                 bands_list.append(band.name)
+                bands_ids_list[band.id] = band.name
             elif band._metadata and band._metadata.get('expression') and band._metadata['expression'].get('value'):
                 meta = deepcopy(band._metadata)
                 meta['data_type'] = band.data_type
@@ -526,8 +528,8 @@ class CubeController:
         crs = cube_infos.grs.crs
         formatted_version = format_version(cube_infos.version)
         prepare_merge(self, cube_infos.name, cube_infos_irregular.name, params['collections'], satellite,
-            bands_list, bands_ql_list, float(bands[0].resolution_x), float(bands[0].resolution_y), 
-            int(bands[0].nodata), crs, quality_band, functions, formatted_version, 
+            bands_list, bands_ids_list, bands_ql_list, float(bands[0].resolution_x), 
+            float(bands[0].resolution_y), int(bands[0].nodata), crs, quality_band, functions, formatted_version, 
             params.get('force', False), mask, secondary_catalog, bands_expressions=bands_expressions)
 
         return dict(

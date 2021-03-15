@@ -256,7 +256,7 @@ class AutoCloseDataSet:
 
 
 ############################
-def create_index(services, index, band_expressions, bands, bucket_name):
+def create_index(services, index, bands_expressions, bands, bucket_name, index_file_path):
     """Generate data cube custom bands based in string-expression.
 
     This method seeks for custom bands on Collection Band definition. A custom band must have
@@ -265,9 +265,10 @@ def create_index(services, index, band_expressions, bands, bucket_name):
     Args:
         services - AWS service wrapper
         index - The band name
-        band_expressions - Map of band expressions
+        bands_expressions - Map of band expressions
         bands - Map of data cube bands path
-        bucket_name - Bucket name where the data cube is stored.
+        bucket_name - Bucket name where the data cube is stored
+        index_file_path - Path index path.
 
     Raises:
         RuntimeError when an error occurs while interpreting the band expression in Python Virtual Machine.
@@ -278,14 +279,13 @@ def create_index(services, index, band_expressions, bands, bucket_name):
     prefix = services.get_s3_prefix(bucket_name)
 
     map_data_set_context = dict()
-    band_definition = band_expressions[index]
+    band_definition = bands_expressions[index]
     band_expression = band_definition['expression']['value']
     band_data_type = band_definition['data_type']
     data_type_info = numpy.iinfo(band_data_type)
     data_type_max_value = data_type_info.max
     data_type_min_value = data_type_info.min
 
-    ref_file = None
     profile = blocks = None
 
     for _band, relative_path in bands.items():
@@ -295,9 +295,7 @@ def create_index(services, index, band_expressions, bands, bucket_name):
         if profile is None:
             profile = map_data_set_context[_band].dataset.profile
             blocks = map_data_set_context[_band].dataset.block_windows()
-            ref_file = relative_path
 
-    file_path = '_'.join(ref_file.split('_')[:-1]) + '_{}.tif'.format(index)
     profile['dtype'] = band_data_type
     raster = numpy.full((profile['height'], profile['width']), dtype=band_data_type, fill_value=profile['nodata'])
 
@@ -321,7 +319,7 @@ def create_index(services, index, band_expressions, bands, bucket_name):
 
         raster[window.row_off: row_offset, window.col_off: col_offset] = raster_block
 
-    create_cog_in_s3(services, profile, file_path, raster.astype(numpy.int16), False, None, bucket_name)
+    create_cog_in_s3(services, profile, index_file_path, raster.astype(numpy.int16), False, None, bucket_name)
 
 
 ############################
@@ -393,10 +391,10 @@ def create_asset_definition(services, bucket_name: str, href: str, mime_type: st
                 geoms.append(shapely.geometry.shape(geom))
 
             # TODO: Simplify geometries
-            if len(geoms) == 1:
-                min_convex_hull = geoms[0].convex_hull
-            else:
-                min_convex_hull = shapely.geometry.MultiPolygon(geoms).convex_hull
+            # if len(geoms) == 1:
+            #     min_convex_hull = geoms[0].convex_hull
+            # else:
+            #     min_convex_hull = shapely.geometry.MultiPolygon(geoms).convex_hull
 
             chunk_x, chunk_y = data_set.profile.get('blockxsize'), data_set.profile.get('blockxsize')
 

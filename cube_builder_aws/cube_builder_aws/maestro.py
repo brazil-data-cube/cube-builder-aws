@@ -160,9 +160,9 @@ def next_step(services, activity):
 ###############################
 # MERGE
 ###############################
-def prepare_merge(self, datacube, irregular_datacube, datasets, satellite, bands, quicklook, resx,
-                  resy, nodata, crs, quality_band, functions, version, force=False,
-                  mask=None, secondary_catalog=None, bands_expressions=dict()):
+def prepare_merge(self, datacube, irregular_datacube, datasets, satellite, bands, bands_ids, 
+                  quicklook, resx, resy, nodata, crs, quality_band, functions, version,
+                  force=False, mask=None, secondary_catalog=None, bands_expressions=dict()):
     services = self.services
 
     # Build the basics of the merge activity
@@ -174,6 +174,7 @@ def prepare_merge(self, datacube, irregular_datacube, datasets, satellite, bands
     activity['datasets'] = datasets
     activity['satellite'] = satellite.upper()
     activity['bands'] = bands
+    activity['bands_ids'] = bands_ids
     activity['bands_expressions'] = bands_expressions
     activity['quicklook'] = quicklook
     activity['resx'] = resx
@@ -480,9 +481,6 @@ def merge_warped(self, activity):
         activity['new_resolution_y'] = str(new_res_y)
         services.put_item_kinesis(activity)
 
-        key = '{}activities/{}{}.json'.format(activity['dirname'], activity['dynamoKey'], activity['date'])
-        services.save_file_S3(bucket_name=bucket_name, key=key, activity=activity)
-
     except Exception as e:
         # Update entry in DynamoDB
         activity['mystatus'] = 'ERROR'
@@ -503,7 +501,7 @@ def next_blend(services, mergeactivity):
     # Fill the blend activity from merge activity
     blendactivity = {}
     blendactivity['action'] = 'blend'
-    for key in ['datasets', 'satellite', 'bands', 'quicklook', 'srs', 'functions',
+    for key in ['datasets', 'satellite', 'bands', 'quicklook', 'srs', 'functions', 'bands_ids',
                 'tileid', 'start', 'end', 'dirname', 'nodata', 'bucket_name', 'quality_band',
                 'internal_bands', 'force', 'version', 'datacube', 'irregular_datacube', 'mask',
                 'bands_expressions']:
@@ -579,10 +577,6 @@ def next_blend(services, mergeactivity):
         blendactivity['efficacy'] = '0'
         blendactivity['cloudratio'] = '100'
         blendactivity['mylaunch'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
-        # Create an entry in dynamoDB for each band blend activity
-        key = '{}activities/{}.json'.format(blendactivity['dirname'], blendactivity['dynamoKey'])
-        services.save_file_S3(bucket_name=blendactivity['bucket_name'], key=key, activity=blendactivity)
 
         services.put_item_kinesis(blendactivity)
         services.send_to_sqs(blendactivity)
@@ -952,7 +946,9 @@ def next_posblend(services, blendactivity):
     blend_dynamo_key = blendactivity['dynamoKey']
     posblendactivity = blendactivity
     posblendactivity['action'] = 'posblend'
-    posblendactivity['totalInstancesToBeDone'] = len(posblendactivity['indexes']) * (len(posblendactivity['scenes'].keys()) + 1) # Irregular and regular
+
+    # indexes * (Irregular scenes + regular scene)
+    posblendactivity['totalInstancesToBeDone'] = len(posblendactivity['bands_expressions'].keys()) * (len(posblendactivity['scenes'].keys()) + 1) 
 
     # Reset mycount in activitiesControlTable
     if posblendactivity['action'] not in posblendactivity['dynamoKey']:
@@ -961,13 +957,16 @@ def next_posblend(services, blendactivity):
     services.put_control_table(activitiesControlTableKey, 0)
 
     posblendactivity['indexesToBe'] = {}
-    for index in posblendactivity['indexes']:
-        i_name = index['name']
+    for i_name in posblendactivity['bands_expressions'].keys():
+        i_infos = posblendactivity['bands_expressions'][i_name]
+
         posblendactivity['indexesToBe'][i_name] = {}
 
-        for band in index['bands']:
+        for band_id in i_infos['expression']['bands']:
+            band_name = posblendactivity['bands_ids'][str(band_id)]
+
             # get Blend activity
-            response = services.get_activity_item({'id': blend_dynamo_key, 'sk': band['name']})
+            response = services.get_activity_item({'id': blend_dynamo_key, 'sk': band_name})
             item = response['Item']
             activity = json.loads(item['activity'])
 
@@ -981,15 +980,17 @@ def next_posblend(services, blendactivity):
 
                         date = scene['date']
                         posblendactivity['indexesToBe'][i_name][func][date] = posblendactivity['indexesToBe'][i_name][func].get(date, {})
-                        path_band = '{}{}/{}'.format(activity['dirname'], date, scene['ARDfiles'][band['name']])
-                        posblendactivity['indexesToBe'][i_name][func][date][band['common_name']] = path_band
+                        path_band = '{}{}/{}'.format(activity['dirname'], date, scene['ARDfiles'][band_name])
+                        posblendactivity['indexesToBe'][i_name][func][date][band_name] = path_band
                 else:
-                    posblendactivity['indexesToBe'][i_name][func][band['common_name']] = activity['{}file'.format(func)]
+                    posblendactivity['indexesToBe'][i_name][func][band_name] = activity['{}file'.format(func)]
 
-    for index in posblendactivity['indexes']:
+    for i_name in posblendactivity['bands_expressions'].keys():
         # create and dispatch one activity to irregular cube and one to regular cubes (each index)
+
         for i in ['', 'IDT']:
-            posblendactivity['sk'] = '{}{}'.format(index['name'], i)
+            posblendactivity['sk'] = '{}{}'.format(i_name, i)
+
             # Blend has not been performed, do it
             posblendactivity['mystatus'] = 'NOTDONE'
             posblendactivity['mystart'] = 'SSSS-SS-SS'
@@ -999,21 +1000,15 @@ def next_posblend(services, blendactivity):
             posblendactivity['mylaunch'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
             if i == 'IDT':
-                dates = activity['scenes'].keys()
-                for date_with_dataset in dates:
+                dates_with_datasets = activity['scenes'].keys()
+                for date_with_dataset in dates_with_datasets:
                     scene = activity['scenes'][date_with_dataset]
                     date = scene['date']
-                    posblendactivity['sk'] = '{}{}{}'.format(index['name'], i, date)
+                    posblendactivity['sk'] = '{}{}{}'.format(i_name, i, date)
             
-                    # Create an entry in dynamoDB for each band blend activity (quality band is not an entry in DynamoDB)
-                    key = '{}activities/{}.json'.format(posblendactivity['dirname'], posblendactivity['dynamoKey'])
-                    services.save_file_S3(bucket_name=posblendactivity['bucket_name'], key=key, activity=posblendactivity)
                     services.put_item_kinesis(posblendactivity)
                     services.send_to_sqs(posblendactivity)
             else:
-                # Create an entry in dynamoDB for each band blend activity (quality band is not an entry in DynamoDB)
-                key = '{}activities/{}.json'.format(posblendactivity['dirname'], posblendactivity['dynamoKey'])
-                services.save_file_S3(bucket_name=posblendactivity['bucket_name'], key=key, activity=posblendactivity)
                 services.put_item_kinesis(posblendactivity)
                 services.send_to_sqs(posblendactivity)
 
@@ -1027,7 +1022,7 @@ def posblend(self, activity):
     bucket_name = activity['bucket_name']
     mystart = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     reprocessed = False
-    band_expressions = activity['band_expressions']
+    bands_expressions = activity['bands_expressions']
 
     try:
         sk = activity['sk']
@@ -1035,26 +1030,37 @@ def posblend(self, activity):
         
         if is_identity:
             sk = sk.replace('IDT', '')
+
+            index_name = sk[:-10]
             index = activity['indexesToBe'][sk[:-10]]
+
             for date in index['IDT'].keys():
                 if date in sk:
                     bands = index['IDT'][date]
-                    ref_file_path = bands['red'] if bands.get('red') else bands['RED']
 
-                    file_path = '_'.join(ref_file_path.split('_')[:-1]) + '_{}.tif'.format(sk.replace(date, ''))
-                    if force or not services.s3_file_exists(bucket_name=bucket_name, key=file_path):
-                        create_index(services, band_expressions, bands, bucket_name)
+                    # get first band link to mount others paths
+                    first_band = list(bands.keys())[0]
+                    path_first_band = bands[first_band]
+
+                    i_file_path = path_first_band.replace(f'_{first_band}.tif', f'_{index_name}.tif') 
+                    if force or not services.s3_file_exists(bucket_name=bucket_name, key=i_file_path):
+                        create_index(services, index_name, bands_expressions, bands, bucket_name)
                         reprocessed = True
         else:
-            index = activity['indexesToBe'][sk]
+            index_name = sk
+            index = activity['indexesToBe'][index_name]
+
             for func in activity['functions']:
                 if func == 'IDT': continue
                 bands = index[func]
 
-                ref_file_path = bands['red'] if bands.get('red') else bands['RED']
-                file_path = '_'.join(ref_file_path.split('_')[:-1]) + '_{}.tif'.format(sk)
+                # get first band link to mount others paths
+                first_band = list(bands.keys())[0]
+                path_first_band = bands[first_band]
+
+                i_file_path = path_first_band.replace(f'_{first_band}.tif', f'_{index_name}.tif')
                 if force or not services.s3_file_exists(bucket_name=bucket_name, key=file_path):
-                    create_index(services, band_expressions, bands, bucket_name)
+                    create_index(services, index_name, bands_expressions, bands, bucket_name)
                     reprocessed = True
                 
         # Update status and end time in DynamoDB
@@ -1066,8 +1072,6 @@ def posblend(self, activity):
     
     except Exception as e:
         # Update entry in DynamoDB
-        logger.error(e, exc_info=True)
-        logger.error('erro', exc_info=True)
         activity['mystatus'] = 'ERROR'
         activity['errors'] = dict(
             step='posblend',
@@ -1076,6 +1080,8 @@ def posblend(self, activity):
         activity['myend'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         services.put_item_kinesis(activity)
 
+        logger.error(str(e), exc_info=True)
+
 
 ###############################
 # PUBLISH
@@ -1083,13 +1089,13 @@ def posblend(self, activity):
 def next_publish(services, posblendactivity):
     # Fill the publish activity from blend activity
     publishactivity = {}
-    for key in ['datacube','satellite','datasets','bands','quicklook','tileid','start','end', \
+    for key in ['datacube','bands','bands_ids','quicklook','tileid','start','end', \
         'dirname', 'cloudratio', 'bucket_name', 'quality_band', 'internal_bands', \
-        'functions', 'indexes', 'version']:
+        'functions', 'indexesToBe', 'version','irregular_datacube']:
         publishactivity[key] = posblendactivity.get(key)
     publishactivity['action'] = 'publish'
 
-    # Create  dynamoKey for the publish activity
+    # Create dynamoKey for the publish activity
     publishactivity['dynamoKey'] = encode_key(publishactivity, ['action','datacube','tileid','start','end'])
 
     # Get information from blended bands
@@ -1111,15 +1117,15 @@ def next_publish(services, posblendactivity):
                 publishactivity['scenes'][datedataset] = {'ARDfiles' : {}}
                 publishactivity['scenes'][datedataset]['ARDfiles'][publishactivity['quality_band']] = scene['ARDfiles'][publishactivity['quality_band']]
                 publishactivity['scenes'][datedataset]['date'] = scene['date']
-                publishactivity['scenes'][datedataset]['dataset'] = scene['dataset']
-                publishactivity['scenes'][datedataset]['satellite'] = scene['satellite']
                 publishactivity['scenes'][datedataset]['cloudratio'] = scene['cloudratio']
-                # add indexes to publish
-                for index in publishactivity['indexes']:
+
+                # add indexes to publish in irregular cube
+                for index_name in publishactivity['indexesToBe'].keys():
                     # ex: LC8_30_090096_2019-01-28_fMask.tif => LC8_30_090096_2019-01-28_NDVI.tif
                     quality_file = scene['ARDfiles'][publishactivity['quality_band']]
-                    index_file_name = '_'.join(quality_file.split('_')[:-1]) + '_{}.tif'.format(index['name'])
-                    publishactivity['scenes'][datedataset]['ARDfiles'][index['name']] = index_file_name
+                    index_file_name = quality_file.replace(f'_{publishactivity['quality_band']}.tif', f'_{index_name}.tif')
+                    publishactivity['scenes'][datedataset]['ARDfiles'][index_name] = index_file_name
+
             publishactivity['scenes'][datedataset]['ARDfiles'][band] = scene['ARDfiles'][band]
 
         # Get blended files
@@ -1127,6 +1133,7 @@ def next_publish(services, posblendactivity):
         for func in publishactivity['functions']:
             if func == 'IDT': continue
             if func == 'MED' and band == publishactivity['quality_band']: continue
+
             key_file = '{}file'.format(func)
             publishactivity['blended'][band][key_file] = activity[key_file]
             example_file_name = activity[key_file]
@@ -1134,21 +1141,25 @@ def next_publish(services, posblendactivity):
     # Create indices to catalog CLEAROB, TOTALOB, PROVENANCE, ...
     for internal_band in publishactivity['internal_bands']:
         publishactivity['blended'][internal_band] = {}
+
         for func in publishactivity['functions']:
             if func == 'IDT': continue
             if func == 'MED' and internal_band == 'PROVENANCE': continue
+
             key_file = '{}file'.format(func)
             file_name = '_'.join(example_file_name.split('_')[:-1]) + '_{}.tif'.format(internal_band)
             publishactivity['blended'][internal_band][key_file] = file_name
 
-    # Create indices to catalog NIR, NDVI ...
-    for index in publishactivity['indexes']:
-        publishactivity['blended'][index['name']] = {}
+    # Create indices to catalog EVI, NDVI ...
+    for index_name in publishactivity['indexesToBe'].keys():
+        publishactivity['blended'][index_name] = {}
+
         for func in publishactivity['functions']:
             if func == 'IDT': continue
+
             key_file = '{}file'.format(func)
-            file_name = '_'.join(example_file_name.split('_')[:-1]) + '_{}.tif'.format(index['name'])
-            publishactivity['blended'][index['name']][key_file] = file_name
+            file_name = '_'.join(example_file_name.split('_')[:-1]) + '_{}.tif'.format(index_name)
+            publishactivity['blended'][index_name][key_file] = file_name
 
     publishactivity['sk'] = 'ALLBANDS'
     publishactivity['mystatus'] = 'NOTDONE'
@@ -1172,7 +1183,7 @@ def publish(self, activity):
 
     activity['mystart'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     try:
-        identity_cube = '_'.join(activity['datacube'].split('_')[0:2])
+        identity_cube = activity['irregular_datacube']
 
         # GENERATE QUICKLOOK's and REGISTER ITEMS in DB
         ## for CUBES (MEDIAN, STACK ...)
@@ -1180,7 +1191,7 @@ def publish(self, activity):
         for function in activity['functions']:
             if function == 'IDT': continue
 
-            cube_name = get_cube_name(activity['datacube'], function)
+            cube_name = activity['datacube']
             cube = Collection.query().filter(
                 Collection.name == cube_name,
                 Collection.version == int(activity['version'][-3:])
@@ -1240,7 +1251,7 @@ def publish(self, activity):
                     Band.collection_id == cube.id
                 ).all()
 
-                indexes_list = [index['name'] for index in activity['indexes']]
+                indexes_list = list(activity['indexesToBe'].keys())
                 for band in (activity['bands'] + activity['internal_bands'] + indexes_list):
                     if not activity['blended'][band].get('{}file'.format(function)):
                         continue
@@ -1267,7 +1278,7 @@ def publish(self, activity):
         for datedataset in activity['scenes']:
             scene = activity['scenes'][datedataset]
 
-            cube_name = get_cube_name(activity['datacube'])
+            cube_name = activity['irregular_datacube']
             cube = Collection.query().filter(
                 Collection.name == cube_name,
                 Collection.version == int(activity['version'][-3:])
@@ -1326,7 +1337,8 @@ def publish(self, activity):
                 bands_by_cube = Band.query().filter(
                     Band.collection_id == cube.id
                 ).all()
-                indexes_list = [index['name'] for index in activity['indexes']]
+                
+                indexes_list = list(activity['indexesToBe'].keys())
                 for band in (activity['bands'] + indexes_list):
                     if band not in scene['ARDfiles']:
                         raise Exception(f'publish - problem - band {band} not in scene[files]')
@@ -1361,3 +1373,5 @@ def publish(self, activity):
         )
         activity['myend'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         services.put_item_kinesis(activity)
+
+        logger.error(str(e), exc_info=True)
