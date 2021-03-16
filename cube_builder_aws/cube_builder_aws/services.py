@@ -9,6 +9,7 @@
 import base64
 import json
 import re
+from urllib.parse import urlparse
 
 import boto3
 import botocore
@@ -16,7 +17,6 @@ import requests
 from boto3.dynamodb.conditions import Attr, Key
 from botocore.errorfactory import ClientError
 from stac import STAC
-from urllib.parse import urlparse
 
 from .config import (AWS_KEY_ID, AWS_SECRET_KEY, DBNAME_TB_CONTROL,
                      DBNAME_TB_PROCESS, DYNAMO_TB_ACTIVITY, KINESIS_NAME,
@@ -164,9 +164,9 @@ class CubeServices:
             KeyConditionExpression=Key('id').eq(process_id)
         )
 
-    def get_process_by_datacube(self, datacube):
+    def get_process_by_datacube(self, irregular_datacube_id):
         return self.processTable.scan(
-            FilterExpression=Key('datacube').eq(datacube)
+            FilterExpression=Key('irregular_datacube_id').eq(irregular_datacube_id)
         )
 
     def get_cube_meta(self, cube,):

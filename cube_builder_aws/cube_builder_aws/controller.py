@@ -38,9 +38,10 @@ from .maestro import (blend, merge_warped, orchestrate, posblend,
                       prepare_merge, publish, solo)
 from .services import CubeServices
 from .utils.image import validate_merges
-from .utils.processing import (format_version, generate_hash_md5, get_cube_name,
-                               get_cube_parts, get_date, get_or_create_model)
-from .utils.serializer import Serializer, DecimalEncoder
+from .utils.processing import (format_version, generate_hash_md5,
+                               get_cube_name, get_cube_parts, get_date,
+                               get_or_create_model)
+from .utils.serializer import DecimalEncoder, Serializer
 from .utils.timeline import Timeline
 
 
@@ -192,12 +193,12 @@ class CubeController:
         grs = GridRefSys.query().filter(GridRefSys.name == params['grs']).first()
 
         if grs is None:
-            NotFound(f'Grid {params["grs"]} not found.')
+            raise NotFound(f'Grid {params["grs"]} not found.')
 
         cube_function = CompositeFunction.query().filter(CompositeFunction.alias == function).first()
 
         if cube_function is None:
-            NotFound(f'Function {function} not found.')
+            raise NotFound(f'Function {function} not found.')
 
         data = dict(name='Meter', symbol='m')
         resolution_meter, _ = get_or_create_model(ResolutionUnit, defaults=data, symbol='m')
@@ -307,9 +308,13 @@ class CubeController:
 
         params['bands'].extend(params['indexes'])
 
+        datacube_id = None
+        irregular_datacube_id = None
+
         with db.session.begin_nested():
             # Create data cube Identity
             cube = self._create_cube_definition(cube_name, params)
+            irregular_datacube_id = cube['id']
 
             cube_serialized = [cube]
 
@@ -323,13 +328,13 @@ class CubeController:
                 # Create data cube with temporal composition
                 cube_composite = self._create_cube_definition(cube_name_composite, params)
                 cube_serialized.append(cube_composite)
+                datacube_id = cube_composite['id']
 
         db.session.commit()
 
         # set infos in process table (dynamoDB)
         # delete if exists
-        cube_identify = f'{cube_serialized[0]["name"]}-{cube_serialized[0]["version"]}'
-        response = self.services.get_process_by_datacube(cube_identify)
+        response = self.services.get_process_by_datacube(irregular_datacube_id)
         if 'Items' not in response or len(response['Items']) == 0:
             for item in response['Items']:
                 self.services.remove_process_by_key(item['id'])
@@ -337,8 +342,8 @@ class CubeController:
         # add new process
         self.services.put_process_table(
             key=cube_identify,
-            datacube_id=cube_serialized[0]['id'],
-            i_datacube_id=cube_serialized[1]['id'],
+            datacube_id=datacube_id,
+            i_datacube_id=irregular_datacube_id,
             infos=params
         )
         

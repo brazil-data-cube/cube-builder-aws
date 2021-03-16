@@ -28,9 +28,8 @@ from rasterio.warp import Resampling
 from rio_cogeo.cogeo import cog_translate
 from rio_cogeo.profiles import cog_profiles
 
-#############################
-from .interpreter import execute
 from ..logger import logger
+from .interpreter import execute
 
 
 def get_date(str_date):
