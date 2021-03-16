@@ -1044,7 +1044,7 @@ def posblend(self, activity):
 
                     i_file_path = path_first_band.replace(f'_{first_band}.tif', f'_{index_name}.tif') 
                     if force or not services.s3_file_exists(bucket_name=bucket_name, key=i_file_path):
-                        create_index(services, index_name, bands_expressions, bands, bucket_name)
+                        create_index(services, index_name, bands_expressions, bands, bucket_name, i_file_path)
                         reprocessed = True
         else:
             index_name = sk
@@ -1059,8 +1059,8 @@ def posblend(self, activity):
                 path_first_band = bands[first_band]
 
                 i_file_path = path_first_band.replace(f'_{first_band}.tif', f'_{index_name}.tif')
-                if force or not services.s3_file_exists(bucket_name=bucket_name, key=file_path):
-                    create_index(services, index_name, bands_expressions, bands, bucket_name)
+                if force or not services.s3_file_exists(bucket_name=bucket_name, key=i_file_path):
+                    create_index(services, index_name, bands_expressions, bands, bucket_name, i_file_path)
                     reprocessed = True
                 
         # Update status and end time in DynamoDB
@@ -1123,7 +1123,7 @@ def next_publish(services, posblendactivity):
                 for index_name in publishactivity['indexesToBe'].keys():
                     # ex: LC8_30_090096_2019-01-28_fMask.tif => LC8_30_090096_2019-01-28_NDVI.tif
                     quality_file = scene['ARDfiles'][publishactivity['quality_band']]
-                    index_file_name = quality_file.replace(f'_{publishactivity['quality_band']}.tif', f'_{index_name}.tif')
+                    index_file_name = quality_file.replace(f'_{publishactivity["quality_band"]}.tif', f'_{index_name}.tif')
                     publishactivity['scenes'][datedataset]['ARDfiles'][index_name] = index_file_name
 
             publishactivity['scenes'][datedataset]['ARDfiles'][band] = scene['ARDfiles'][band]
@@ -1272,7 +1272,6 @@ def publish(self, activity):
                 item.updated = datetime.now()
                 db.session.add(item)
             db.session.commit()
-
 
         ## for all ARD scenes (IDENTITY)
         for datedataset in activity['scenes']:

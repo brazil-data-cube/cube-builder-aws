@@ -373,14 +373,14 @@ class CubeController:
         # split and format datacube NAME
         parts_cube_name = get_cube_parts(datacube)
         irregular_datacube = '_'.join(parts_cube_name[:2])
-        is_irregular = len(parts_cube_name) > 2
-        datacube = '_'.join(get_cube_parts(datacube)[:3]) if is_irregular else irregular_datacube
+        is_regular = len(parts_cube_name) > 2
+        datacube = cube_name.replace('-1', '') if cube_name.endswith('-1') else cube_name
 
         # STATUS
         acts_datacube = []
         not_done_datacube = 0
         error_datacube = 0
-        if is_irregular:
+        if is_regular:
             acts_datacube = self.services.get_activities_by_datacube(datacube)
             not_done_datacube = len(list(filter(lambda i: i['mystatus'] == 'NOTDONE', acts_datacube)))
             error_datacube = len(list(filter(lambda i: i['mystatus'] == 'ERROR', acts_datacube)))
@@ -401,59 +401,67 @@ class CubeController:
 
         # TIME
         acts = sorted(activities, key=lambda i: i['mylaunch'], reverse=True)
-        start_date = get_date(acts[-1]['mylaunch'])
-        end_date = get_date(acts[0]['myend'])
+        if len(acts):
+            start_date = get_date(acts[-1]['mylaunch'])
+            end_date = get_date(acts[0]['myend'])
 
-        time = 0
-        list_dates = []
-        for a in acts:
-            start = get_date(a['mylaunch'])
-            end = get_date(a['myend'])
-            if len(list_dates) == 0:
-                time += (end - start).seconds
+            time = 0
+            list_dates = []
+            for a in acts:
+                start = get_date(a['mylaunch'])
+                end = get_date(a['myend'])
+                if len(list_dates) == 0:
+                    time += (end - start).seconds
+                    list_dates.append({'s': start, 'e': end})
+                    continue
+
+                time_by_act = 0
+                i = 0
+                for dates in list_dates:
+                    i += 1
+                    if dates['s'] < start < dates['e']:
+                        value = (end - dates['e']).seconds
+                        if value > 0 and value < time_by_act:
+                            time_by_act = value
+
+                    elif dates['s'] < end < dates['e']:
+                        value = (dates['s'] - start).seconds
+                        if value > 0 and value < time_by_act:
+                            time_by_act = value
+
+                    elif start > dates['e'] or end < dates['s']:
+                        value = (end - start).seconds
+                        if value < time_by_act or i == 1:
+                            time_by_act = value
+
+                    elif start < dates['s'] or end > dates['e']:
+                        time_by_act = 0
+
+                time += time_by_act
                 list_dates.append({'s': start, 'e': end})
-                continue
 
-            time_by_act = 0
-            i = 0
-            for dates in list_dates:
-                i += 1
-                if dates['s'] < start < dates['e']:
-                    value = (end - dates['e']).seconds
-                    if value > 0 and value < time_by_act:
-                        time_by_act = value
+            time_str = '{} h {} m {} s'.format(
+                int(time / 60 / 60), int(time / 60), (time % 60))
 
-                elif dates['s'] < end < dates['e']:
-                    value = (dates['s'] - start).seconds
-                    if value > 0 and value < time_by_act:
-                        time_by_act = value
+            quantity_coll_items = Item.query().filter(
+                Item.collection_id == cube.id
+            ).count()
 
-                elif start > dates['e'] or end < dates['s']:
-                    value = (end - start).seconds
-                    if value < time_by_act or i == 1:
-                        time_by_act = value
-
-                elif start < dates['s'] or end > dates['e']:
-                    time_by_act = 0
-
-            time += time_by_act
-            list_dates.append({'s': start, 'e': end})
-
-        time_str = '{} h {} m {} s'.format(
-            int(time / 60 / 60), int(time / 60), (time % 60))
-
-        quantity_coll_items = Item.query().filter(
-            Item.collection_id == cube.id
-        ).count()
+            return dict(
+                finished = True,
+                start_date = str(start_date),
+                last_date = str(end_date),
+                done = len(activities),
+                duration = time_str,
+                collection_item = quantity_coll_items
+            ), 200
 
         return dict(
-            finished = True,
-            start_date = str(start_date),
-            last_date = str(end_date),
-            done = len(activities),
-            duration = time_str,
-            collection_item = quantity_coll_items
-        ), 200
+            finished = False,
+            done = 0,
+            not_done = 0,
+            error = 0
+        )
 
     def start_process(self, params):
         response = {}

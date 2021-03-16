@@ -30,6 +30,7 @@ from rio_cogeo.profiles import cog_profiles
 
 #############################
 from .interpreter import execute
+from ..logger import logger
 
 
 def get_date(str_date):
@@ -97,29 +98,35 @@ def getMask(raster, mask, blocks):
 
 ############################
 def generateQLook(generalSceneId, qlfiles):
-    profile = None
-    with rasterio.open(qlfiles[0]) as src:
-        profile = src.profile
+    try:
+        profile = None
+        with rasterio.open(qlfiles[0]) as src:
+            profile = src.profile
 
-    numlin = 768
-    numcol = int(float(profile['width'])/float(profile['height'])*numlin)
-    image = numpy.ones((numlin,numcol,len(qlfiles),), dtype=numpy.uint8)
-    pngname = '/tmp/{}.png'.format(generalSceneId)
+        numlin = 768
+        numcol = int(float(profile['width'])/float(profile['height'])*numlin)
+        image = numpy.ones((numlin,numcol,len(qlfiles),), dtype=numpy.uint8)
+        pngname = '/tmp/{}.png'.format(generalSceneId)
 
-    nb = 0
-    for file in qlfiles:
-        with rasterio.open(file) as src:
-            raster = src.read(1, out_shape=(numlin, numcol))
-            # Rescale to 0-255 values
-            nodata = raster <= 0
-            if raster.min() != 0 or raster.max() != 0:
-                raster = raster.astype(numpy.float32)/10000.*255.
-                raster[raster>255] = 255
-            image[:,:,nb] = raster.astype(numpy.uint8) * numpy.invert(nodata)
-            nb += 1
+        nb = 0
+        for file in qlfiles:
+            with rasterio.open(file) as src:
+                raster = src.read(1, out_shape=(numlin, numcol))
+                # Rescale to 0-255 values
+                nodata = raster <= 0
+                if raster.min() != 0 or raster.max() != 0:
+                    raster = raster.astype(numpy.float32)/10000.*255.
+                    raster[raster>255] = 255
+                image[:,:,nb] = raster.astype(numpy.uint8) * numpy.invert(nodata)
+                nb += 1
 
-    write_png(pngname, image, transparent=(0, 0, 0))
-    return pngname
+        write_png(pngname, image, transparent=(0, 0, 0))
+        return pngname
+        
+    except Exception as e:
+        logger.error(str(e), exc_info=True)
+
+        raise e
 
 
 #############################
@@ -346,59 +353,65 @@ def create_asset_definition(services, bucket_name: str, href: str, mime_type: st
         created - Date time str of asset. When not set, use current timestamp.
         is_raster - Flag to identify raster. When set, `raster_size` and `chunk_size` will be set to the asset.
     """
-    fmt = '%Y-%m-%dT%H:%M:%S'
-    _now_str = datetime.datetime.utcnow().strftime(fmt)
+    try:
+        fmt = '%Y-%m-%dT%H:%M:%S'
+        _now_str = datetime.datetime.utcnow().strftime(fmt)
 
-    if created is None:
-        created = _now_str
-    elif isinstance(created, datetime.datetime):
-        created = created.strftime(fmt)
+        if created is None:
+            created = _now_str
+        elif isinstance(created, datetime.datetime):
+            created = created.strftime(fmt)
 
-    file_obj = services.s3_file_exists(bucket_name=bucket_name, key=href)
-    size = file_obj['ContentLength']
+        file_obj = services.s3_file_exists(bucket_name=bucket_name, key=href)
+        size = file_obj['ContentLength']
 
-    asset = {
-        'href': absolute_path,
-        'type': mime_type,
-        'bdc:size': size,
-        'checksum:multihash': multihash_checksum_sha256(services=services, bucket_name=bucket_name, entry=href),
-        'roles': role,
-        'created': created,
-        'updated': _now_str
-    }
+        asset = {
+            'href': absolute_path,
+            'type': mime_type,
+            'bdc:size': size,
+            'checksum:multihash': multihash_checksum_sha256(services=services, bucket_name=bucket_name, entry=href),
+            'roles': role,
+            'created': created,
+            'updated': _now_str
+        }
 
-    geom = None
-    min_convex_hull = None
+        geom = None
+        min_convex_hull = None
 
-    if is_raster:
-        with rasterio.open(f's3://{absolute_path}') as data_set:
-            asset['bdc:raster_size'] = dict(
-                x=data_set.shape[1],
-                y=data_set.shape[0],
-            )
+        if is_raster:
+            with rasterio.open(f's3://{absolute_path}') as data_set:
+                asset['bdc:raster_size'] = dict(
+                    x=data_set.shape[1],
+                    y=data_set.shape[0],
+                )
 
-            _geom = shapely.geometry.mapping(shapely.geometry.box(*data_set.bounds))
-            geom_shape = shapely.geometry.shape(rasterio.warp.transform_geom(data_set.crs, 'EPSG:4326', _geom))
-            geom = from_shape(geom_shape, srid=4326)
+                _geom = shapely.geometry.mapping(shapely.geometry.box(*data_set.bounds))
+                geom_shape = shapely.geometry.shape(rasterio.warp.transform_geom(data_set.crs, 'EPSG:4326', _geom))
+                geom = from_shape(geom_shape, srid=4326)
 
-            data = data_set.read(1, masked=True, out_dtype=numpy.uint8)
-            data[data == numpy.ma.masked] = 0
-            data[data != numpy.ma.masked] = 1
-            geoms = []
-            for _geom, _ in rasterio.features.shapes(data, mask=data, transform=data_set.transform):
-                _geom = rasterio.warp.transform_geom(data_set.crs, 'EPSG:4326', _geom, precision=6)
+                # data = data_set.read(1, masked=True, out_dtype=numpy.uint8)
+                # data[data == numpy.ma.masked] = 0
+                # data[data != numpy.ma.masked] = 1
+                # geoms = []
+                # for _geom, _ in rasterio.features.shapes(data, mask=data, transform=data_set.transform):
+                #     _geom = rasterio.warp.transform_geom(data_set.crs, 'EPSG:4326', _geom, precision=6)
 
-                geoms.append(shapely.geometry.shape(geom))
+                #     geoms.append(shapely.geometry.shape(geom))
 
-            # TODO: Simplify geometries
-            # if len(geoms) == 1:
-            #     min_convex_hull = geoms[0].convex_hull
-            # else:
-            #     min_convex_hull = shapely.geometry.MultiPolygon(geoms).convex_hull
+                # TODO: Simplify geometries
+                # if len(geoms) == 1:
+                #     min_convex_hull = geoms[0].convex_hull
+                # else:
+                #     min_convex_hull = shapely.geometry.MultiPolygon(geoms).convex_hull
 
-            chunk_x, chunk_y = data_set.profile.get('blockxsize'), data_set.profile.get('blockxsize')
+                chunk_x, chunk_y = data_set.profile.get('blockxsize'), data_set.profile.get('blockxsize')
 
-            if chunk_x and chunk_x:
-                asset['bdc:chunk_size'] = dict(x=chunk_x, y=chunk_y)
-    
-    return asset, geom, min_convex_hull
+                if chunk_x and chunk_y:
+                    asset['bdc:chunk_size'] = dict(x=chunk_x, y=chunk_y)
+
+        return asset, geom, min_convex_hull
+
+    except Exception as e:
+        logger.error(str(e), exc_info=True)
+
+        raise e
