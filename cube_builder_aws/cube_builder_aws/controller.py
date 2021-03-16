@@ -795,7 +795,10 @@ class CubeController:
         """
         cube = self.get_cube_or_404(cube_id)
 
-        items = self.services.get_merges(cube.name, tile_id, start_date[:10], end_date[:10])
+        cube_name_parts = cube.name.split('_')
+        cube_identity = '_'.join(cube_name_parts[:2])
+
+        items = self.services.get_merges(cube_identity, tile_id, start_date[:10], end_date[:10])
 
         result = validate_merges(items)
 
@@ -857,7 +860,8 @@ class CubeController:
             total_pages=paginator.pages
         ), 200
 
-    def generate_periods(self, schema: str, step: int, start: str = None, end: str = None):
+    def generate_periods(self, schema: str, step: int, unit: str, cycle: dict = None,
+                         intervals = None, start_date: str = None, last_date: str = None):
         """Generate data cube periods using temporal composition schema.
         Args:
             schema: Temporal Schema (continuous, cyclic)

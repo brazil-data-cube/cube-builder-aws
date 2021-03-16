@@ -261,7 +261,7 @@ def list_periods():
     if errors:
         return errors, 400
 
-    return CubeController.generate_periods(**args)
+    return controller.generate_periods(**args)
 
 
 # @bp.route('/estimate-cost',methods=["POST"])
