@@ -26,7 +26,8 @@ provider:
       value: ${env:TOKEN}
   tags:
     Name: ${env:PROJECT_NAME}-${env:STAGE}
-
+  stackTags:
+    Name: ${env:PROJECT_NAME}-${env:STAGE}
 
   environment:
     LAMBDA_FUNCTION_NAME: ${self:service}-${self:provider.stage}-app
@@ -98,7 +99,7 @@ functions:
   app:
     handler: wsgi.handler
     timeout: 720
-    memorySize: 256
+    memorySize: 512
     events:
       - http: 
           path: /
@@ -165,7 +166,7 @@ functions:
 
   app_publish: 
     handler: app.continue_process
-    timeout: 360
+    timeout: 720
     memorySize: 1024
     events:
       - sqs:
@@ -206,7 +207,7 @@ resources:
       Type: AWS::SQS::Queue
       Properties:
         QueueName: ${self:service}-${self:provider.stage}-queue-publish
-        VisibilityTimeout: 360
+        VisibilityTimeout: 720
 
     cubeBuilderKinesis:
       Type: AWS::Kinesis::Stream
