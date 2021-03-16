@@ -308,13 +308,13 @@ class CubeController:
 
         params['bands'].extend(params['indexes'])
 
-        datacube_id = None
-        irregular_datacube_id = None
+        datacube = dict()
+        irregular_datacube = dict()
 
         with db.session.begin_nested():
             # Create data cube Identity
             cube = self._create_cube_definition(cube_name, params)
-            irregular_datacube_id = cube['id']
+            irregular_datacube = cube
 
             cube_serialized = [cube]
 
@@ -328,22 +328,23 @@ class CubeController:
                 # Create data cube with temporal composition
                 cube_composite = self._create_cube_definition(cube_name_composite, params)
                 cube_serialized.append(cube_composite)
-                datacube_id = cube_composite['id']
+                datacube = cube_composite
 
         db.session.commit()
 
         # set infos in process table (dynamoDB)
         # delete if exists
-        response = self.services.get_process_by_datacube(irregular_datacube_id)
+        response = self.services.get_process_by_datacube(datacube['id'])
         if 'Items' not in response or len(response['Items']) == 0:
             for item in response['Items']:
                 self.services.remove_process_by_key(item['id'])
 
         # add new process
+        cube_identify = f'{datacube["name"]}-{datacube["version"]}'
         self.services.put_process_table(
             key=cube_identify,
-            datacube_id=datacube_id,
-            i_datacube_id=irregular_datacube_id,
+            datacube_id=datacube['id'],
+            i_datacube_id=irregular_datacube['id'],
             infos=params
         )
         
@@ -379,7 +380,6 @@ class CubeController:
         parts_cube_name = get_cube_parts(datacube)
         irregular_datacube = '_'.join(parts_cube_name[:2])
         is_regular = len(parts_cube_name) > 2
-        datacube = cube_name.replace('-1', '') if cube_name.endswith('-1') else cube_name
 
         # STATUS
         acts_datacube = []
@@ -466,11 +466,11 @@ class CubeController:
             done = 0,
             not_done = 0,
             error = 0
-        )
+        ), 200
 
     def start_process(self, params):
         response = {}
-        datacube_identify = f'{params["datacube_name"]}-{params["datacube_version"]}'
+        datacube_identify = f'{params["datacube"]}-{params["datacube_version"]}'
         response = self.services.get_process_by_id(datacube_identify)
 
         if 'Items' not in response or len(response['Items']) == 0:
@@ -485,7 +485,10 @@ class CubeController:
         quality_band = process_params['quality_band']
         functions = [process_params['composite_function'], 'IDT']
         satellite = process_params['metadata']['platform']['code']
-        mask = process_params.get('mask')
+        mask = process_params['parameters'].get('mask')
+        if not mask:
+            raise NotFound('Mask values not found in item allocated in processing table - dynamoDB')
+
         secondary_catalog = process_params.get('secondary_catalog')
 
         tiles = params['tiles']
@@ -884,7 +887,7 @@ class CubeController:
         Note:
             When there is no data cube item generated yet, raises BadRequest.
         """
-        cube = self.get_cube_or_404(cube_id)
+        cube = self.get_cube_or_404(int(cube_id))
 
         identity_cube = '_'.join(cube.name.split('_')[:2])
 
@@ -896,7 +899,7 @@ class CubeController:
         activity = json.loads(item['Items'][0]['activity'])
 
         return dict(
-            url_stac=activity['url_stac'],
+            stac_url=activity['url_stac'],
             collections=','.join(activity['datasets']),
             bucket=activity['bucket_name'],
             satellite=activity['satellite'],

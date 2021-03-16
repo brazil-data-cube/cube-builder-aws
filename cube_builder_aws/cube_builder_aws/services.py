@@ -164,9 +164,9 @@ class CubeServices:
             KeyConditionExpression=Key('id').eq(process_id)
         )
 
-    def get_process_by_datacube(self, irregular_datacube_id):
+    def get_process_by_datacube(self, datacube_id):
         return self.processTable.scan(
-            FilterExpression=Key('irregular_datacube_id').eq(irregular_datacube_id)
+            FilterExpression=Key('datacube_id').eq(datacube_id)
         )
 
     def get_cube_meta(self, cube,):
@@ -224,7 +224,7 @@ class CubeServices:
                 'tile_id': activity['tileid'],
                 'period_start': activity['start'],
                 'period_end': activity['end'],
-                'data_cube': activity['datacube'],
+                'data_cube': activity['datacube'] if activity['action'] != 'merge' else activity['irregular_datacube'],
 
                 'mystatus': activity['mystatus'],
                 'mylaunch': activity['mylaunch'],

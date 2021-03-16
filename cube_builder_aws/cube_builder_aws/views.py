@@ -194,7 +194,7 @@ def start():
 
     data = form.load(args)
 
-    controller = CubeController(url_stac=args['url_stac'], bucket=args['bucket'])
+    controller = CubeController(url_stac=args['stac_url'], bucket=args['bucket'])
     message, status = controller.start_process(data)
 
     return jsonify(message), status
