@@ -63,7 +63,7 @@ class CustomMaskDefinition(Schema):
 
     clear_data = fields.List(fields.Integer, required=True, allow_none=False)
     not_clear_data = fields.List(fields.Integer, required=True, allow_none=False)
-    others = fields.List(fields.Integer, required=False, allow_none=True)
+    nodata = fields.Integer(required=False, allow_none=False)
 
 
 class DataCubeForm(Schema):
