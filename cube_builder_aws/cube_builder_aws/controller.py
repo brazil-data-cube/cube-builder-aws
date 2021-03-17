@@ -38,10 +38,10 @@ from .maestro import (blend, merge_warped, orchestrate, posblend,
                       prepare_merge, publish, solo)
 from .services import CubeServices
 from .utils.image import validate_merges
-from .utils.processing import (decode_periods, format_version,
-                               generate_hash_md5, get_cube_name,
-                               get_cube_parts, get_date, get_or_create_model)
-from .utils.serializer import Serializer
+from .utils.processing import (format_version, generate_hash_md5,
+                               get_cube_name, get_cube_parts, get_date,
+                               get_or_create_model)
+from .utils.serializer import DecimalEncoder, Serializer
 from .utils.timeline import Timeline
 
 
@@ -193,12 +193,12 @@ class CubeController:
         grs = GridRefSys.query().filter(GridRefSys.name == params['grs']).first()
 
         if grs is None:
-            NotFound(f'Grid {params["grs"]} not found.')
+            raise NotFound(f'Grid {params["grs"]} not found.')
 
         cube_function = CompositeFunction.query().filter(CompositeFunction.alias == function).first()
 
         if cube_function is None:
-            NotFound(f'Function {function} not found.')
+            raise NotFound(f'Function {function} not found.')
 
         data = dict(name='Meter', symbol='m')
         resolution_meter, _ = get_or_create_model(ResolutionUnit, defaults=data, symbol='m')
@@ -308,9 +308,13 @@ class CubeController:
 
         params['bands'].extend(params['indexes'])
 
+        datacube = dict()
+        irregular_datacube = dict()
+
         with db.session.begin_nested():
             # Create data cube Identity
             cube = self._create_cube_definition(cube_name, params)
+            irregular_datacube = cube
 
             cube_serialized = [cube]
 
@@ -324,22 +328,23 @@ class CubeController:
                 # Create data cube with temporal composition
                 cube_composite = self._create_cube_definition(cube_name_composite, params)
                 cube_serialized.append(cube_composite)
+                datacube = cube_composite
 
         db.session.commit()
 
         # set infos in process table (dynamoDB)
         # delete if exists
-        cube_identify = f'{cube_serialized[0]["name"]}-{cube_serialized[0]["version"]}'
-        response = self.services.get_process_by_datacube(cube_identify)
+        response = self.services.get_process_by_datacube(datacube['id'])
         if 'Items' not in response or len(response['Items']) == 0:
             for item in response['Items']:
                 self.services.remove_process_by_key(item['id'])
 
         # add new process
+        cube_identify = f'{datacube["name"]}-{datacube["version"]}'
         self.services.put_process_table(
             key=cube_identify,
-            datacube_id=cube_serialized[0]['id'],
-            i_datacube_id=cube_serialized[1]['id'],
+            datacube_id=datacube['id'],
+            i_datacube_id=irregular_datacube['id'],
             infos=params
         )
         
@@ -374,14 +379,13 @@ class CubeController:
         # split and format datacube NAME
         parts_cube_name = get_cube_parts(datacube)
         irregular_datacube = '_'.join(parts_cube_name[:2])
-        is_irregular = len(parts_cube_name) > 2
-        datacube = '_'.join(get_cube_parts(datacube)[:3]) if is_irregular else irregular_datacube
+        is_regular = len(parts_cube_name) > 2
 
         # STATUS
         acts_datacube = []
         not_done_datacube = 0
         error_datacube = 0
-        if is_irregular:
+        if is_regular:
             acts_datacube = self.services.get_activities_by_datacube(datacube)
             not_done_datacube = len(list(filter(lambda i: i['mystatus'] == 'NOTDONE', acts_datacube)))
             error_datacube = len(list(filter(lambda i: i['mystatus'] == 'ERROR', acts_datacube)))
@@ -402,63 +406,71 @@ class CubeController:
 
         # TIME
         acts = sorted(activities, key=lambda i: i['mylaunch'], reverse=True)
-        start_date = get_date(acts[-1]['mylaunch'])
-        end_date = get_date(acts[0]['myend'])
+        if len(acts):
+            start_date = get_date(acts[-1]['mylaunch'])
+            end_date = get_date(acts[0]['myend'])
 
-        time = 0
-        list_dates = []
-        for a in acts:
-            start = get_date(a['mylaunch'])
-            end = get_date(a['myend'])
-            if len(list_dates) == 0:
-                time += (end - start).seconds
+            time = 0
+            list_dates = []
+            for a in acts:
+                start = get_date(a['mylaunch'])
+                end = get_date(a['myend'])
+                if len(list_dates) == 0:
+                    time += (end - start).seconds
+                    list_dates.append({'s': start, 'e': end})
+                    continue
+
+                time_by_act = 0
+                i = 0
+                for dates in list_dates:
+                    i += 1
+                    if dates['s'] < start < dates['e']:
+                        value = (end - dates['e']).seconds
+                        if value > 0 and value < time_by_act:
+                            time_by_act = value
+
+                    elif dates['s'] < end < dates['e']:
+                        value = (dates['s'] - start).seconds
+                        if value > 0 and value < time_by_act:
+                            time_by_act = value
+
+                    elif start > dates['e'] or end < dates['s']:
+                        value = (end - start).seconds
+                        if value < time_by_act or i == 1:
+                            time_by_act = value
+
+                    elif start < dates['s'] or end > dates['e']:
+                        time_by_act = 0
+
+                time += time_by_act
                 list_dates.append({'s': start, 'e': end})
-                continue
 
-            time_by_act = 0
-            i = 0
-            for dates in list_dates:
-                i += 1
-                if dates['s'] < start < dates['e']:
-                    value = (end - dates['e']).seconds
-                    if value > 0 and value < time_by_act:
-                        time_by_act = value
+            time_str = '{} h {} m {} s'.format(
+                int(time / 60 / 60), int(time / 60), (time % 60))
 
-                elif dates['s'] < end < dates['e']:
-                    value = (dates['s'] - start).seconds
-                    if value > 0 and value < time_by_act:
-                        time_by_act = value
+            quantity_coll_items = Item.query().filter(
+                Item.collection_id == cube.id
+            ).count()
 
-                elif start > dates['e'] or end < dates['s']:
-                    value = (end - start).seconds
-                    if value < time_by_act or i == 1:
-                        time_by_act = value
-
-                elif start < dates['s'] or end > dates['e']:
-                    time_by_act = 0
-
-            time += time_by_act
-            list_dates.append({'s': start, 'e': end})
-
-        time_str = '{} h {} m {} s'.format(
-            int(time / 60 / 60), int(time / 60), (time % 60))
-
-        quantity_coll_items = Item.query().filter(
-            Item.collection_id == cube.id
-        ).count()
+            return dict(
+                finished = True,
+                start_date = str(start_date),
+                last_date = str(end_date),
+                done = len(activities),
+                duration = time_str,
+                collection_item = quantity_coll_items
+            ), 200
 
         return dict(
-            finished = True,
-            start_date = str(start_date),
-            last_date = str(end_date),
-            done = len(activities),
-            duration = time_str,
-            collection_item = quantity_coll_items
+            finished = False,
+            done = 0,
+            not_done = 0,
+            error = 0
         ), 200
 
     def start_process(self, params):
         response = {}
-        datacube_identify = f'{params["datacube_name"]}-{params["datacube_version"]}'
+        datacube_identify = f'{params["datacube"]}-{params["datacube_version"]}'
         response = self.services.get_process_by_id(datacube_identify)
 
         if 'Items' not in response or len(response['Items']) == 0:
@@ -466,17 +478,22 @@ class CubeController:
 
         # get process infos by dynameDB
         process_info = response['Items'][0]
-        process_params = json.loads(process_info['infos'])
+        process_params = json.dumps(process_info['infos'], cls=DecimalEncoder) 
+        process_params = json.loads(process_params)
+
         indexes = process_params['indexes']
         quality_band = process_params['quality_band']
         functions = [process_params['composite_function'], 'IDT']
-        satellite = process_info['metadata']['platform']['code']
-        mask = process_info.get('mask', None)
-        secondary_catalog = process_info.get('secondary_catalog')
+        satellite = process_params['metadata']['platform']['code']
+        mask = process_params['parameters'].get('mask')
+        if not mask:
+            raise NotFound('Mask values not found in item allocated in processing table - dynamoDB')
+
+        secondary_catalog = process_params.get('secondary_catalog')
 
         tiles = params['tiles']
-        start_date = datetime.strptime(params['start_date'], '%Y-%m-%d').strftime('%Y-%m-%d')
-        end_date = datetime.strptime(params['end_date'], '%Y-%m-%d').strftime('%Y-%m-%d') \
+        start_date = params['start_date'].strftime('%Y-%m-%d')
+        end_date = params['end_date'].strftime('%Y-%m-%d') \
             if params.get('end_date') else datetime.now().strftime('%Y-%m-%d')
 
         # verify cube info
@@ -497,36 +514,15 @@ class CubeController:
         bands_expressions = dict()
 
         bands_list = []
-        indexes_list = []
+        bands_ids_list = {}
         for band in bands:
             if band.name.upper() not in [i['common_name'].upper() for i in indexes]:
                 bands_list.append(band.name)
+                bands_ids_list[band.id] = band.name
             elif band._metadata and band._metadata.get('expression') and band._metadata['expression'].get('value'):
                 meta = deepcopy(band._metadata)
                 meta['data_type'] = band.data_type
                 bands_expressions[band.name] = meta
-            else:
-                indexes_available = {
-                    'NDVI': ['NIR', 'RED'],
-                    'EVI': ['NIR', 'RED', 'BLUE']
-                }
-                if not indexes_available.get(band.name.upper()):
-                    return 'Index not available', 400
-                
-                index = dict(
-                    name=band.name,
-                    bands=[
-                        dict(
-                            name=b.name,
-                            common_name=b.common_name
-                        ) for b in bands \
-                            if b.common_name.upper() in indexes_available[band.name.upper()]
-                    ]
-                )
-                if len(index['bands']) != len(indexes_available[band.name.upper()]):
-                    return 'bands: {}, are needed to create the {} index'.format(
-                        ','.join(indexes_available[band.name.upper()]), band.name), 400
-                indexes_list.append(index)
 
         # get quicklook bands
         bands_ql = Quicklook.query().filter(
@@ -538,19 +534,18 @@ class CubeController:
             list(filter(lambda b: b.id == bands_ql.blue, bands))[0].name
         ]
 
-        cub_ref = cube_infos or cube_infos_irregular
-
-        # items => old mosaic
+        # items => { 'tile_id': bbox, xmin, ..., periods: {'start_end': collection, ... } }
         # orchestrate
         shape = params.get('shape', None)
-        self.score['items'] = orchestrate(cub_ref, tiles, start_date, end_date, shape, item_prefix=ITEM_PREFIX)
+        temporal_schema = cube_infos.temporal_composition_schema
+        self.score['items'] = orchestrate(cube_infos_irregular, temporal_schema, tiles, start_date, end_date, shape, item_prefix=ITEM_PREFIX)
 
         # prepare merge
         crs = cube_infos.grs.crs
         formatted_version = format_version(cube_infos.version)
-        prepare_merge(self, cube_infos['name'], params['collections'], satellite, bands_list,
-            indexes_list, bands_ql_list, float(bands[0].resolution_x), float(bands[0].resolution_y), 
-            int(bands[0].nodata), crs, quality_band, functions, formatted_version, 
+        prepare_merge(self, cube_infos.name, cube_infos_irregular.name, params['collections'], satellite,
+            bands_list, bands_ids_list, bands_ql_list, float(bands[0].resolution_x), 
+            float(bands[0].resolution_y), int(bands[0].nodata), crs, quality_band, functions, formatted_version, 
             params.get('force', False), mask, secondary_catalog, bands_expressions=bands_expressions)
 
         return dict(
@@ -567,7 +562,7 @@ class CubeController:
             "e": float(bbox[2]),
             "s": float(bbox[3])
         }
-        tile_srs_p4 = "+proj=longlat +ellps=GRS80 +datum=GRS80 +no_defs"
+        tile_srs_p4 = "+proj=longlat +ellps=GRS80 +no_defs"
         if projection == 'aea':
             tile_srs_p4 = "+proj=aea +lat_0=-12 +lon_0={} +lat_1=-2 +lat_2=-22 +x_0=5000000 +y_0=10000000 +ellps=GRS80 +units=m +no_defs".format(meridian)
         elif projection == 'sinu':
@@ -580,7 +575,7 @@ class CubeController:
         v_base = num_tiles_y / 2
 
         # Tile size in meters (dx,dy) at center of system (argsmeridian,0.)
-        src_crs = '+proj=longlat +ellps=GRS80 +datum=GRS80 +no_defs'
+        src_crs = '+proj=longlat +ellps=GRS80 +no_defs'
         dst_crs = tile_srs_p4
         xs = [(meridian - degreesx / 2), (meridian + degreesx / 2), meridian, meridian, 0.]
         ys = [0., 0., -degreesy / 2, degreesy / 2, 0.]
@@ -615,7 +610,6 @@ class CubeController:
 
         tiles = []
         features = []
-        dst_crs = '+proj=longlat +ellps=GRS80 +datum=GRS80 +no_defs'
         src_crs = tile_srs_p4
 
         for ix in range(h_min, h_max+1):
@@ -801,7 +795,10 @@ class CubeController:
         """
         cube = self.get_cube_or_404(cube_id)
 
-        items = self.services.get_merges(cube.name, tile_id, start_date[:10], end_date[:10])
+        cube_name_parts = cube.name.split('_')
+        cube_identity = '_'.join(cube_name_parts[:2])
+
+        items = self.services.get_merges(cube_identity, tile_id, start_date[:10], end_date[:10])
 
         result = validate_merges(items)
 
@@ -863,7 +860,8 @@ class CubeController:
             total_pages=paginator.pages
         ), 200
 
-    def generate_periods(self, schema: str, step: int, start: str = None, end: str = None):
+    def generate_periods(self, schema: str, step: int, unit: str, cycle: dict = None,
+                         intervals = None, start_date: str = None, last_date: str = None):
         """Generate data cube periods using temporal composition schema.
         Args:
             schema: Temporal Schema (continuous, cyclic)
@@ -893,7 +891,7 @@ class CubeController:
         Note:
             When there is no data cube item generated yet, raises BadRequest.
         """
-        cube = self.get_cube_or_404(cube_id)
+        cube = self.get_cube_or_404(int(cube_id))
 
         identity_cube = '_'.join(cube.name.split('_')[:2])
 
@@ -905,7 +903,7 @@ class CubeController:
         activity = json.loads(item['Items'][0]['activity'])
 
         return dict(
-            url_stac=activity['url_stac'],
+            stac_url=activity['url_stac'],
             collections=','.join(activity['datasets']),
             bucket=activity['bucket_name'],
             satellite=activity['satellite'],

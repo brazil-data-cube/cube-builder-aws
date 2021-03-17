@@ -8,6 +8,8 @@
 
 import base64
 import json
+import re
+from urllib.parse import urlparse
 
 import boto3
 import botocore
@@ -38,6 +40,7 @@ class CubeServices:
         self.dynamoDBResource = session.resource('dynamodb')
 
         self.QueueUrl = {}
+
         self.bucket_name = bucket
 
         # ---------------------------
@@ -55,7 +58,6 @@ class CubeServices:
             self.stac = STAC(url_stac)
 
     def get_s3_prefix(self, bucket):
-        # prefix = 'https://s3.amazonaws.com/{}/'.format(bucket)
         prefix = 's3://{}/'.format(bucket)
         return prefix
     
@@ -162,9 +164,9 @@ class CubeServices:
             KeyConditionExpression=Key('id').eq(process_id)
         )
 
-    def get_process_by_datacube(self, datacube):
+    def get_process_by_datacube(self, datacube_id):
         return self.processTable.scan(
-            FilterExpression=Key('datacube').eq(datacube)
+            FilterExpression=Key('datacube_id').eq(datacube_id)
         )
 
     def get_cube_meta(self, cube,):
@@ -222,7 +224,7 @@ class CubeServices:
                 'tile_id': activity['tileid'],
                 'period_start': activity['start'],
                 'period_end': activity['end'],
-                'data_cube': activity['datacube'],
+                'data_cube': activity['datacube'] if activity['action'] != 'merge' else activity['irregular_datacube'],
 
                 'mystatus': activity['mystatus'],
                 'mylaunch': activity['mylaunch'],
@@ -372,7 +374,7 @@ class CubeServices:
         for f in items['features']:
             if f['type'] == 'Feature':
                 id = f['id']
-                date = f['properties']['datetime']
+                date = f['properties']['datetime'][:10]
 
                 # Get file link and name
                 assets = f['assets']
@@ -388,8 +390,10 @@ class CubeServices:
                     scene['date'] = date
                     scene['band'] = band
                     scene['link'] = band_obj['href']
-                    if dataset == 'MOD13Q1' and band == quality_band:
-                        scene['link'] = scene['link'].replace(quality_band, 'reliability')
+
+                    if re.match(r'https://([a-zA-Z0-9-_]{1,}).s3.([a-zA-Z0-9-_]{1,}).amazonaws.com/([-.a-zA-Z0-9\/_]{1,})', scene['link']):
+                        parser = urlparse(scene['link'])
+                        scene['link'] = f's3://{parser.hostname.split(".")[0]}{parser.path}'
 
                     # TODO: verify if scene['link'] exist
 
@@ -410,14 +414,14 @@ class CubeServices:
 
         Args:
             activity (dict): Current activity scope with default STAC server and stac collection
-                **Make sure that ``bbox`` property is a GeoJSON Feature.
+                **Make sure that ``geom`` property is a GeoJSON Feature.
             extra_catalogs (List[dict]): Extra catalogs to seek for collection. Default is None.
         """
         # Get DATACUBE params
         _ = self.stac.catalog
         bands = activity['bands']
         datasets = activity['datasets']
-        bbox_feature = activity['bbox']
+        bbox_feature = activity['geom']
         time = '{}/{}'.format(activity['start'], activity['end'])
 
         scenes = {}

@@ -63,7 +63,7 @@ class CustomMaskDefinition(Schema):
 
     clear_data = fields.List(fields.Integer, required=True, allow_none=False)
     not_clear_data = fields.List(fields.Integer, required=True, allow_none=False)
-    others = fields.List(fields.Integer, required=False, allow_none=True)
+    nodata = fields.Integer(required=False, allow_none=False)
 
 
 class DataCubeForm(Schema):
@@ -86,7 +86,9 @@ class DataCubeForm(Schema):
     public = fields.Boolean(required=False, allow_none=False, default=True)
     # Is Data cube generated from Combined Collections?
     is_combined = fields.Boolean(required=False, allow_none=False, default=False)
-    mask = fields.Nested(CustomMaskDefinition)
+    parameters = fields.Dict(
+        mask = fields.Nested(CustomMaskDefinition)
+    )
 
     @pre_load
     def validate_indexes(self, data, **kwargs):
@@ -139,17 +141,16 @@ class DataCubeMetadataForm(Schema):
 class DataCubeProcessForm(Schema):
     """Define parser for datacube generation."""
 
-    datacube_name = fields.String(required=True, allow_none=False)
+    datacube = fields.String(required=True, allow_none=False)
     datacube_version = fields.Integer(required=True, allow_none=False)
+    stac_url = fields.String(required=True, allow_none=False)
+    bucket = fields.String(required=True, allow_none=False)
     collections = fields.List(fields.String, required=True, allow_none=False)
     tiles = fields.List(fields.String, required=True, allow_none=False)
     start_date = fields.Date()
     end_date = fields.Date()
-    bands = fields.List(fields.String, required=False)
     force = fields.Boolean(required=False, default=False)
-    with_rgb = fields.Boolean(required=False, default=False)
-    token = fields.String(required=False, allow_none=True)
-    stac_url = fields.String(required=False, allow_none=True)
+    stac_token = fields.String(required=False, allow_none=True)
     shape = fields.List(fields.Integer(required=False))
     # Reuse data cube from another data cube
     reuse_from = fields.String(required=False, allow_none=True)
