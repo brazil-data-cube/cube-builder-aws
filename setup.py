@@ -43,7 +43,7 @@ extras_require['all'] = [ req for exts, reqs in extras_require.items() for req i
 setup_requires = []
 
 install_requires = [
-    'bdc-catalog @ git+git://github.com/brazil-data-cube/bdc-catalog.git@v0.8.0#egg=bdc-catalog',
+    'bdc-catalog @ git+git://github.com/brazil-data-cube/bdc-catalog.git@v0.8.1#egg=bdc-catalog',
     'Flask>=1.1.1,<2',
     'Flask-SQLAlchemy==2.4.1',
     'psycopg2-binary==2.8.5',
