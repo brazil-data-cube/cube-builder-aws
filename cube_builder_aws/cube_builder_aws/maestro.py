@@ -8,7 +8,7 @@
 
 import json
 import os
-from copy import deepcopy 
+from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 
