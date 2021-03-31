@@ -25,7 +25,7 @@ from .config import (AWS_KEY_ID, AWS_SECRET_KEY, DBNAME_TB_CONTROL,
 
 class CubeServices:
     
-    def __init__(self, url_stac=None, bucket=None):
+    def __init__(self, bucket=None, stac_list=[]):
         # session = boto3.Session(profile_name='default')
         session = boto3.Session(
             aws_access_key_id=AWS_KEY_ID, 
@@ -39,8 +39,6 @@ class CubeServices:
         self.Kinesisclient = session.client('kinesis')
         self.dynamoDBResource = session.resource('dynamodb')
 
-        self.QueueUrl = {}
-
         self.bucket_name = bucket
 
         # ---------------------------
@@ -49,13 +47,17 @@ class CubeServices:
 
         # ---------------------------
         # create / get the SQS 
+        self.QueueUrl = {}
         self.get_queue_url()
 
         # ---------------------------
         # init STAC instance
-        self.url_stac = url_stac
-        if url_stac:
-            self.stac = STAC(url_stac)
+        self.stac_list = []
+        for stac in stac_list:
+            stac_instance = STAC(stac["url"], access_token=stac["token"]) if stac.get("token", None) else STAC(stac["url"])
+            self.stac_list.append(
+                dict(**stac, instance=stac_instance)
+            )
 
     def get_s3_prefix(self, bucket):
         prefix = 's3://{}/'.format(bucket)
@@ -418,42 +420,41 @@ class CubeServices:
             extra_catalogs (List[dict]): Extra catalogs to seek for collection. Default is None.
         """
         # Get DATACUBE params
-        _ = self.stac.catalog
         bands = activity['bands']
-        datasets = activity['datasets']
         bbox_feature = activity['geom']
         time = '{}/{}'.format(activity['start'], activity['end'])
 
         scenes = {}
+        collection_ref = ''
         filter_opts = dict(
             datetime=time,
             intersects=bbox_feature,
             limit=10000
         )
 
-        for dataset in datasets:
-            filter_opts['collections'] = [dataset]
-            items = self.stac.search(filter=filter_opts)
+        for stac in self.stac_list:
+            _ = stac['instance'].catalog
 
-            scenes.update(**self._parse_stac_result(items, dataset, bands, activity['quality_band']))
+            filter_opts['collections'] = [stac['collection']]
+            items = stac['instance'].search(filter=filter_opts)
 
-        if extra_catalogs:
-            for catalog in extra_catalogs:
-                stac_url = catalog['stac_url']
-                stac_token = catalog.get('token')
-                stac_dataset = catalog['dataset']
-                filter_opts['collections'] = [stac_dataset]
+            res = self._parse_stac_result(items, stac['collection'], bands, activity['quality_band'])
 
-                stac = STAC(stac_url, access_token=stac_token)
-
-                items = stac.search(filter=filter_opts)
-
-                res = self._parse_stac_result(items, stac_dataset, bands, activity['quality_band'])
-
+            if not scenes:
+                scenes.update(**res)
+                collection_ref = stac['collection']
+            else:
                 for band, datasets in res.items():
-                    internal_dataset = list(datasets.keys())[0]
+                    dataset = list(datasets.keys())[0]
 
-                    scenes[band][dataset].update(datasets[internal_dataset])
+                    for date in datasets[dataset]:
+                        # if date in scenes : sum items in date list
+                        if date in scenes[band][collection_ref]:
+                            for item in datasets[dataset][date]:
+                                scenes[band][collection_ref][date].append(item)
+
+                        else:
+                            scenes[band][collection_ref][date] = datasets[dataset][date]
 
         return scenes
     

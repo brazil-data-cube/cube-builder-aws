@@ -48,10 +48,10 @@ from .utils.timeline import Timeline
 class CubeController:
     """Controller class."""
 
-    def __init__(self, url_stac=None, bucket=None):
+    def __init__(self, bucket=None):
         self.score = {}
 
-        self.services = CubeServices(url_stac, bucket)
+        self.services = CubeServices(bucket)
 
 
     def continue_process_stream(self, params_list):
@@ -488,8 +488,16 @@ class CubeController:
         mask = process_params['parameters'].get('mask')
         if not mask:
             raise NotFound('Mask values not found in item allocated in processing table - dynamoDB')
+        
+        stac_list = params.get('stac_list', None)
+        if not stac_list and process_params['parameters'].get('stac_list'):
+            stac_list = process_params['parameters']['stac_list']
+        elif not stac_list:
+            raise NotFound('STAC url and collection is required')
 
-        secondary_catalog = process_params.get('secondary_catalog')
+        self.services = CubeServices(bucket=self.services.bucket_name, stac_list=stac_list)
+
+        collections = [stac['collection'] for stac in stac_list]
 
         tiles = params['tiles']
         start_date = params['start_date'].strftime('%Y-%m-%d')
@@ -543,10 +551,10 @@ class CubeController:
         # prepare merge
         crs = cube_infos.grs.crs
         formatted_version = format_version(cube_infos.version)
-        prepare_merge(self, cube_infos.name, cube_infos_irregular.name, params['collections'], satellite,
+        prepare_merge(self, cube_infos.name, cube_infos_irregular.name, collections, satellite,
             bands_list, bands_ids_list, bands_ql_list, float(bands[0].resolution_x), 
             float(bands[0].resolution_y), int(bands[0].nodata), crs, quality_band, functions, formatted_version, 
-            params.get('force', False), mask, secondary_catalog, bands_expressions=bands_expressions)
+            params.get('force', False), mask, bands_expressions=bands_expressions)
 
         return dict(
             message='Processing started with succesfully'

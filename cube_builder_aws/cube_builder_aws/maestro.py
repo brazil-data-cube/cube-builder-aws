@@ -8,6 +8,7 @@
 
 import json
 import os
+from copy import deepcopy 
 from datetime import datetime
 from pathlib import Path
 
@@ -162,7 +163,7 @@ def next_step(services, activity):
 ###############################
 def prepare_merge(self, datacube, irregular_datacube, datasets, satellite, bands, bands_ids, 
                   quicklook, resx, resy, nodata, crs, quality_band, functions, version,
-                  force=False, mask=None, secondary_catalog=None, bands_expressions=dict()):
+                  force=False, mask=None, bands_expressions=dict()):
     services = self.services
 
     # Build the basics of the merge activity
@@ -182,11 +183,16 @@ def prepare_merge(self, datacube, irregular_datacube, datasets, satellite, bands
     activity['nodata'] = nodata
     activity['srs'] = crs
     activity['bucket_name'] = services.bucket_name
-    activity['url_stac'] = services.url_stac
     activity['quality_band'] = quality_band
     activity['functions'] = functions
     activity['force'] = force
     activity['internal_bands'] = ['CLEAROB', 'TOTALOB', 'PROVENANCE']
+
+    activity['stac_list'] = []
+    for stac in services.stac_list:
+        stac_cp = deepcopy(stac)
+        del stac_cp['instance']
+        activity['stac_list'].append(stac_cp)
 
     logger.info('prepare merge - Score {} items'.format(self.score['items']))
 
@@ -221,8 +227,7 @@ def prepare_merge(self, datacube, irregular_datacube, datasets, satellite, bands
                 self.services.remove_control_by_key(merge_control_key)
                 self.services.remove_control_by_key(blend_control_key)
 
-            self.score['items'][tile_name]['periods'][periodkey]['scenes'] = services.search_STAC(activity,
-                                                                                                  secondary_catalog)
+            self.score['items'][tile_name]['periods'][periodkey]['scenes'] = services.search_STAC(activity)
 
             # Evaluate the number of dates, the number of scenes for each date and
             # the total amount merges that will be done
@@ -279,7 +284,7 @@ def prepare_merge(self, datacube, irregular_datacube, datasets, satellite, bands
                         # Continue filling the activity
                         activity['ARDfile'] = activity['dirname']+'{}/{}_{}_{}_{}_{}.tif'.format(activity['date'],
                             activity['irregular_datacube'], version, activity['tileid'], activity['date'], band)
-                        activity['sk'] = activity['date'] + activity['dataset']
+                        activity['sk'] = activity['date']
                         activity['mylaunch'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
                         # Check if we have already done and no need to do it again
@@ -451,7 +456,7 @@ def merge_warped(self, activity):
                             if template is None:
                                 template = dst.profile
 
-                                raster_blocks = list(src.block_windows())
+                                raster_blocks = list(dst.block_windows())
 
                                 if band != activity['quality_band']:
                                     template.update({'dtype': 'int16'})
@@ -582,10 +587,10 @@ def next_blend(services, mergeactivity):
         services.send_to_sqs(blendactivity)
 
         # Leave room for next band in blendactivity
-        for datedataset in blendactivity['scenes']:
-            if band in blendactivity['scenes'][datedataset]['ARDfiles'] \
+        for date_ref in blendactivity['scenes']:
+            if band in blendactivity['scenes'][date_ref]['ARDfiles'] \
                 and band != mergeactivity['quality_band']:
-                del blendactivity['scenes'][datedataset]['ARDfiles'][band]
+                del blendactivity['scenes'][date_ref]['ARDfiles'][band]
     return True
 
 def fill_blend(services, mergeactivity, blendactivity, internal_band=False):
@@ -614,18 +619,18 @@ def fill_blend(services, mergeactivity, blendactivity, internal_band=False):
         if item['mystatus'] != 'DONE':
             return False
         activity = json.loads(item['activity'])
-        datedataset = item['sk']
-        if datedataset not in blendactivity['scenes']:
-            blendactivity['scenes'][datedataset] = {}
-            blendactivity['scenes'][datedataset]['efficacy'] = item['efficacy']
-            blendactivity['scenes'][datedataset]['date'] = activity['date']
-            blendactivity['scenes'][datedataset]['dataset'] = activity['dataset']
-            blendactivity['scenes'][datedataset]['satellite'] = activity['satellite']
-            blendactivity['scenes'][datedataset]['cloudratio'] = item['cloudratio']
-        if 'ARDfiles' not in blendactivity['scenes'][datedataset]:
-            blendactivity['scenes'][datedataset]['ARDfiles'] = {}
+        date_ref = item['sk']
+        if date_ref not in blendactivity['scenes']:
+            blendactivity['scenes'][date_ref] = {}
+            blendactivity['scenes'][date_ref]['efficacy'] = item['efficacy']
+            blendactivity['scenes'][date_ref]['date'] = activity['date']
+            blendactivity['scenes'][date_ref]['dataset'] = activity['dataset']
+            blendactivity['scenes'][date_ref]['satellite'] = activity['satellite']
+            blendactivity['scenes'][date_ref]['cloudratio'] = item['cloudratio']
+        if 'ARDfiles' not in blendactivity['scenes'][date_ref]:
+            blendactivity['scenes'][date_ref]['ARDfiles'] = {}
         basename = os.path.basename(activity['ARDfile'])
-        blendactivity['scenes'][datedataset]['ARDfiles'][band] = basename
+        blendactivity['scenes'][date_ref]['ARDfiles'][band] = basename
 
     blendactivity['instancesToBeDone'] += len(items)
     if band != blendactivity['quality_band']:
@@ -659,8 +664,8 @@ def blend(self, activity):
         nodata = activity_mask['nodata']
 
     # Check if band ARDfiles are in activity
-    for datedataset in activity['scenes']:
-        if band not in activity['scenes'][datedataset]['ARDfiles']:
+    for date_ref in activity['scenes']:
+        if band not in activity['scenes'][date_ref]['ARDfiles']:
             activity['mystatus'] = 'ERROR'
             activity['errors'] = dict(
                 step='blend',
@@ -740,6 +745,7 @@ def blend(self, activity):
 
         clear_values = numpy.array(activity_mask['clear_data'])
         not_clear_values = numpy.array(activity_mask['not_clear_data'])
+        saturated_values = numpy.array(mask_values['saturated_data'])
 
         # STACK and MED will be generated in memory
         stack_raster = numpy.full((height, width), dtype=profile['dtype'], fill_value=nodata)
@@ -787,7 +793,9 @@ def blend(self, activity):
                 mask[numpy.where(numpy.isin(mask, clear_values))] = 1
                 # Mask cloud/snow/shadow/no-data as False
                 mask[numpy.where(numpy.isin(mask, not_clear_values))] = 0
-                # Ensure that Raster noda value (-9999 maybe) is set to False
+                # Saturated values as False
+                mask[numpy.where(numpy.isin(mask, saturated_values))] = 0
+                # Ensure that Raster nodata value (-9999 maybe) is set to False
                 mask[raster == nodata] = 0
 
                 # Create an inverse mask value in order to pass to numpy masked array
@@ -975,8 +983,8 @@ def next_posblend(services, blendactivity):
 
                 if func == 'IDT':
                     dates = activity['scenes'].keys()
-                    for date_with_dataset in dates:
-                        scene = activity['scenes'][date_with_dataset]
+                    for date_ref in dates:
+                        scene = activity['scenes'][date_ref]
 
                         date = scene['date']
                         posblendactivity['indexesToBe'][i_name][func][date] = posblendactivity['indexesToBe'][i_name][func].get(date, {})
@@ -1000,9 +1008,9 @@ def next_posblend(services, blendactivity):
             posblendactivity['mylaunch'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
             if i == 'IDT':
-                dates_with_datasets = activity['scenes'].keys()
-                for date_with_dataset in dates_with_datasets:
-                    scene = activity['scenes'][date_with_dataset]
+                dates_refs = activity['scenes'].keys()
+                for date_ref in dates_refs:
+                    scene = activity['scenes'][date_ref]
                     date = scene['date']
                     posblendactivity['sk'] = '{}{}{}'.format(i_name, i, date)
             
@@ -1111,22 +1119,22 @@ def next_publish(services, posblendactivity):
         if band not in publishactivity['bands']: continue
 
         # Get ARD files
-        for datedataset in activity['scenes']:
-            scene = activity['scenes'][datedataset]
-            if datedataset not in publishactivity['scenes']:
-                publishactivity['scenes'][datedataset] = {'ARDfiles' : {}}
-                publishactivity['scenes'][datedataset]['ARDfiles'][publishactivity['quality_band']] = scene['ARDfiles'][publishactivity['quality_band']]
-                publishactivity['scenes'][datedataset]['date'] = scene['date']
-                publishactivity['scenes'][datedataset]['cloudratio'] = scene['cloudratio']
+        for date_ref in activity['scenes']:
+            scene = activity['scenes'][date_ref]
+            if date_ref not in publishactivity['scenes']:
+                publishactivity['scenes'][date_ref] = {'ARDfiles' : {}}
+                publishactivity['scenes'][date_ref]['ARDfiles'][publishactivity['quality_band']] = scene['ARDfiles'][publishactivity['quality_band']]
+                publishactivity['scenes'][date_ref]['date'] = scene['date']
+                publishactivity['scenes'][date_ref]['cloudratio'] = scene['cloudratio']
 
                 # add indexes to publish in irregular cube
                 for index_name in publishactivity['indexesToBe'].keys():
                     # ex: LC8_30_090096_2019-01-28_fMask.tif => LC8_30_090096_2019-01-28_NDVI.tif
                     quality_file = scene['ARDfiles'][publishactivity['quality_band']]
                     index_file_name = quality_file.replace(f'_{publishactivity["quality_band"]}.tif', f'_{index_name}.tif')
-                    publishactivity['scenes'][datedataset]['ARDfiles'][index_name] = index_file_name
+                    publishactivity['scenes'][date_ref]['ARDfiles'][index_name] = index_file_name
 
-            publishactivity['scenes'][datedataset]['ARDfiles'][band] = scene['ARDfiles'][band]
+            publishactivity['scenes'][date_ref]['ARDfiles'][band] = scene['ARDfiles'][band]
 
         # Get blended files
         publishactivity['blended'][band] = {}
@@ -1274,8 +1282,8 @@ def publish(self, activity):
             db.session.commit()
 
         ## for all ARD scenes (IDENTITY)
-        for datedataset in activity['scenes']:
-            scene = activity['scenes'][datedataset]
+        for date_ref in activity['scenes']:
+            scene = activity['scenes'][date_ref]
 
             cube_name = activity['irregular_datacube']
             cube = Collection.query().filter(

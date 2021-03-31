@@ -14,7 +14,7 @@ from flask import Blueprint, jsonify, request
 from .controller import CubeController
 from .forms import (BucketForm, CubeItemsForm, CubeStatusForm, DataCubeForm,
                     DataCubeMetadataForm, DataCubeProcessForm, GridRefSysForm,
-                    PeriodForm, StartProcessForm)
+                    PeriodForm)
 from .version import __version__
 
 controller = CubeController()
@@ -194,7 +194,7 @@ def start():
 
     data = form.load(args)
 
-    controller = CubeController(url_stac=args['stac_url'], bucket=args['bucket'])
+    controller = CubeController(bucket=args['bucket'])
     message, status = controller.start_process(data)
 
     return jsonify(message), status

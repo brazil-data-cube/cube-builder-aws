@@ -63,7 +63,16 @@ class CustomMaskDefinition(Schema):
 
     clear_data = fields.List(fields.Integer, required=True, allow_none=False)
     not_clear_data = fields.List(fields.Integer, required=True, allow_none=False)
-    nodata = fields.Integer(required=False, allow_none=False)
+    saturated_data = fields.List(fields.Integer, required=True, allow_none=False)
+    nodata = fields.Integer(required=True, allow_none=False)
+
+
+class StacDefinitionForm(Schema):
+    """Define parser for stac and collection used to create cube."""
+
+    url = fields.String(required=True, allow_none=False)
+    token = fields.String(required=False, allow_none=True)
+    collection = fields.String(required=True, allow_none=False)
 
 
 class DataCubeForm(Schema):
@@ -87,7 +96,8 @@ class DataCubeForm(Schema):
     # Is Data cube generated from Combined Collections?
     is_combined = fields.Boolean(required=False, allow_none=False, default=False)
     parameters = fields.Dict(
-        mask = fields.Nested(CustomMaskDefinition)
+        mask = fields.Nested(CustomMaskDefinition),
+        stac_list = fields.List(fields.Nested(StacDefinitionForm))
     )
 
     @pre_load
@@ -137,20 +147,19 @@ class DataCubeMetadataForm(Schema):
     description = fields.String(required=False, allow_none=False)
     title = fields.String(required=False, allow_none=False)
     public = fields.Boolean(required=False, allow_none=False, default=True)
+    
 
 class DataCubeProcessForm(Schema):
     """Define parser for datacube generation."""
 
     datacube = fields.String(required=True, allow_none=False)
     datacube_version = fields.Integer(required=True, allow_none=False)
-    stac_url = fields.String(required=True, allow_none=False)
+    stac_list = fields.List(fields.Nested(StacDefinitionForm))
     bucket = fields.String(required=True, allow_none=False)
-    collections = fields.List(fields.String, required=True, allow_none=False)
     tiles = fields.List(fields.String, required=True, allow_none=False)
     start_date = fields.Date()
     end_date = fields.Date()
     force = fields.Boolean(required=False, default=False)
-    stac_token = fields.String(required=False, allow_none=True)
     shape = fields.List(fields.Integer(required=False))
     # Reuse data cube from another data cube
     reuse_from = fields.String(required=False, allow_none=True)
@@ -190,16 +199,3 @@ class BucketForm(Schema):
 
     name = fields.String(required=False)
     requester_pay = fields.Boolean(required=False, default=True)
-
-
-class StartProcessForm(Schema):
-    """Parser for start process."""
-
-    process_id = fields.String(required=False)
-    url_stac = fields.String(required=False, default=True)
-    bucket = fields.String(required=True),
-    tiles = fields.List(fields.String, required=True),
-    collections = fields.List(fields.String, required=True),
-    start_date = fields.Date(required=True),
-    end_date = fields.Date(required=False),
-    force = fields.Boolean(required=False, default=False)
