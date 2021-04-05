@@ -163,6 +163,7 @@ class DataCubeProcessForm(Schema):
     shape = fields.List(fields.Integer(required=False))
     # Reuse data cube from another data cube
     reuse_from = fields.String(required=False, allow_none=True)
+    indexes_only_regular_cube = fields.Boolean(required=False, allow_none=True, default=False)
 
 
 class PeriodForm(Schema):

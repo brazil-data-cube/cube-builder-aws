@@ -554,7 +554,8 @@ class CubeController:
         prepare_merge(self, cube_infos.name, cube_infos_irregular.name, collections, satellite,
             bands_list, bands_ids_list, bands_ql_list, float(bands[0].resolution_x), 
             float(bands[0].resolution_y), int(bands[0].nodata), crs, quality_band, functions, formatted_version, 
-            params.get('force', False), mask, bands_expressions=bands_expressions)
+            params.get('force', False), mask, bands_expressions=bands_expressions, 
+            indexes_only_regular_cube=params.get('indexes_only_regular_cube'))
 
         return dict(
             message='Processing started with succesfully'
