@@ -22,8 +22,8 @@ from rasterio.merge import merge
 from rasterio.transform import Affine
 from rasterio.warp import Resampling, reproject, transform
 
-from .constants import (APPLICATION_ID, COG_MIME_TYPE, RESOLUTION_BY_SATELLITE,
-                        SRID_BDC_GRID)
+from .constants import (APPLICATION_ID, CLEAR_OBSERVATION_ATTRIBUTES,
+                        COG_MIME_TYPE, RESOLUTION_BY_SATELLITE, SRID_BDC_GRID)
 from .logger import logger
 from .utils.processing import (create_asset_definition, create_cog_in_s3,
                                create_index, encode_key, format_version,
@@ -163,7 +163,7 @@ def next_step(services, activity):
 ###############################
 def prepare_merge(self, datacube, irregular_datacube, datasets, satellite, bands, bands_ids, 
                   quicklook, resx, resy, nodata, crs, quality_band, functions, version,
-                  force=False, mask=None, bands_expressions=dict()):
+                  force=False, mask=None, bands_expressions=dict(), indexes_only_regular_cube=False):
     services = self.services
 
     # Build the basics of the merge activity
@@ -186,6 +186,7 @@ def prepare_merge(self, datacube, irregular_datacube, datasets, satellite, bands
     activity['quality_band'] = quality_band
     activity['functions'] = functions
     activity['force'] = force
+    activity['indexes_only_regular_cube'] = indexes_only_regular_cube
     activity['internal_bands'] = ['CLEAROB', 'TOTALOB', 'PROVENANCE']
 
     activity['stac_list'] = []
@@ -509,7 +510,7 @@ def next_blend(services, mergeactivity):
     for key in ['datasets', 'satellite', 'bands', 'quicklook', 'srs', 'functions', 'bands_ids',
                 'tileid', 'start', 'end', 'dirname', 'nodata', 'bucket_name', 'quality_band',
                 'internal_bands', 'force', 'version', 'datacube', 'irregular_datacube', 'mask',
-                'bands_expressions']:
+                'bands_expressions', 'indexes_only_regular_cube']:
         blendactivity[key] = mergeactivity.get(key, '')
 
     blendactivity['totalInstancesToBeDone'] = len(blendactivity['bands']) + len(blendactivity['internal_bands'])
@@ -745,7 +746,7 @@ def blend(self, activity):
 
         clear_values = numpy.array(activity_mask['clear_data'])
         not_clear_values = numpy.array(activity_mask['not_clear_data'])
-        saturated_values = numpy.array(mask_values['saturated_data'])
+        saturated_values = numpy.array(activity_mask['saturated_data'])
 
         # STACK and MED will be generated in memory
         stack_raster = numpy.full((height, width), dtype=profile['dtype'], fill_value=nodata)
@@ -762,6 +763,8 @@ def blend(self, activity):
         if build_clear_observation:
             clear_ob_file = '/tmp/clearob.tif'
             clear_ob_profile = profile.copy()
+            clear_ob_profile['dtype'] = CLEAR_OBSERVATION_ATTRIBUTES['data_type']
+            clear_ob_profile.pop('nodata', None)
             clear_ob_dataset = rasterio.open(clear_ob_file, mode='w', **clear_ob_profile)
 
         # Build the stack total observation
@@ -789,14 +792,14 @@ def blend(self, activity):
                 if build_total_observation:
                     copy_mask = numpy.array(mask, copy=True)
 
-                # Mask valid data (0 and 1) as True
-                mask[numpy.where(numpy.isin(mask, clear_values))] = 1
                 # Mask cloud/snow/shadow/no-data as False
                 mask[numpy.where(numpy.isin(mask, not_clear_values))] = 0
                 # Saturated values as False
                 mask[numpy.where(numpy.isin(mask, saturated_values))] = 0
                 # Ensure that Raster nodata value (-9999 maybe) is set to False
                 mask[raster == nodata] = 0
+                # Mask valid data (0 and 1) as True
+                mask[numpy.where(numpy.isin(mask, clear_values))] = 1
 
                 # Create an inverse mask value in order to pass to numpy masked array
                 # True => nodata
@@ -807,8 +810,8 @@ def blend(self, activity):
 
                 if build_total_observation:
                     # Copy Masked values in order to stack total observation
-                    copy_mask[copy_mask != nodata] = 1
-                    copy_mask[copy_mask == nodata] = 0
+                    copy_mask[raster != nodata] = 1
+                    copy_mask[raster == nodata] = 0
 
                     stack_total_observation[window.row_off: row_offset, window.col_off: col_offset] += copy_mask.astype(numpy.uint8)
 
@@ -859,6 +862,7 @@ def blend(self, activity):
 
                 # Update what was done.
                 notdonemask = notdonemask * bmask
+
             if 'MED' in activity['functions']:
                 median = numpy.ma.median(stackMA, axis=0).data
                 median[notdonemask.astype(numpy.bool_)] = nodata
@@ -866,6 +870,7 @@ def blend(self, activity):
 
             if build_clear_observation:
                 count_raster = numpy.ma.count(stackMA, axis=0)
+
                 clear_ob_dataset.write(count_raster.astype(clear_ob_profile['dtype']), window=window, indexes=1)
 
         # Close all input dataset
@@ -955,8 +960,11 @@ def next_posblend(services, blendactivity):
     posblendactivity = blendactivity
     posblendactivity['action'] = 'posblend'
 
+    indexes_only_regular_cube = posblendactivity.get('indexes_only_regular_cube', False)
+
     # indexes * (Irregular scenes + regular scene)
-    posblendactivity['totalInstancesToBeDone'] = len(posblendactivity['bands_expressions'].keys()) * (len(posblendactivity['scenes'].keys()) + 1) 
+    quantity_scenes = 1 if indexes_only_regular_cube else (len(posblendactivity['scenes'].keys()) + 1)
+    posblendactivity['totalInstancesToBeDone'] = len(posblendactivity['bands_expressions'].keys()) * quantity_scenes
 
     # Reset mycount in activitiesControlTable
     if posblendactivity['action'] not in posblendactivity['dynamoKey']:
@@ -982,6 +990,9 @@ def next_posblend(services, blendactivity):
                 posblendactivity['indexesToBe'][i_name][func] = posblendactivity['indexesToBe'][i_name].get(func, {})
 
                 if func == 'IDT':
+                    if indexes_only_regular_cube:
+                        continue
+
                     dates = activity['scenes'].keys()
                     for date_ref in dates:
                         scene = activity['scenes'][date_ref]
@@ -990,13 +1001,15 @@ def next_posblend(services, blendactivity):
                         posblendactivity['indexesToBe'][i_name][func][date] = posblendactivity['indexesToBe'][i_name][func].get(date, {})
                         path_band = '{}{}/{}'.format(activity['dirname'], date, scene['ARDfiles'][band_name])
                         posblendactivity['indexesToBe'][i_name][func][date][band_name] = path_band
+
                 else:
                     posblendactivity['indexesToBe'][i_name][func][band_name] = activity['{}file'.format(func)]
 
     for i_name in posblendactivity['bands_expressions'].keys():
         # create and dispatch one activity to irregular cube and one to regular cubes (each index)
 
-        for i in ['', 'IDT']:
+        functions = [''] if indexes_only_regular_cube else ['', 'IDT']
+        for i in functions:
             posblendactivity['sk'] = '{}{}'.format(i_name, i)
 
             # Blend has not been performed, do it
@@ -1025,7 +1038,9 @@ def next_posblend(services, blendactivity):
 def posblend(self, activity):
     logger.info('==> start POS BLEND')
     services = self.services
+
     force = activity.get('force', False)
+    indexes_only_regular_cube = activity.get('indexes_only_regular_cube', False)
 
     bucket_name = activity['bucket_name']
     mystart = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -1036,7 +1051,7 @@ def posblend(self, activity):
         sk = activity['sk']
         is_identity = 'IDT' in activity['sk']
         
-        if is_identity:
+        if is_identity and not indexes_only_regular_cube:
             sk = sk.replace('IDT', '')
 
             index_name = sk[:-10]
@@ -1099,9 +1114,12 @@ def next_publish(services, posblendactivity):
     publishactivity = {}
     for key in ['datacube','bands','bands_ids','quicklook','tileid','start','end', \
         'dirname', 'cloudratio', 'bucket_name', 'quality_band', 'internal_bands', \
-        'functions', 'indexesToBe', 'version','irregular_datacube']:
+        'functions', 'indexesToBe', 'version', 'irregular_datacube', \
+        'indexes_only_regular_cube']:
         publishactivity[key] = posblendactivity.get(key)
     publishactivity['action'] = 'publish'
+
+    indexes_only_regular_cube = posblendactivity.get('indexes_only_regular_cube', False)
 
     # Create dynamoKey for the publish activity
     publishactivity['dynamoKey'] = encode_key(publishactivity, ['action','datacube','tileid','start','end'])
@@ -1128,11 +1146,12 @@ def next_publish(services, posblendactivity):
                 publishactivity['scenes'][date_ref]['cloudratio'] = scene['cloudratio']
 
                 # add indexes to publish in irregular cube
-                for index_name in publishactivity['indexesToBe'].keys():
-                    # ex: LC8_30_090096_2019-01-28_fMask.tif => LC8_30_090096_2019-01-28_NDVI.tif
-                    quality_file = scene['ARDfiles'][publishactivity['quality_band']]
-                    index_file_name = quality_file.replace(f'_{publishactivity["quality_band"]}.tif', f'_{index_name}.tif')
-                    publishactivity['scenes'][date_ref]['ARDfiles'][index_name] = index_file_name
+                if not indexes_only_regular_cube:
+                    for index_name in publishactivity['indexesToBe'].keys():
+                        # ex: LC8_30_090096_2019-01-28_fMask.tif => LC8_30_090096_2019-01-28_NDVI.tif
+                        quality_file = scene['ARDfiles'][publishactivity['quality_band']]
+                        index_file_name = quality_file.replace(f'_{publishactivity["quality_band"]}.tif', f'_{index_name}.tif')
+                        publishactivity['scenes'][date_ref]['ARDfiles'][index_name] = index_file_name
 
             publishactivity['scenes'][date_ref]['ARDfiles'][band] = scene['ARDfiles'][band]
 
@@ -1188,6 +1207,8 @@ def publish(self, activity):
     services = self.services
     bucket_name = activity['bucket_name']
     prefix = services.get_s3_prefix(bucket_name)
+
+    indexes_only_regular_cube = activity.get('indexes_only_regular_cube', False)
 
     activity['mystart'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     try:
@@ -1345,7 +1366,7 @@ def publish(self, activity):
                     Band.collection_id == cube.id
                 ).all()
                 
-                indexes_list = list(activity['indexesToBe'].keys())
+                indexes_list = [] if indexes_only_regular_cube else list(activity['indexesToBe'].keys())
                 for band in (activity['bands'] + indexes_list):
                     if band not in scene['ARDfiles']:
                         raise Exception(f'publish - problem - band {band} not in scene[files]')
