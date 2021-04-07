@@ -22,8 +22,8 @@ from rasterio.merge import merge
 from rasterio.transform import Affine
 from rasterio.warp import Resampling, reproject, transform
 
-from .constants import (APPLICATION_ID, COG_MIME_TYPE, RESOLUTION_BY_SATELLITE,
-                        SRID_BDC_GRID)
+from .constants import (APPLICATION_ID, CLEAR_OBSERVATION_ATTRIBUTES,
+                        COG_MIME_TYPE, RESOLUTION_BY_SATELLITE, SRID_BDC_GRID)
 from .logger import logger
 from .utils.processing import (create_asset_definition, create_cog_in_s3,
                                create_index, encode_key, format_version,
@@ -763,6 +763,8 @@ def blend(self, activity):
         if build_clear_observation:
             clear_ob_file = '/tmp/clearob.tif'
             clear_ob_profile = profile.copy()
+            clear_ob_profile['dtype'] = CLEAR_OBSERVATION_ATTRIBUTES['data_type']
+            clear_ob_profile.pop('nodata', None)
             clear_ob_dataset = rasterio.open(clear_ob_file, mode='w', **clear_ob_profile)
 
         # Build the stack total observation
@@ -790,14 +792,14 @@ def blend(self, activity):
                 if build_total_observation:
                     copy_mask = numpy.array(mask, copy=True)
 
-                # Mask valid data (0 and 1) as True
-                mask[numpy.where(numpy.isin(mask, clear_values))] = 1
                 # Mask cloud/snow/shadow/no-data as False
                 mask[numpy.where(numpy.isin(mask, not_clear_values))] = 0
                 # Saturated values as False
                 mask[numpy.where(numpy.isin(mask, saturated_values))] = 0
                 # Ensure that Raster nodata value (-9999 maybe) is set to False
                 mask[raster == nodata] = 0
+                # Mask valid data (0 and 1) as True
+                mask[numpy.where(numpy.isin(mask, clear_values))] = 1
 
                 # Create an inverse mask value in order to pass to numpy masked array
                 # True => nodata
@@ -808,8 +810,8 @@ def blend(self, activity):
 
                 if build_total_observation:
                     # Copy Masked values in order to stack total observation
-                    copy_mask[copy_mask != nodata] = 1
-                    copy_mask[copy_mask == nodata] = 0
+                    copy_mask[raster != nodata] = 1
+                    copy_mask[raster == nodata] = 0
 
                     stack_total_observation[window.row_off: row_offset, window.col_off: col_offset] += copy_mask.astype(numpy.uint8)
 
@@ -860,6 +862,7 @@ def blend(self, activity):
 
                 # Update what was done.
                 notdonemask = notdonemask * bmask
+
             if 'MED' in activity['functions']:
                 median = numpy.ma.median(stackMA, axis=0).data
                 median[notdonemask.astype(numpy.bool_)] = nodata
@@ -867,6 +870,7 @@ def blend(self, activity):
 
             if build_clear_observation:
                 count_raster = numpy.ma.count(stackMA, axis=0)
+
                 clear_ob_dataset.write(count_raster.astype(clear_ob_profile['dtype']), window=window, indexes=1)
 
         # Close all input dataset
