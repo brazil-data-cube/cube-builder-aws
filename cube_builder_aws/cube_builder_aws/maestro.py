@@ -281,6 +281,8 @@ def prepare_merge(self, datacube, irregular_datacube, datasets, satellite, bands
                         # Get all scenes that were acquired in the same date
                         for scene in self.score['items'][tile_name]['periods'][periodkey]['scenes'][band][dataset][date]:
                             activity['links'].append(scene['link'])
+                            if 'source_nodata' in scene:
+                                activity['source_nodata'] = scene['source_nodata']
 
                         # Continue filling the activity
                         activity['ARDfile'] = activity['dirname']+'{}/{}_{}_{}_{}_{}.tif'.format(activity['date'],
@@ -416,6 +418,9 @@ def merge_warped(self, activity):
 
                     if src.profile['nodata'] is not None:
                         source_nodata = src.profile['nodata']
+                    
+                    elif 'source_nodata' in activity:
+                        source_nodata = activity['source_nodata']
 
                     elif 'LANDSAT' in satellite and band != activity['quality_band']:
                         source_nodata = nodata if src.profile['dtype'] == 'int16' else 0
@@ -456,6 +461,8 @@ def merge_warped(self, activity):
 
                             if template is None:
                                 template = dst.profile
+
+                                template['driver'] = 'GTiff'
 
                                 raster_blocks = list(dst.block_windows())
 
