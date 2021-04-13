@@ -9,7 +9,7 @@
 Changes
 =======
 
-Version 0.4.0 (2021-09-04)
+Version 0.4.0 (2021-04-13)
 --------------------------
 
 - Possibility to choose which types of cubes to generate (`#12 <https://github.com/brazil-data-cube/cube-builder-aws/issues/12>`_)
