@@ -393,6 +393,12 @@ class CubeServices:
                     scene['band'] = band
                     scene['link'] = band_obj['href']
 
+                    if f['properties'].get('eo:bands'):
+                        for _band in f['properties']['eo:bands']:
+                            if _band['name'] == band and 'nodata' in _band:
+                                scene['source_nodata'] = _band['nodata']
+                                break
+
                     if re.match(r'https://([a-zA-Z0-9-_]{1,}).s3.([a-zA-Z0-9-_]{1,}).amazonaws.com/([-.a-zA-Z0-9\/_]{1,})', scene['link']):
                         parser = urlparse(scene['link'])
                         scene['link'] = f's3://{parser.hostname.split(".")[0]}{parser.path}'

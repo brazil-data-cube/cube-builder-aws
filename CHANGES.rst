@@ -9,10 +9,29 @@
 Changes
 =======
 
-Version 0.2.0
----------------
+Version 0.4.0 (2021-04-13)
+--------------------------
 
-Released 2020-08-26
+- Possibility to choose which types of cubes to generate (`#12 <https://github.com/brazil-data-cube/cube-builder-aws/issues/12>`_)
+- Isolate the function to create the type of cubes (`#13 <https://github.com/brazil-data-cube/cube-builder-aws/issues/13>`_)
+- Update endpoints responsible for managing grid ref sys (`#68 <https://github.com/brazil-data-cube/cube-builder-aws/issues/68>`_, `#107 <https://github.com/brazil-data-cube/cube-builder-aws/issues/107>`_)
+- Update list cube infos endpoint with new bdc-catalog model (0.8.0) (`#80 <https://github.com/brazil-data-cube/cube-builder-aws/issues/80>`_, `#101 <https://github.com/brazil-data-cube/cube-builder-aws/issues/101>`_)
+- Compute checksum of images (`#82 <https://github.com/brazil-data-cube/cube-builder-aws/issues/80>`_)
+- Compute bbox (geom wsg84) of images (`#83 <https://github.com/brazil-data-cube/cube-builder-aws/issues/83>`_)
+- Generate index based on an expression (`#86 <https://github.com/brazil-data-cube/cube-builder-aws/issues/86>`_)
+- Fix code to generate cog using DEFLATE compression method (`#88 <https://github.com/brazil-data-cube/cube-builder-aws/issues/88>`_)
+- Update file structure based on BDC packages (`#91 <https://github.com/brazil-data-cube/cube-builder-aws/issues/91>`_)
+- Add route to edit cube metadata (`#93 <https://github.com/brazil-data-cube/cube-builder-aws/issues/93>`_)
+- Add shape params if not is BDC grid (`#95 <https://github.com/brazil-data-cube/cube-builder-aws/issues/95>`_)
+- Update get_mask function to use with fMask or sen2cor (Sentinel 2) (`#96 <https://github.com/brazil-data-cube/cube-builder-aws/issues/96>`_)
+- Update function to create timeline (`#97 <https://github.com/brazil-data-cube/cube-builder-aws/issues/97>`_)
+- Review data cube process id (`#111 <https://github.com/brazil-data-cube/cube-builder-aws/issues/111>`_)
+- Add drone integration to running tests (`#120 <https://github.com/brazil-data-cube/cube-builder-aws/issues/120>`_)
+- Add param to disable creating indices in irregular datacube (`#129 <https://github.com/brazil-data-cube/cube-builder-aws/issues/129>`_)
+
+
+Version 0.2.0 (2020-08-26)
+--------------------------
 
 - First experimental version.
 - Support of AWS lambdas to generate data cubes.
