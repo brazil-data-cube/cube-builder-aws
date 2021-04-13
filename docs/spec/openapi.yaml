@@ -6,16 +6,20 @@ info:
   version: "0.4.0"
   title: API Cube Builder (AWS)
   contact:
-    name: BDC INPE
+    name: Brazil Data Cube Team
+    url: "https://discord.com/channels/689541907621085198#/"
     email: brazildatacube@dpi.inpe.br
   license:
     name: MIT
     url: https://opensource.org/licenses/MIT
+  x-logo:
+    url: "https://brazil-data-cube.github.io/_static/logo-bdc.png"
+    altText: Brazil Data Cube
+    href: "https://github.com/brazil-data-cube"
 
 servers:
   - url: 'https://brazildatacube.dpi.inpe.br/'
     description: Dev Server
-
 
 paths:
   /:
@@ -555,16 +559,14 @@ components:
       properties:
         datacube:
           type: string
-        collections:
-          type: array
-          items:
-            type: string
+        datacube_version:
+          type: string
+        bucket:
+          type: string
         tiles:
           type: array
           items:
             type: string
-        stac_url:
-          type: string
         start_date:
           type: string
           format: 'date-time'
@@ -575,20 +577,11 @@ components:
           type: boolean
           description: 'Force the generation of data cube items that have already done.'
           default: false
-        token:
-          type: string
-          description: 'The access token for STAC URL'
         shape:
           type: array
           minItems: 1
           items:
             type: number
-        bands:
-          type: array
-          description: 'List of bands to generate. Default is data cube bands.'
-          minItems: 1
-          items:
-            type: string
 
     MergeResultType:
       description: The origin scenes used to build the given merge.
@@ -907,22 +900,40 @@ components:
         public:
           type: boolean
           description: Set the collection visibility
-        mask:
+        parameters:
           type: object
-          description: Set the data cube masking.
           properties:
-            clear_data:
+            mask:
+              type: object
+              description: Set the data cube masking.
+              properties:
+                clear_data:
+                  type: array
+                  description: List of values to be considered as valid data and also as clear data.
+                  items:
+                    type: number
+                not_clear_data:
+                  type: array
+                  description: List of values to be considered as Invalid data.
+                  items:
+                    type: number
+                saturated_data:
+                  type: array
+                  description: List of values to be considered as saturated.
+                  items:
+                    type: number
+                nodata:
+                  type: number
+                  description: nodata value of the quality band.
+            stac_list:
               type: array
-              description: List of values to be considered as valid data and also as clear data.
+              description: list of the stac to search image.
               items:
-                type: number
-            not_clear_data:
-              type: array
-              description: List of values to be considered as Invalid data.
-              items:
-                type: number
-            others:
-              type: array
-              description: LIst of values to be considered as valid data but not as clear data.
-              items:
-                type: number
+                type: object
+                properties:
+                  url:
+                    type: string
+                  collection: 
+                    type: string
+                  token:
+                    type: string
