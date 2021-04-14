@@ -233,12 +233,13 @@ def prepare_merge(self, datacube, irregular_datacube, datasets, satellite, bands
             # Evaluate the number of dates, the number of scenes for each date and
             # the total amount merges that will be done
             number_of_datasets_dates = 0
-            first_band = list(self.score['items'][tile_name]['periods'][periodkey]['scenes'].keys())[0]
-            activity['list_dates'] = []
-            for dataset in self.score['items'][tile_name]['periods'][periodkey]['scenes'][first_band].keys():
-                for date in self.score['items'][tile_name]['periods'][periodkey]['scenes'][first_band][dataset].keys():
-                    activity['list_dates'].append(date)
-                    number_of_datasets_dates += 1
+            if len(self.score['items'][tile_name]['periods'][periodkey]['scenes'].keys()):
+                first_band = list(self.score['items'][tile_name]['periods'][periodkey]['scenes'].keys())[0]
+                activity['list_dates'] = []
+                for dataset in self.score['items'][tile_name]['periods'][periodkey]['scenes'][first_band].keys():
+                    for date in self.score['items'][tile_name]['periods'][periodkey]['scenes'][first_band][dataset].keys():
+                        activity['list_dates'].append(date)
+                        number_of_datasets_dates += 1
             
             activity['instancesToBeDone'] = number_of_datasets_dates
             activity['totalInstancesToBeDone'] = number_of_datasets_dates * len(activity['bands'])
