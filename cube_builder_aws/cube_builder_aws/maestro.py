@@ -122,7 +122,7 @@ def solo(self, activitylist):
 
     for activity in activitylist:
         services.put_activity(activity)
-        if activity['mystatus'] == 'DONE' and activity['action'] != 'publish':
+        if activity['mystatus'] == 'DONE':
             next_step(services, activity)
 
 
