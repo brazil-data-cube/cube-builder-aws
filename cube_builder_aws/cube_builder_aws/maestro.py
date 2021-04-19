@@ -136,9 +136,9 @@ def next_step(services, activity):
 
     response = services.update_control_table(
         Key = {'id': activitiesControlTableKey},
-        UpdateExpression = "ADD #mycount :increment",
-        ExpressionAttributeNames = {'#mycount': 'mycount'},
-        ExpressionAttributeValues = {':increment': 1},
+        UpdateExpression = "ADD #mycount :increment, SET #end_date =:date",
+        ExpressionAttributeNames = {'#mycount': 'mycount', '#end_date': 'end_date'},
+        ExpressionAttributeValues = {':increment': 1, ':date': datetime.now().strftime('%Y-%m-%d %H:%M:%S')},
         ReturnValues = "UPDATED_NEW"
     )
     if 'Attributes' in response and 'mycount' in response['Attributes']:
@@ -246,7 +246,8 @@ def prepare_merge(self, datacube, irregular_datacube, datasets, satellite, bands
 
             # Reset mycount in activitiesControlTable
             activities_control_table_key = encode_key(activity, ['action','irregular_datacube','tileid','start','end'])
-            services.put_control_table(activities_control_table_key, 0)
+            services.put_control_table(activities_control_table_key, 0, activity['totalInstancesToBeDone'], 
+                                        datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
 
             # Save the activity in DynamoDB if no scenes are available
             if number_of_datasets_dates == 0:
@@ -534,7 +535,8 @@ def next_blend(services, mergeactivity):
 
     # Reset mycount in  activitiesControlTable
     activitiesControlTableKey = blendactivity['dynamoKey']
-    services.put_control_table(activitiesControlTableKey, 0)
+    services.put_control_table(activitiesControlTableKey, 0, blendactivity['totalInstancesToBeDone'],
+                                datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
 
     # If no quality file was found for this tile/period, register it in DynamoDB and go on
     if blendactivity['instancesToBeDone'] == 0:
@@ -978,7 +980,8 @@ def next_posblend(services, blendactivity):
     if posblendactivity['action'] not in posblendactivity['dynamoKey']:
         posblendactivity['dynamoKey'] = blend_dynamo_key.replace('blend', posblendactivity['action'])
     activitiesControlTableKey = posblendactivity['dynamoKey']
-    services.put_control_table(activitiesControlTableKey, 0)
+    services.put_control_table(activitiesControlTableKey, 0, posblendactivity['totalInstancesToBeDone'],
+                                datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
 
     posblendactivity['indexesToBe'] = {}
     for i_name in posblendactivity['bands_expressions'].keys():
@@ -1205,6 +1208,11 @@ def next_publish(services, posblendactivity):
     publishactivity['cloudratio'] = '100'
     publishactivity['instancesToBeDone'] = len(publishactivity['bands']) - 1
     publishactivity['totalInstancesToBeDone'] = 1
+
+    # Reset mycount in activitiesControlTable
+    activitiesControlTableKey = publishactivity['dynamoKey']
+    services.put_control_table(activitiesControlTableKey, 0, publishactivity['totalInstancesToBeDone'],
+                                datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
 
     # Launch activity
     services.put_item_kinesis(publishactivity)
