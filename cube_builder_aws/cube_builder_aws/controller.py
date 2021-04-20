@@ -388,12 +388,14 @@ class CubeController:
         activities = self.services.get_control_activities(irregular_datacube)
         count = int(sum([a['tobe_done'] for a in activities if 'tobe_done' in a]))
         done = int(sum([a['mycount'] for a in activities]))
+        errors = int(sum([a['errors'] for a in activities]))
         not_done = count - done
         
         if not_done > 0:
             return dict(
                 finished = False,
                 done = done,
+                error = errors,
                 not_done = not_done
             ), 200
 
@@ -716,9 +718,10 @@ class CubeController:
             activities = self.services.get_control_activities(cube_name)
             count = int(sum([a['tobe_done'] for a in activities if 'tobe_done' in a]))
             done = int(sum([a['mycount'] for a in activities]))
-            not_done = count - done
+            errors = int(sum([a['erros'] for a in activities]))
+            not_done = count - done - errors
             
-            cube_dict['status'] = 'Pending' if not_done > 0 else 'Finished'
+            cube_dict['status'] = 'Error' if errors > 0 else 'Pending' if not_done > 0 else 'Finished'
 
             cube_dict['timeline'] = [t['time_inst'] for t in cube_dict['timeline']]
             list_cubes.append(cube_dict)
