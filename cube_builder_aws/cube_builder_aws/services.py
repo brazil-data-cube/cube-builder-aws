@@ -109,10 +109,7 @@ class CubeServices:
         		AttributeDefinitions=[
         			{'AttributeName': 'id','AttributeType': 'S'},
         		],
-        		ProvisionedThroughput={
-        			'ReadCapacityUnits': 2,
-        			'WriteCapacityUnits': 2
-        		}
+        		BillingMode='PAY_PER_REQUEST',
         	)
             # Wait until the table exists.
         	self.dynamoDBResource.meta.client.get_waiter('table_exists').wait(TableName=DBNAME_TB_CONTROL)
@@ -142,14 +139,6 @@ class CubeServices:
         	)
             # Wait until the table exists.
         	self.dynamoDBResource.meta.client.get_waiter('table_exists').wait(TableName=DBNAME_TB_PROCESS)
-    
-    def get_activities(self):
-        # self.activitiesTable.meta.client.delete_table(TableName=DYNAMO_TB_ACTIVITY)
-
-        return self.activitiesTable.scan()
-
-    def get_activities_ctrl(self):
-        return self.activitiesControlTable.scan()
 
     def get_activities_by_key(self, dinamo_key):
         return self.activitiesTable.query(
@@ -252,11 +241,15 @@ class CubeServices:
         )
         return True
 
-    def put_control_table(self, key, value):
+    def put_control_table(self, key, value, value_total, date):
         self.activitiesControlTable.put_item(
             Item = {
                 'id': key,
                 'mycount': value,
+                'tobe_done': value_total,
+                'start_date': date,
+                'end_date': date,
+                'errors': 0
             }
         )
         return True
@@ -287,6 +280,24 @@ class CubeServices:
             ExpressionAttributeValues=ExpressionAttributeValues,
             ReturnValues=ReturnValues
         )
+
+    def get_control_activities(self, data_cube):
+        expression = Attr('id').contains(data_cube)
+        response = self.activitiesControlTable.scan(
+            FilterExpression=expression,
+            Limit=1000000
+        )
+
+        items = response['Items']
+
+        while 'LastEvaluatedKey' in response:
+            response = self.activitiesControlTable.scan(
+                FilterExpression=expression,
+                ExclusiveStartKey=response['LastEvaluatedKey']
+            )
+            items.extend(response['Items'])
+
+        return items
 
     ## ----------------------
     # SQS

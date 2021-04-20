@@ -374,47 +374,44 @@ class CubeController:
 
     def get_cube_status(self, cube_name):
         cube = self.get_cube_or_404(cube_full_name=cube_name)
-        datacube = cube.name
+        irregular_cube = cube
 
         # split and format datacube NAME
+        datacube = cube.name
         parts_cube_name = get_cube_parts(datacube)
         irregular_datacube = '_'.join(parts_cube_name[:2])
-        is_regular = len(parts_cube_name) > 2
+        is_regular = cube.composite_function.alias != 'IDT'
 
-        # STATUS
-        acts_datacube = []
-        not_done_datacube = 0
-        error_datacube = 0
-        if is_regular:
-            acts_datacube = self.services.get_activities_by_datacube(datacube)
-            not_done_datacube = len(list(filter(lambda i: i['mystatus'] == 'NOTDONE', acts_datacube)))
-            error_datacube = len(list(filter(lambda i: i['mystatus'] == 'ERROR', acts_datacube)))
-        acts_irregular = self.services.get_activities_by_datacube(irregular_datacube)
-        not_done_irregular = len(list(filter(lambda i: i['mystatus'] == 'NOTDONE', acts_irregular)))
-        error_irregular = len(list(filter(lambda i: i['mystatus'] == 'ERROR', acts_irregular)))
+        if not is_regular:
+            irregular_datacube += '_'
 
-        activities = acts_irregular + acts_datacube
-        errors = error_irregular + error_datacube
-        not_done = not_done_irregular + not_done_datacube
-        if (not_done + errors):
+        activities = self.services.get_control_activities(irregular_datacube)
+        count = int(sum([a['tobe_done'] for a in activities if 'tobe_done' in a]))
+        done = int(sum([a['mycount'] for a in activities]))
+        errors = int(sum([a['errors'] for a in activities]))
+        not_done = count - done
+        
+        if not_done > 0:
             return dict(
                 finished = False,
-                done = len(activities) - (not_done + errors),
-                not_done = not_done,
-                error = errors
+                done = done,
+                error = errors,
+                not_done = not_done
             ), 200
 
         # TIME
-        acts = sorted(activities, key=lambda i: i['mylaunch'], reverse=True)
-        if len(acts):
-            start_date = get_date(acts[-1]['mylaunch'])
-            end_date = get_date(acts[0]['myend'])
+        acts = sorted(activities, key=lambda i: i['start_date'])
+        start_date = get_date(acts[0]['start_date'])
 
+        acts_order_by_end = sorted(activities, key=lambda i: i['end_date'])
+        end_date = get_date(acts_order_by_end[-1]['end_date'])
+
+        if len(acts):
             time = 0
             list_dates = []
             for a in acts:
-                start = get_date(a['mylaunch'])
-                end = get_date(a['myend'])
+                start = get_date(a['start_date'])
+                end = get_date(a['end_date'])
                 if len(list_dates) == 0:
                     time += (end - start).seconds
                     list_dates.append({'s': start, 'e': end})
@@ -434,7 +431,7 @@ class CubeController:
                         if value > 0 and value < time_by_act:
                             time_by_act = value
 
-                    elif start > dates['e'] or end < dates['s']:
+                    elif start >= dates['e'] or end <= dates['s']:
                         value = (end - start).seconds
                         if value < time_by_act or i == 1:
                             time_by_act = value
@@ -456,7 +453,7 @@ class CubeController:
                 finished = True,
                 start_date = str(start_date),
                 last_date = str(end_date),
-                done = len(activities),
+                done = done,
                 duration = time_str,
                 collection_item = quantity_coll_items
             ), 200
@@ -713,28 +710,20 @@ class CubeController:
         list_cubes = []
         for cube in cubes:
             cube_dict = serializer.dump(cube)
-            not_done = 0
-            sum_acts = 0
-            error = 0
-            if cube.composite_function.alias != 'IDT':
-                activities = self.services.get_activities_by_datacube(cube.name)
-                not_done = len(list(filter(lambda i: i['mystatus'] == 'NOTDONE', activities)))
-                error = len(list(filter(lambda i: i['mystatus'] == 'ERROR', activities)))
-                sum_acts += len(activities)
-
-            parts = get_cube_parts(cube.name)
-            data_cube_identity = '_'.join(parts[:2])
-            activities = self.services.get_activities_by_datacube(data_cube_identity)
-            not_done_identity = len(list(filter(lambda i: i['mystatus'] == 'NOTDONE', activities)))
-            error_identity = len(list(filter(lambda i: i['mystatus'] == 'ERROR', activities)))
-            sum_acts += len(activities)
+            cube_name = cube.name
             
-            cube_dict['status'] = 'Pending'
-            if sum_acts > 0:
-                sum_not_done = not_done + not_done_identity
-                sum_errors = error + error_identity
-                cube_dict['status'] = 'Error' if sum_errors > 0 else 'Finished' \
-                    if (sum_not_done + sum_errors) == 0 else 'Pending'
+            if cube.composite_function.alias == 'IDT':
+                cube_name += '_'
+
+            activities = self.services.get_control_activities(cube_name)
+            count = int(sum([a['tobe_done'] for a in activities if 'tobe_done' in a]))
+            done = int(sum([a['mycount'] for a in activities]))
+            errors = int(sum([a['erros'] for a in activities]))
+            not_done = count - done - errors
+            
+            cube_dict['status'] = 'Error' if errors > 0 else 'Pending' if not_done > 0 else 'Finished'
+
+            cube_dict['timeline'] = [t['time_inst'] for t in cube_dict['timeline']]
             list_cubes.append(cube_dict)
 
         return list_cubes, 200
@@ -912,8 +901,8 @@ class CubeController:
         activity = json.loads(item['Items'][0]['activity'])
 
         return dict(
-            stac_url=activity['url_stac'],
-            collections=','.join(activity['datasets']),
+            stac_list=activity['stac_list'],
+            indexes_only_regular_cube=activity['indexes_only_regular_cube'],
             bucket=activity['bucket_name'],
             satellite=activity['satellite'],
         ), 200
