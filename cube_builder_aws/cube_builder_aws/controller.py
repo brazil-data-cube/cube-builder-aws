@@ -390,7 +390,7 @@ class CubeController:
         done = int(sum([a['mycount'] for a in activities]))
         not_done = count - done
         
-        if not_done:
+        if not_done > 0:
             return dict(
                 finished = False,
                 done = done,
@@ -398,16 +398,18 @@ class CubeController:
             ), 200
 
         # TIME
-        acts = sorted(activities, key=lambda i: i['start_date'], reverse=True)
-        if len(acts):
-            start_date = get_date(acts[-1]['start_date'])
-            end_date = get_date(acts[0]['end_date'])
+        acts = sorted(activities, key=lambda i: i['start_date'])
+        start_date = get_date(acts[0]['start_date'])
 
+        acts_order_by_end = sorted(activities, key=lambda i: i['end_date'])
+        end_date = get_date(acts_order_by_end[-1]['end_date'])
+
+        if len(acts):
             time = 0
             list_dates = []
             for a in acts:
-                start = get_date(a['mylaunch'])
-                end = get_date(a['myend'])
+                start = get_date(a['start_date'])
+                end = get_date(a['end_date'])
                 if len(list_dates) == 0:
                     time += (end - start).seconds
                     list_dates.append({'s': start, 'e': end})
@@ -427,7 +429,7 @@ class CubeController:
                         if value > 0 and value < time_by_act:
                             time_by_act = value
 
-                    elif start > dates['e'] or end < dates['s']:
+                    elif start >= dates['e'] or end <= dates['s']:
                         value = (end - start).seconds
                         if value < time_by_act or i == 1:
                             time_by_act = value
@@ -708,7 +710,7 @@ class CubeController:
             cube_dict = serializer.dump(cube)
             cube_name = cube.name
             
-            if if cube.composite_function.alias == 'IDT':
+            if cube.composite_function.alias == 'IDT':
                 cube_name += '_'
 
             activities = self.services.get_control_activities(cube_name)
@@ -717,6 +719,8 @@ class CubeController:
             not_done = count - done
             
             cube_dict['status'] = 'Pending' if not_done > 0 else 'Finished'
+
+            cube_dict['timeline'] = [t['time_inst'] for t in cube_dict['timeline']]
             list_cubes.append(cube_dict)
 
         return list_cubes, 200

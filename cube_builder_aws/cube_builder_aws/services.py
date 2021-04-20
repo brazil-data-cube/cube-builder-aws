@@ -248,7 +248,8 @@ class CubeServices:
                 'mycount': value,
                 'tobe_done': value_total,
                 'start_date': date,
-                'end_date': date
+                'end_date': date,
+                'errors': 0
             }
         )
         return True

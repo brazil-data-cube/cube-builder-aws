@@ -117,26 +117,46 @@ def orchestrate(cube_irregular_infos, temporal_schema, tiles, start_date, end_da
     return items
 
 
-def solo(self, activitylist):
-    services = self.services
-
-    for activity in activitylist:
-        services.put_activity(activity)
-        if activity['mystatus'] == 'DONE':
-            next_step(services, activity)
-
-
-def next_step(services, activity):
-    activitiesControlTableKey = activity['dynamoKey']\
-            .replace(activity['band'], '')
+def get_key_to_controltable(activity):
+    activitiesControlTableKey = activity['dynamoKey']
+    
+    if activity['action'] != 'publish':
+        activitiesControlTableKey = activitiesControlTableKey.replace(activity['band'], '')
 
     if activity['action'] == 'merge':
         activitiesControlTableKey = activitiesControlTableKey.replace(
             activity['date'], '{}{}'.format(activity['start'], activity['end']))
 
+    return activitiesControlTableKey
+
+
+def solo(self, activitylist):
+    services = self.services
+
+    for activity in activitylist:
+        services.put_activity(activity)
+
+        activitiesControlTableKey = get_key_to_controltable(activity)
+
+        if activity['mystatus'] == 'DONE':
+            next_step(services, activity)
+
+        elif activity['mystatus'] == 'ERROR':
+            response = services.update_control_table(
+                Key = {'id': activitiesControlTableKey},
+                UpdateExpression = "ADD #errors :increment",
+                ExpressionAttributeNames = {'#errors': 'errors'},
+                ExpressionAttributeValues = {':increment': 1},
+                ReturnValues = "UPDATED_NEW"
+            )
+
+
+def next_step(services, activity):
+    activitiesControlTableKey = get_key_to_controltable(activity)
+
     response = services.update_control_table(
         Key = {'id': activitiesControlTableKey},
-        UpdateExpression = "ADD #mycount :increment, SET #end_date =:date",
+        UpdateExpression = "SET #mycount = #mycount + :increment, #end_date = :date",
         ExpressionAttributeNames = {'#mycount': 'mycount', '#end_date': 'end_date'},
         ExpressionAttributeValues = {':increment': 1, ':date': datetime.now().strftime('%Y-%m-%d %H:%M:%S')},
         ReturnValues = "UPDATED_NEW"
@@ -345,8 +365,6 @@ def merge_warped(self, activity):
                 activity['cloudratio'] = str(cloudratio)
                 services.put_item_kinesis(activity)
 
-                key = '{}activities/{}{}.json'.format(activity['dirname'], activity['dynamoKey'], activity['date'])
-                services.save_file_S3(bucket_name=bucket_name, key=key, activity=activity)
                 return
             except:
                 _ = services.delete_file_S3(bucket_name=bucket_name, key=key)
