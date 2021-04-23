@@ -603,18 +603,18 @@ def next_blend(services, mergeactivity):
         response = services.get_activity_item(
             {'id': blendactivity['dynamoKey'], 'sk': blendactivity['sk'] })
 
-        if 'Item' in response \
-                and response['Item']['mystatus'] == 'DONE' \
-                and response['Item']['instancesToBeDone'] == blendactivity['instancesToBeDone']:
-
+        if 'Item' in response:
             exists = True
             for func in blendactivity['functions']:
                 if func == 'IDT' or (func == 'MED' and internal_band == 'PROVENANCE'): continue
                 if not services.s3_file_exists(bucket_name=mergeactivity['bucket_name'], key=blendactivity['{}file'.format(func)]):
                     exists = False
 
-            if not blendactivity.get('force') and exists:
-                next_step(services, response['Item'])
+            if not blendactivity.get('force') \
+                and response['Item']['mystatus'] == 'DONE' \
+                and response['Item']['instancesToBeDone'] == blendactivity['instancesToBeDone'] \
+                and exists:
+                next_step(services, json.loads(response['Item']['activity']))
                 continue
             else:
                 services.remove_activity_by_key(blendactivity['dynamoKey'], blendactivity['sk'])
@@ -1065,12 +1065,11 @@ def next_posblend(services, blendactivity):
             posblendactivity['mylaunch'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
             response = services.get_activity_item({'id': posblendactivity['dynamoKey'], 'sk': posblendactivity['sk']})
-            if 'Item' in response \
-                and response['Item']['mystatus'] == 'DONE' \
-                and response['Item']['instancesToBeDone'] == blendactivity['instancesToBeDone']:
-
-                if not posblendactivity.get('force'):
-                    next_step(services, response['Item'])
+            if 'Item' in response:
+                if not posblendactivity.get('force') \
+                    and response['Item']['mystatus'] == 'DONE' \
+                    and response['Item']['instancesToBeDone'] == blendactivity['instancesToBeDone']:
+                    next_step(services, json.loads(response['Item']['activity']))
                     continue
                 else:
                     services.remove_activity_by_key(posblendactivity['dynamoKey'], posblendactivity['sk'])
@@ -1259,9 +1258,9 @@ def next_publish(services, posblendactivity):
                                 datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
 
     response = services.get_activity_item({'id': publishactivity['dynamoKey'], 'sk': 'ALLBANDS'})
-    if 'Item' in response and response['Item']['mystatus'] == 'DONE':
-        if not publishactivity.get('force'):
-            next_step(services, response['Item'])
+    if 'Item' in response:
+        if not publishactivity.get('force') and response['Item']['mystatus'] == 'DONE':
+            next_step(services, json.loads(response['Item']['activity']))
             return
         else:
             services.remove_activity_by_key(publishactivity['dynamoKey'], 'ALLBANDS')
