@@ -548,15 +548,21 @@ class CubeController:
         # prepare merge
         crs = cube_infos.grs.crs
         formatted_version = format_version(cube_infos.version)
-        prepare_merge(self, cube_infos.name, cube_infos_irregular.name, collections, satellite,
+        not_started = prepare_merge(self, cube_infos.name, cube_infos_irregular.name, collections, satellite,
             bands_list, bands_ids_list, bands_ql_list, float(bands[0].resolution_x), 
             float(bands[0].resolution_y), int(bands[0].nodata), crs, quality_band, functions, formatted_version, 
             params.get('force', False), mask, bands_expressions=bands_expressions, 
             indexes_only_regular_cube=params.get('indexes_only_regular_cube'))
 
+        if len(not_started):
+            return dict(
+                message='Some scenes have not been started! If necessary, use the force parameter.',
+                scenes_not_started=not_started
+            ), 200
+
         return dict(
             message='Processing started with succesfully'
-        ), 201
+        ), 200
 
     @classmethod
     def create_grs_schema(cls, name, description, projection, meridian, degreesx, degreesy, bbox, srid=SRID_ALBERS_EQUAL_AREA):

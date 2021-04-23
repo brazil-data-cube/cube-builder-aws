@@ -217,6 +217,8 @@ def prepare_merge(self, datacube, irregular_datacube, datasets, satellite, bands
 
     logger.info('prepare merge - Score {} items'.format(self.score['items']))
 
+    scenes_not_started = []
+
     # For all tiles
     for tile_name in self.score['items']:
         activity['tileid'] = tile_name
@@ -242,11 +244,20 @@ def prepare_merge(self, datacube, irregular_datacube, datasets, satellite, bands
             activity['end'] = activity['end'].strftime('%Y-%m-%d')
 
             # When force is True, we must rebuild the merge
-            if force:
+            publish_control_key = 'publish{}{}'.format(activity['datacube'], encode_key(activity, ['tileid', 'start', 'end']))
+            if not force:
+                response = services.get_activity_item({'id': publish_control_key, 'sk': 'ALLBANDS' })
+                if 'Item' in response and response['Item']['mystatus'] == 'DONE':
+                    scenes_not_started.append(f'{activity["tileid"]}_{activity["start"]}_{activity["end"]}')
+                    continue
+            else:
                 merge_control_key = encode_key(activity, ['action', 'irregular_datacube', 'tileid', 'start', 'end'])
-                blend_control_key = 'blend{}_{}'.format(activity['datacube'], encode_key(activity, ['tileid', 'start', 'end']))
+                blend_control_key = 'blend{}{}'.format(activity['datacube'], encode_key(activity, ['tileid', 'start', 'end']))
+                posblend_control_key = 'posblend{}{}'.format(activity['datacube'], encode_key(activity, ['tileid', 'start', 'end']))
                 self.services.remove_control_by_key(merge_control_key)
                 self.services.remove_control_by_key(blend_control_key)
+                self.services.remove_control_by_key(posblend_control_key)
+                self.services.remove_control_by_key(publish_control_key)
 
             self.score['items'][tile_name]['periods'][periodkey]['scenes'] = services.search_STAC(activity)
 
@@ -319,6 +330,8 @@ def prepare_merge(self, datacube, irregular_datacube, datasets, satellite, bands
                                     and services.s3_file_exists(key=activity['ARDfile']):
                                 next_step(services, activity)
                                 continue
+                            else:
+                                services.remove_activity_by_key(activity['dynamoKey'], activity['sk'])
 
                         # Re-schedule a merge-warped
                         activity['mystatus'] = 'NOTDONE'
@@ -331,6 +344,7 @@ def prepare_merge(self, datacube, irregular_datacube, datasets, satellite, bands
                         services.put_item_kinesis(activity)
                         services.send_to_sqs(activity)
 
+    return scenes_not_started
 
 def merge_warped(self, activity):
     logger.info('==> start MERGE')
@@ -549,7 +563,7 @@ def next_blend(services, mergeactivity):
     blendactivity['scenes'] = {}
     mergeactivity['band'] = mergeactivity['quality_band']
     blendactivity['band'] = mergeactivity['quality_band']
-    _ = fill_blend(services, mergeactivity, blendactivity)
+    status = fill_blend(services, mergeactivity, blendactivity)
 
     # Reset mycount in  activitiesControlTable
     activitiesControlTableKey = blendactivity['dynamoKey']
@@ -557,12 +571,12 @@ def next_blend(services, mergeactivity):
                                 datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
 
     # If no quality file was found for this tile/period, register it in DynamoDB and go on
-    if blendactivity['instancesToBeDone'] == 0:
+    if not status or blendactivity['instancesToBeDone'] == 0:
         blendactivity['sk'] = 'ALLBANDS'
         blendactivity['mystatus'] = 'ERROR'
         blendactivity['errors'] = dict(
             step='next_blend',
-            message='not quality file was found for this tile/period'
+            message='not all merges were found for this tile/period'
         )
         blendactivity['mystart'] = 'SSSS-SS-SS'
         blendactivity['myend'] = 'EEEE-EE-EE'
@@ -587,7 +601,7 @@ def next_blend(services, mergeactivity):
 
         # Check if we are doing it again and if we have to do it because a different number of ARDfiles is present
         response = services.get_activity_item(
-            {'id': blendactivity['dynamoKey'], 'sk': internal_band if internal_band else band })
+            {'id': blendactivity['dynamoKey'], 'sk': blendactivity['sk'] })
 
         if 'Item' in response \
                 and response['Item']['mystatus'] == 'DONE' \
@@ -600,9 +614,10 @@ def next_blend(services, mergeactivity):
                     exists = False
 
             if not blendactivity.get('force') and exists:
-                blendactivity['mystatus'] = 'DONE'
-                next_step(services, blendactivity)
+                next_step(services, response['Item'])
                 continue
+            else:
+                services.remove_activity_by_key(blendactivity['dynamoKey'], blendactivity['sk'])
 
         # Blend has not been performed, do it
         blendactivity['mystatus'] = 'NOTDONE'
@@ -687,7 +702,7 @@ def blend(self, activity):
 
     band = activity['band']
     numscenes = len(activity['scenes'])
-    
+
     nodata = int(activity.get('nodata', -9999))
     if band == activity['quality_band']:
         nodata = activity_mask['nodata']
@@ -1049,6 +1064,17 @@ def next_posblend(services, blendactivity):
             posblendactivity['cloudratio'] = '100'
             posblendactivity['mylaunch'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
+            response = services.get_activity_item({'id': posblendactivity['dynamoKey'], 'sk': posblendactivity['sk']})
+            if 'Item' in response \
+                and response['Item']['mystatus'] == 'DONE' \
+                and response['Item']['instancesToBeDone'] == blendactivity['instancesToBeDone']:
+
+                if not posblendactivity.get('force'):
+                    next_step(services, response['Item'])
+                    continue
+                else:
+                    services.remove_activity_by_key(posblendactivity['dynamoKey'], posblendactivity['sk'])
+
             if i == 'IDT':
                 dates_refs = activity['scenes'].keys()
                 for date_ref in dates_refs:
@@ -1144,7 +1170,7 @@ def next_publish(services, posblendactivity):
     for key in ['datacube','bands','bands_ids','quicklook','tileid','start','end', \
         'dirname', 'cloudratio', 'bucket_name', 'quality_band', 'internal_bands', \
         'functions', 'indexesToBe', 'version', 'irregular_datacube', \
-        'indexes_only_regular_cube']:
+        'indexes_only_regular_cube', 'force']:
         publishactivity[key] = posblendactivity.get(key)
     publishactivity['action'] = 'publish'
 
@@ -1231,6 +1257,14 @@ def next_publish(services, posblendactivity):
     activitiesControlTableKey = publishactivity['dynamoKey']
     services.put_control_table(activitiesControlTableKey, 0, publishactivity['totalInstancesToBeDone'],
                                 datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+
+    response = services.get_activity_item({'id': publishactivity['dynamoKey'], 'sk': 'ALLBANDS'})
+    if 'Item' in response and response['Item']['mystatus'] == 'DONE':
+        if not publishactivity.get('force'):
+            next_step(services, response['Item'])
+            return
+        else:
+            services.remove_activity_by_key(publishactivity['dynamoKey'], 'ALLBANDS')
 
     # Launch activity
     services.put_item_kinesis(publishactivity)
