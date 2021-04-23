@@ -272,6 +272,15 @@ class CubeServices:
         except:
             return False
 
+    def remove_activity_by_key(self, key: str, sk: str):
+        try:
+            self.activitiesTable.delete_item(
+                Key=dict(id=key, sk=sk)
+            )
+            return True
+        except:
+            return False
+
     def update_control_table(self, Key, UpdateExpression, ExpressionAttributeNames, ExpressionAttributeValues, ReturnValues):
         return self.activitiesControlTable.update_item(
             Key=Key,

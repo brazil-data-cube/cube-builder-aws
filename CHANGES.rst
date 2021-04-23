@@ -9,6 +9,14 @@
 Changes
 =======
 
+Version 0.6.0 (2021-04-23)
+--------------------------
+
+- Changed the structure of the control table in dynamodb
+- Fix endpoint to get cube status (`#137 <https://github.com/brazil-data-cube/cube-builder-aws/issues/137>`_)
+- Fix reprocess tiles with force parameter (`#128 <https://github.com/brazil-data-cube/cube-builder-aws/issues/128>`_)
+
+
 Version 0.4.0 (2021-04-13)
 --------------------------
 

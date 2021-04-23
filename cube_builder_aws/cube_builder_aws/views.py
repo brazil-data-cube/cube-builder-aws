@@ -34,7 +34,6 @@ def status():
     ), 200
 
 
-# Cube Metadata
 @bp.route("/cube-status", methods=["GET"])
 def get_status():
     """Retrieve the cube processing state, which refers to total items and total to be done."""
