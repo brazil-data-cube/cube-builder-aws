@@ -580,7 +580,7 @@ class CubeController:
         elif projection == 'sinu':
             tile_srs_p4 = "+proj=sinu +lon_0={} +x_0=0 +y_0=0 +a=6371007.181 +b=6371007.181 +units=m +no_defs".format(meridian)
         else:
-            proj = SpatialRefSys.query.filter(SpatialRefSys.srid == srid).first_or_404()
+            proj = SpatialRefSys.query.filter(SpatialRefSys.srid == srid).first_or_404(f'SRID {srid} not found.')
             tile_srs_p4 = proj.proj4text
             
         # Number of tiles and base tile
