@@ -36,6 +36,7 @@ class GridRefSysForm(ModelSchema):
     degreesx = fields.Float(required=True, load_only=True)
     degreesy = fields.Float(required=True, load_only=True)
     bbox = fields.String(required=True, load_only=True)
+    srid = fields.Integer(required=False, load_only=True)
 
     class Meta:
         """Internal meta information of form interface."""
