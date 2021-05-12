@@ -9,6 +9,8 @@
 import datetime
 import hashlib
 import os
+import shutil
+from pathlib import Path
 from typing import List, Tuple
 
 import numpy
@@ -19,14 +21,14 @@ import shapely.geometry
 from bdc_catalog.models import db
 from bdc_catalog.utils import \
     multihash_checksum_sha256 as _multihash_checksum_sha256
-from dateutil.relativedelta import relativedelta
+from cloudpathlib import CloudPath
 from flask import abort
 from geoalchemy2.shape import from_shape
 from numpngw import write_png
 from rasterio.io import MemoryFile
-from rasterio.warp import Resampling
 from rio_cogeo.cogeo import cog_translate
 from rio_cogeo.profiles import cog_profiles
+from sensor_harm.landsat import landsat_harmonize
 
 from ..logger import logger
 from .interpreter import execute
@@ -414,3 +416,44 @@ def create_asset_definition(services, bucket_name: str, href: str, mime_type: st
         logger.error(str(e), exc_info=True)
 
         raise e
+
+def apply_landsat_harmonization(url, band, angle_bucket_dir=None):
+    """Generate Landsat NBAR.
+
+    Args:
+        url (str) - link scene
+        band (str) - band name
+        angle_bucket_dir Optional[str] - path to directory/bucket containing angle bands.
+
+    Returns:
+        str: full path result images.
+    """
+    scene_id = Path(url).stem.replace(f'_{band}', '')
+
+    # download scene to temp directory
+    source_dir = f'/tmp/{scene_id}'
+    Path(source_dir).mkdir(parents=True, exist_ok=True)
+    CloudPath(url).download_to(source_dir)
+
+    # search angle bands and copy to temp directory
+    if angle_bucket_dir:
+        angle_bucket_dir = CloudPath(angle_bucket_dir)
+    else:
+        angle_bucket_dir = CloudPath(url).parent
+
+    for angle_suffix in ['azimuth', 'zenith']:
+        angle_list = list(angle_bucket_dir.glob(f'**/*{scene_id}*{angle_suffix}*.tif'))
+        for angle in angle_list:
+            angle.download_to(source_dir)
+
+    target_dir = '/tmp/result'
+    result_path = url
+
+    try:
+        _, result_path = landsat_harmonize(scene_id, source_dir, target_dir, bands=[band], cp_quality_band=False)
+    except:
+        result_path = url
+
+    shutil.rmtree(source_dir)
+
+    return str(result_path)

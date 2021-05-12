@@ -57,6 +57,8 @@ install_requires = [
     'rio-cogeo==1.1.10',
     'shapely==1.7.0',
     'stac.py==0.9.0.post5',
+    'sensor-harm @ git+git://github.com/brazil-data-cube/sensor-harm@v0.2.0#egg=sensor-harm',
+    'cloudpathlib[s3]==0.4.0',
 ]
 
 packages = find_packages()
