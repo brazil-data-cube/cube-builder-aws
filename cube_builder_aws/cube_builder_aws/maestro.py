@@ -271,6 +271,23 @@ def prepare_merge(self, datacube, irregular_datacube, datasets, satellite, bands
                     for date in self.score['items'][tile_name]['periods'][periodkey]['scenes'][first_band][dataset].keys():
                         activity['list_dates'].append(date)
                         number_of_datasets_dates += 1
+
+            if number_of_datasets_dates == 0:
+                first_collection = activity['stac_list'][0]['collection']
+                first_date = activity['start']
+                number_of_datasets_dates = 1
+                activity['list_dates'] = [first_date]
+                for band in activity['bands']:
+                    self.score['items'][tile_name]['periods'][periodkey]['scenes'][band] = {}
+                    self.score['items'][tile_name]['periods'][periodkey]['scenes'][band][first_collection] = {}
+                    self.score['items'][tile_name]['periods'][periodkey]['scenes'][band][first_collection][first_date] = [dict(
+                        band = band,
+                        date = first_date,
+                        link = '',
+                        sceneid = '',
+                        empty_file=True
+                    )]
+
             
             activity['instancesToBeDone'] = number_of_datasets_dates
             activity['totalInstancesToBeDone'] = number_of_datasets_dates * len(activity['bands'])
@@ -279,20 +296,6 @@ def prepare_merge(self, datacube, irregular_datacube, datasets, satellite, bands
             activities_control_table_key = encode_key(activity, ['action','irregular_datacube','tileid','start','end'])
             services.put_control_table(activities_control_table_key, 0, activity['totalInstancesToBeDone'], 
                                         datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
-
-            # Save the activity in DynamoDB if no scenes are available
-            if number_of_datasets_dates == 0:
-                dynamo_key = encode_key(activity, ['action','irregular_datacube','tileid','start','end'])
-                activity['dynamoKey'] = dynamo_key
-                activity['sk'] = 'NOSCENES'
-                activity['mystatus'] = 'ERROR'
-                activity['mylaunch'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                activity['mystart'] = 'XXXX-XX-XX'
-                activity['myend'] = 'YYYY-YY-YY'
-                activity['efficacy'] = '0'
-                activity['cloudratio'] = '100'
-                services.put_item_kinesis(activity)
-                continue
 
             # Build each merge activity
             # For all bands
@@ -314,6 +317,7 @@ def prepare_merge(self, datacube, irregular_datacube, datasets, satellite, bands
                         # Get all scenes that were acquired in the same date
                         for scene in self.score['items'][tile_name]['periods'][periodkey]['scenes'][band][dataset][date]:
                             activity['links'].append(scene['link'])
+                            activity['empty_file'] = scene.get('empty_file', False)
                             if 'source_nodata' in scene:
                                 activity['source_nodata'] = scene['source_nodata']
 
@@ -349,6 +353,9 @@ def prepare_merge(self, datacube, irregular_datacube, datasets, satellite, bands
 def merge_warped(self, activity):
     logger.info('==> start MERGE')
     services = self.services
+
+    empty_file = activity.get('empty_file', False)
+
     key = activity['ARDfile']
     bucket_name = activity['bucket_name']
     prefix = services.get_s3_prefix(bucket_name)
@@ -434,6 +441,23 @@ def merge_warped(self, activity):
         template = None
         raster_blocks = None
 
+        # if not scenes found, generate empty file
+        if empty_file:
+            activity['links'] = []
+            template = dict(
+                width=numcol,
+                height=numlin,
+                nodata=nodata,
+                crs=activity['srs'],
+                dtype='int16',
+                driver='GTiff',
+                count=1
+            )
+            if not shape:
+                template.update({
+                    'transform': transform
+                })
+
         for url in activity['links']:
 
             with rasterio.Env(CPL_CURL_VERBOSE=False):
@@ -511,7 +535,11 @@ def merge_warped(self, activity):
         efficacy = 0
         cloudratio = 100
         if activity['band'] == activity['quality_band']:
-            raster_merge, efficacy, cloudratio = getMask(raster_merge, mask=activity_mask, blocks=raster_blocks)
+            if not empty_file:
+                raster_merge, efficacy, cloudratio = getMask(raster_merge, mask=activity_mask, blocks=raster_blocks)
+            else:
+                raster_merge = raster_merge.astype(numpy.uint8)
+
             template.update({'dtype': 'uint8'})
             nodata = activity_mask['nodata']
 
@@ -551,7 +579,7 @@ def next_blend(services, mergeactivity):
     for key in ['datasets', 'satellite', 'bands', 'quicklook', 'srs', 'functions', 'bands_ids',
                 'tileid', 'start', 'end', 'dirname', 'nodata', 'bucket_name', 'quality_band',
                 'internal_bands', 'force', 'version', 'datacube', 'irregular_datacube', 'mask',
-                'bands_expressions', 'indexes_only_regular_cube']:
+                'bands_expressions', 'indexes_only_regular_cube', 'empty_file']:
         blendactivity[key] = mergeactivity.get(key, '')
 
     blendactivity['totalInstancesToBeDone'] = len(blendactivity['bands']) + len(blendactivity['internal_bands'])
@@ -1003,7 +1031,8 @@ def next_posblend(services, blendactivity):
     posblendactivity = blendactivity
     posblendactivity['action'] = 'posblend'
 
-    indexes_only_regular_cube = posblendactivity.get('indexes_only_regular_cube', False)
+    indexes_only_regular_cube = posblendactivity.get('indexes_only_regular_cube', False) or \
+                                posblendactivity.get('empty_file', False)
 
     # indexes * (Irregular scenes + regular scene)
     quantity_scenes = 1 if indexes_only_regular_cube else (len(posblendactivity['scenes'].keys()) + 1)
@@ -1094,7 +1123,8 @@ def posblend(self, activity):
     services = self.services
 
     force = activity.get('force', False)
-    indexes_only_regular_cube = activity.get('indexes_only_regular_cube', False)
+    indexes_only_regular_cube = activity.get('indexes_only_regular_cube', False) or \
+                                activity.get('empty_file', False)
 
     bucket_name = activity['bucket_name']
     mystart = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -1169,11 +1199,12 @@ def next_publish(services, posblendactivity):
     for key in ['datacube','bands','bands_ids','quicklook','tileid','start','end', \
         'dirname', 'cloudratio', 'bucket_name', 'quality_band', 'internal_bands', \
         'functions', 'indexesToBe', 'version', 'irregular_datacube', \
-        'indexes_only_regular_cube', 'force']:
+        'indexes_only_regular_cube', 'force', 'empty_file']:
         publishactivity[key] = posblendactivity.get(key)
     publishactivity['action'] = 'publish'
 
     indexes_only_regular_cube = posblendactivity.get('indexes_only_regular_cube', False)
+    empty_file = posblendactivity.get('empty_file', False)
 
     # Create dynamoKey for the publish activity
     publishactivity['dynamoKey'] = encode_key(publishactivity, ['action','datacube','tileid','start','end'])
@@ -1200,7 +1231,7 @@ def next_publish(services, posblendactivity):
                 publishactivity['scenes'][date_ref]['cloudratio'] = scene['cloudratio']
 
                 # add indexes to publish in irregular cube
-                if not indexes_only_regular_cube:
+                if not indexes_only_regular_cube and not empty_file:
                     for index_name in publishactivity['indexesToBe'].keys():
                         # ex: LC8_30_090096_2019-01-28_fMask.tif => LC8_30_090096_2019-01-28_NDVI.tif
                         quality_file = scene['ARDfiles'][publishactivity['quality_band']]
@@ -1276,6 +1307,7 @@ def publish(self, activity):
     prefix = services.get_s3_prefix(bucket_name)
 
     indexes_only_regular_cube = activity.get('indexes_only_regular_cube', False)
+    empty_file = activity.get('empty_file', False)
 
     activity['mystart'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     try:
@@ -1370,90 +1402,99 @@ def publish(self, activity):
             db.session.commit()
 
         ## for all ARD scenes (IDENTITY)
-        for date_ref in activity['scenes']:
-            scene = activity['scenes'][date_ref]
+        if empty_file:
+            # remove temp files created if not scenes found in step/tile
+            for date_ref in activity['scenes']:
+                files = activity['scenes'][date_ref]['ARDfiles']
+                for band_key in files:
+                    file_to_remove = f"{activity['dirname']}{date_ref}/{files[band_key]}"
+                    _ = services.delete_file_S3(bucket_name=bucket_name, key=file_to_remove)
+            
+        else:
+            for date_ref in activity['scenes']:
+                scene = activity['scenes'][date_ref]
 
-            cube_name = activity['irregular_datacube']
-            cube = Collection.query().filter(
-                Collection.name == cube_name,
-                Collection.version == int(activity['version'][-3:])
-            ).first()
-            if not cube:
-                raise Exception(f'cube {cube_name} - {activity["version"]} not found!')
+                cube_name = activity['irregular_datacube']
+                cube = Collection.query().filter(
+                    Collection.name == cube_name,
+                    Collection.version == int(activity['version'][-3:])
+                ).first()
+                if not cube:
+                    raise Exception(f'cube {cube_name} - {activity["version"]} not found!')
 
-            general_scene_id = '{}_{}_{}_{}'.format(
-                cube_name, activity['version'], activity['tileid'], str(scene['date'])[0:10])
+                general_scene_id = '{}_{}_{}_{}'.format(
+                    cube_name, activity['version'], activity['tileid'], str(scene['date'])[0:10])
 
-            # Generate quicklook
-            qlfiles = []
-            for band in qlbands:
-                filename = os.path.join(prefix + activity['dirname'], str(scene['date'])[0:10], scene['ARDfiles'][band])
-                qlfiles.append(filename)
+                # Generate quicklook
+                qlfiles = []
+                for band in qlbands:
+                    filename = os.path.join(prefix + activity['dirname'], str(scene['date'])[0:10], scene['ARDfiles'][band])
+                    qlfiles.append(filename)
 
-            png_name = generateQLook(general_scene_id, qlfiles)
-            png_file_name = Path(png_name).name
-            if png_name is None:
-                raise Exception(f'publish - Error generateQLook for {general_scene_id}')
+                png_name = generateQLook(general_scene_id, qlfiles)
+                png_file_name = Path(png_name).name
+                if png_name is None:
+                    raise Exception(f'publish - Error generateQLook for {general_scene_id}')
 
-            date = str(scene['date'])[0:10]
-            s3_pngname = os.path.join(activity['dirname'], date, png_file_name)
-            services.upload_file_S3(png_name, s3_pngname, {'ACL': 'public-read'}, bucket_name=bucket_name)
-            os.remove(png_name)
+                date = str(scene['date'])[0:10]
+                s3_pngname = os.path.join(activity['dirname'], date, png_file_name)
+                services.upload_file_S3(png_name, s3_pngname, {'ACL': 'public-read'}, bucket_name=bucket_name)
+                os.remove(png_name)
 
-            quicklook_url = f'{bucket_name}/{s3_pngname}'
+                quicklook_url = f'{bucket_name}/{s3_pngname}'
 
-            # register items in DB
-            with db.session.begin_nested():
-                item = Item.query().filter(
-                    Item.name == general_scene_id,
-                    Item.collection_id == cube.id).first()
-                if not item:
-                    tile = Tile.query().filter(
-                        Tile.name == activity['tileid'],
-                        Tile.grid_ref_sys_id == cube.grid_ref_sys_id
-                    ).first()
+                # register items in DB
+                with db.session.begin_nested():
+                    item = Item.query().filter(
+                        Item.name == general_scene_id,
+                        Item.collection_id == cube.id).first()
+                    if not item:
+                        tile = Tile.query().filter(
+                            Tile.name == activity['tileid'],
+                            Tile.grid_ref_sys_id == cube.grid_ref_sys_id
+                        ).first()
+                        
+                        item = Item(
+                            name=general_scene_id,
+                            collection_id=cube.id,
+                            tile_id=tile.id,
+                            start_date=scene['date'],
+                            end_date=scene['date'],
+                            cloud_cover=float(scene['cloudratio']),
+                            srid=SRID_BDC_GRID,
+                            application_id=APPLICATION_ID
+                        )
+
+                    thumbnail, _, _ = create_asset_definition(
+                        services, bucket_name, str(s3_pngname), 'image/png', ['thumbnail'], quicklook_url)
+                    assets = dict(thumbnail=thumbnail)
+
+                    # insert 'assets'
+                    bands_by_cube = Band.query().filter(
+                        Band.collection_id == cube.id
+                    ).all()
                     
-                    item = Item(
-                        name=general_scene_id,
-                        collection_id=cube.id,
-                        tile_id=tile.id,
-                        start_date=scene['date'],
-                        end_date=scene['date'],
-                        cloud_cover=float(scene['cloudratio']),
-                        srid=SRID_BDC_GRID,
-                        application_id=APPLICATION_ID
-                    )
+                    indexes_list = [] if indexes_only_regular_cube else list(activity['indexesToBe'].keys())
+                    for band in (activity['bands'] + indexes_list):
+                        if band not in scene['ARDfiles']:
+                            raise Exception(f'publish - problem - band {band} not in scene[files]')
 
-                thumbnail, _, _ = create_asset_definition(
-                    services, bucket_name, str(s3_pngname), 'image/png', ['thumbnail'], quicklook_url)
-                assets = dict(thumbnail=thumbnail)
-
-                # insert 'assets'
-                bands_by_cube = Band.query().filter(
-                    Band.collection_id == cube.id
-                ).all()
-                
-                indexes_list = [] if indexes_only_regular_cube else list(activity['indexesToBe'].keys())
-                for band in (activity['bands'] + indexes_list):
-                    if band not in scene['ARDfiles']:
-                        raise Exception(f'publish - problem - band {band} not in scene[files]')
-
-                    band_model = next(filter(lambda b: str(b.name) == band, bands_by_cube), None)
-                    if not band_model:
-                        raise Exception(f'band {band} not found!')
+                        band_model = next(filter(lambda b: str(b.name) == band, bands_by_cube), None)
+                        if not band_model:
+                            raise Exception(f'band {band} not found!')
+                        
+                        relative_path = os.path.join(activity['dirname'], str(scene['date'])[0:10], scene['ARDfiles'][band])
+                        full_path = f'{bucket_name}/{relative_path}'
+                        assets[band_model.name], item.geom, item.min_convex_hull = create_asset_definition(
+                            services, bucket_name,
+                            relative_path, COG_MIME_TYPE, ['data'],
+                            full_path, is_raster=True
+                        )
                     
-                    relative_path = os.path.join(activity['dirname'], str(scene['date'])[0:10], scene['ARDfiles'][band])
-                    full_path = f'{bucket_name}/{relative_path}'
-                    assets[band_model.name], item.geom, item.min_convex_hull = create_asset_definition(
-                        services, bucket_name,
-                        relative_path, COG_MIME_TYPE, ['data'],
-                        full_path, is_raster=True
-                    )
-                
-                item.assets = assets
-                item.updated = datetime.now()
-                db.session.add(item)
-            db.session.commit()
+                    item.assets = assets
+                    item.updated = datetime.now()
+                    db.session.add(item)
+                db.session.commit()
 
         # Update status and end time in DynamoDB
         activity['myend'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
