@@ -8,6 +8,7 @@
 
 import json
 import os
+import shutil
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
@@ -25,7 +26,8 @@ from rasterio.warp import Resampling, reproject, transform
 from .constants import (APPLICATION_ID, CLEAR_OBSERVATION_ATTRIBUTES,
                         COG_MIME_TYPE, RESOLUTION_BY_SATELLITE, SRID_BDC_GRID)
 from .logger import logger
-from .utils.processing import (create_asset_definition, create_cog_in_s3,
+from .utils.processing import (apply_landsat_harmonization,
+                               create_asset_definition, create_cog_in_s3,
                                create_index, encode_key, format_version,
                                generateQLook, get_cube_name, getMask,
                                qa_statistics)
@@ -183,7 +185,8 @@ def next_step(services, activity):
 ###############################
 def prepare_merge(self, datacube, irregular_datacube, datasets, satellite, bands, bands_ids, 
                   quicklook, resx, resy, nodata, crs, quality_band, functions, version,
-                  force=False, mask=None, bands_expressions=dict(), indexes_only_regular_cube=False):
+                  force=False, mask=None, bands_expressions=dict(), indexes_only_regular_cube=False,
+                  landsat_harmonization=None):
     services = self.services
 
     # Build the basics of the merge activity
@@ -207,6 +210,7 @@ def prepare_merge(self, datacube, irregular_datacube, datasets, satellite, bands
     activity['functions'] = functions
     activity['force'] = force
     activity['indexes_only_regular_cube'] = indexes_only_regular_cube
+    activity['landsat_harmonization'] = landsat_harmonization
     activity['internal_bands'] = ['CLEAROB', 'TOTALOB', 'PROVENANCE']
 
     activity['stac_list'] = []
@@ -459,9 +463,13 @@ def merge_warped(self, activity):
                 })
 
         for url in activity['links']:
+            new_url = url
+            if activity.get('landsat_harmonization', None):
+                bucket_angle_bands = activity['landsat_harmonization'].get('bucket_angle_bands', None)
+                new_url = apply_landsat_harmonization(url, band, bucket_angle_bands)
 
             with rasterio.Env(CPL_CURL_VERBOSE=False):
-                with rasterio.open(url) as src:
+                with rasterio.open(new_url) as src:
 
                     kwargs = src.meta.copy()
                     kwargs.update({
@@ -527,6 +535,9 @@ def merge_warped(self, activity):
                                 if band != activity['quality_band']:
                                     template.update({'dtype': 'int16'})
                                     template['nodata'] = nodata
+
+            if activity.get('landsat_harmonization', None):
+                shutil.rmtree(Path(new_url).parent)
 
         raster = None
         raster_mask = None

@@ -492,6 +492,10 @@ class CubeController:
         elif not stac_list:
             raise NotFound('STAC url and collection is required')
 
+        landsat_harmonization = process_params['parameters'].get('landsat_harmonization', {})
+        if not landsat_harmonization.get('apply', False):
+            landsat_harmonization = None
+
         self.services = CubeServices(bucket=self.services.bucket_name, stac_list=stac_list)
 
         collections = [stac['collection'] for stac in stac_list]
@@ -552,7 +556,8 @@ class CubeController:
             bands_list, bands_ids_list, bands_ql_list, float(bands[0].resolution_x), 
             float(bands[0].resolution_y), int(bands[0].nodata), crs, quality_band, functions, formatted_version, 
             params.get('force', False), mask, bands_expressions=bands_expressions, 
-            indexes_only_regular_cube=params.get('indexes_only_regular_cube'))
+            indexes_only_regular_cube=params.get('indexes_only_regular_cube'), 
+            landsat_harmonization=landsat_harmonization)
 
         if len(not_started):
             return dict(
