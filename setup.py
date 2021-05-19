@@ -43,6 +43,9 @@ extras_require['all'] = [ req for exts, reqs in extras_require.items() for req i
 setup_requires = []
 
 install_requires = [
+    'Werkzeug<2',
+    'Click<8',
+    'SQLAlchemy[postgresql_psycopg2binary]<1.4,>=1.3',
     'bdc-catalog @ git+git://github.com/brazil-data-cube/bdc-catalog.git@v0.8.1#egg=bdc-catalog',
     'Flask>=1.1.1,<2',
     'Flask-SQLAlchemy==2.4.1',
