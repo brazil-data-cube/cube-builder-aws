@@ -46,10 +46,10 @@ provider:
       Action:
         - "s3:ListBucket"
         - "s3:GetObject"
+        - "s3:HeadObject"
       Resource:
         - "arn:aws:s3:::*"
-        - "arn:aws:s3:::*"
-        
+      
     - Effect: "Allow"
       Action:
         - sqs:SendMessage
@@ -130,8 +130,8 @@ functions:
 
   app_merge: 
     handler: app.continue_process
-    timeout: 360
-    memorySize: 2560
+    timeout: 720
+    memorySize: 3008
     events:
       - sqs:
           batchSize: 1
@@ -189,7 +189,7 @@ resources:
       Type: AWS::SQS::Queue
       Properties:
         QueueName: ${self:service}-${self:provider.stage}-queue-merge
-        VisibilityTimeout: 360
+        VisibilityTimeout: 720
 
     cubeBuilderQueueBlend:
       Type: AWS::SQS::Queue

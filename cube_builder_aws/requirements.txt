@@ -15,5 +15,5 @@ requests>=2.23.0
 rio-cogeo==1.1.10
 shapely==1.7.0
 stac.py==0.9.0.post5
-git+https://github.com/brazil-data-cube/sensor-harm@v0.4.0
+git+https://github.com/brazil-data-cube/sensor-harm@master
 cloudpathlib[s3]==0.4.0

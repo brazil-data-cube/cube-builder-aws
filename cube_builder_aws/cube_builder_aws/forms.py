@@ -59,6 +59,16 @@ class BandDefinition(Schema):
     metadata = fields.Dict(required=False, allow_none=False)
 
 
+class QAConfidence(Schema):
+    """Define that will discard all cloud values which has confidence greater or equal MEDIUM.
+    qa = QAConfidence(cloud='cloud >= MEDIUM', cloud_shadow=None, cirrus=None, snow=None, landsat_8=True)."""
+    
+    cloud = fields.String(required=False, allow_none=True)
+    cloud_shadow = fields.String(required=False, allow_none=True)
+    cirrus = fields.String(required=False, allow_none=True)
+    snow = fields.String(required=False, allow_none=True)
+
+
 class CustomMaskDefinition(Schema):
     """Define a custom mask."""
 
@@ -66,6 +76,8 @@ class CustomMaskDefinition(Schema):
     not_clear_data = fields.List(fields.Integer, required=True, allow_none=False)
     saturated_data = fields.List(fields.Integer, required=True, allow_none=False)
     nodata = fields.Integer(required=True, allow_none=False)
+    bits = fields.Boolean(required=False, allow_none=False, default=False)
+    confidence = fields.Nested(QAConfidence)
 
 
 class StacDefinitionForm(Schema):
@@ -74,6 +86,15 @@ class StacDefinitionForm(Schema):
     url = fields.String(required=True, allow_none=False)
     token = fields.String(required=False, allow_none=True)
     collection = fields.String(required=True, allow_none=False)
+
+
+class LandsatHarmonization(Schema):
+    """Define parser for params of the landsat harmonization."""
+
+    apply = fields.Boolean(required=False, allow_none=False, default=False)
+    bucket_angle_bands = fields.String(required=False, allow_none=True)
+    build_provenance = fields.Boolean(required=False, allow_none=False, default=False)
+    datasets = fields.List(fields.String(required=True, allow_none=False))
 
 
 class DataCubeForm(Schema):
@@ -98,7 +119,8 @@ class DataCubeForm(Schema):
     is_combined = fields.Boolean(required=False, allow_none=False, default=False)
     parameters = fields.Dict(
         mask = fields.Nested(CustomMaskDefinition),
-        stac_list = fields.List(fields.Nested(StacDefinitionForm))
+        stac_list = fields.List(fields.Nested(StacDefinitionForm)),
+        landsat_harmonization = fields.Nested(LandsatHarmonization)
     )
 
     @pre_load

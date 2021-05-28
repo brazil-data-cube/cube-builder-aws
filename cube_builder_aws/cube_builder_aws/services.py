@@ -6,14 +6,11 @@
 # under the terms of the MIT License; see LICENSE file for more details.
 #
 
-import base64
 import json
 import re
 from urllib.parse import urlparse
 
 import boto3
-import botocore
-import requests
 from boto3.dynamodb.conditions import Attr, Key
 from botocore.errorfactory import ClientError
 from stac import STAC
@@ -27,7 +24,7 @@ class CubeServices:
     
     def __init__(self, bucket=None, stac_list=[]):
         # session = boto3.Session(profile_name='default')
-        session = boto3.Session(
+        self.session = session = boto3.Session(
             aws_access_key_id=AWS_KEY_ID, 
             aws_secret_access_key=AWS_SECRET_KEY)
 
@@ -390,18 +387,19 @@ class CubeServices:
         _ = self.stac.catalog
         return self.stac.collection(collection_id)
 
-    def _parse_stac_result(self, items, dataset, bands, quality_band):
+    def _parse_stac_result(self, items, dataset, bands):
         scenes = dict()
 
         for f in items['features']:
             if f['type'] == 'Feature':
                 id = f['id']
                 date = f['properties']['datetime'][:10]
+                platform = f['properties'].get('platform')
 
                 # Get file link and name
                 assets = f['assets']
                 for band in bands:
-                    band_obj = assets.get(band, None)
+                    band_obj = assets.get(band, None) or assets.get(f'{band}.TIF', None)
                     if not band_obj: continue
 
                     scenes[band] = scenes.get(band, {})
@@ -411,6 +409,7 @@ class CubeServices:
                     scene['sceneid'] = id
                     scene['date'] = date
                     scene['band'] = band
+                    scene['platform'] = platform
                     scene['link'] = band_obj['href']
 
                     if f['properties'].get('eo:bands'):
@@ -418,6 +417,9 @@ class CubeServices:
                             if _band['name'] == band and 'nodata' in _band:
                                 scene['source_nodata'] = _band['nodata']
                                 break
+
+                    if scene['link'].startswith('https://landsatlook.usgs.gov/data/'):
+                        scene['link'] = scene['link'].replace('https://landsatlook.usgs.gov/data/', 's3://usgs-landsat/')
 
                     if re.match(r'https://([a-zA-Z0-9-_]{1,}).s3.([a-zA-Z0-9-_]{1,}).amazonaws.com/([-.a-zA-Z0-9\/_]{1,})', scene['link']):
                         parser = urlparse(scene['link'])
@@ -431,7 +433,7 @@ class CubeServices:
 
         return scenes
 
-    def search_STAC(self, activity, extra_catalogs=None):
+    def search_STAC(self, activity):
         """Search for activity in remote STAC server.
 
         Notes:
@@ -454,6 +456,7 @@ class CubeServices:
         collection_ref = ''
         filter_opts = dict(
             datetime=time,
+            time=time,
             intersects=bbox_feature,
             limit=10000
         )
@@ -462,9 +465,10 @@ class CubeServices:
             _ = stac['instance'].catalog
 
             filter_opts['collections'] = [stac['collection']]
+            filter_opts['query'] = dict(collections=[stac['collection']])
             items = stac['instance'].search(filter=filter_opts)
 
-            res = self._parse_stac_result(items, stac['collection'], bands, activity['quality_band'])
+            res = self._parse_stac_result(items, stac['collection'], bands)
 
             if not scenes:
                 scenes.update(**res)

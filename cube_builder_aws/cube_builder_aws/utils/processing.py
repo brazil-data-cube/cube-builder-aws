@@ -10,8 +10,9 @@ import datetime
 import hashlib
 import os
 import shutil
+from collections import Iterable
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, NamedTuple, Tuple, Union
 
 import numpy
 import rasterio
@@ -21,7 +22,6 @@ import shapely.geometry
 from bdc_catalog.models import db
 from bdc_catalog.utils import \
     multihash_checksum_sha256 as _multihash_checksum_sha256
-from cloudpathlib import CloudPath
 from flask import abort
 from geoalchemy2.shape import from_shape
 from numpngw import write_png
@@ -47,6 +47,153 @@ def encode_key(activity, keylist):
 
 
 ############################
+def extract_qa_bits(band_data, bit_location):
+    """Get bit information from given position.
+    Args:
+        band_data (numpy.ma.masked_array) - The QA Raster Data
+        bit_location (int) - The band bit value
+    """
+    return band_data & (1 << bit_location)
+
+
+NO_CONFIDENCE = 0
+LOW = 1  # 0b01
+MEDIUM = RESERVED = 2  # 0b10
+HIGH = 3  # 0b11
+
+
+class QAConfidence(NamedTuple):
+    """Type for Quality Assessment definition for Landsat Collection 2.
+    These properties will be evaluated using Python Virtual Machine like::
+        # Define that will discard all cloud values which has confidence greater or equal MEDIUM.
+        qa = QAConfidence(cloud='cloud >= MEDIUM', cloud_shadow=None, cirrus=None, snow=None)
+    """
+
+    cloud: Union[str, None]
+    """Represent the Cloud Confidence."""
+    cloud_shadow: Union[str, None]
+    """Represent the Cloud Shadow Confidence."""
+    cirrus: Union[str, None]
+    """Represent the Cirrus."""
+    snow: Union[str, None]
+    """Represent the Snow/Ice."""
+    landsat_8: bool
+    """Flag to identify Landsat-8 Satellite."""
+
+
+def qa_cloud_confidence(data, confidence: QAConfidence):
+    """Apply the Bit confidence to the Quality Assessment mask."""
+    from .interpreter import execute
+
+    # Define the context variables available for cloud confidence processing
+    ctx = dict(
+        NO_CONFIDENCE=NO_CONFIDENCE,
+        LOW=LOW,
+        MEDIUM=MEDIUM,
+        RESERVED=RESERVED,
+        HIGH=HIGH
+    )
+
+    def _invoke(conf, context_var, start_offset, end_offset, qa):
+        var_name = f'_{context_var}'
+        expression = f'{var_name} = {conf}'
+        array = (qa >> start_offset) - ((qa >> end_offset) << 2)
+        ctx[context_var] = array
+
+        _res = execute(expression, context=ctx)
+        res = _res[var_name]
+
+        return numpy.ma.masked_where(numpy.ma.getdata(res), qa)
+
+    if confidence.cloud:
+        data = _invoke(confidence.cloud, 'cloud', 8, 10, data)
+    if confidence.cloud_shadow:
+        data = _invoke(confidence.cloud_shadow, 'cloud_shadow', 10, 12, data)
+    if confidence.snow:
+        data = _invoke(confidence.snow, 'snow', 12, 14, data)
+    if confidence.landsat_8 and confidence.cirrus:
+        data = _invoke(confidence.cirrus, 'cirrus', 14, 16, data)
+
+    return data
+
+
+def get_qa_mask(data: numpy.ma.masked_array,
+                clear_data: List[float] = None,
+                not_clear_data: List[float] = None,
+                nodata: float = None,
+                confidence: QAConfidence = None) -> numpy.ma.masked_array:
+    """Extract Quality Assessment Bits from Landsat-8 Collection 2 Level-2 products.
+    This method uses the bitwise operation to extract bits according to the document
+    `Landsat 8 Collection 2 (C2) Level 2 Science Product (L2SP) Guide <https://prd-wret.s3.us-west-2.amazonaws.com/assets/palladium/production/atoms/files/LSDS-1619_Landsat8-C2-L2-ScienceProductGuide-v2.pdf>`_, page 13.
+    Example:
+        >>> import numpy
+        >>> from cube_builder.utils.image import QAConfidence, get_qa_mask
+        >>> mid_cloud_confidence = QAConfidence(cloud='cloud == MEDIUM', cloud_shadow=None, cirrus=None, snow=None, landsat_8=True)
+        >>> clear = [6, 7]  # Clear and Water
+        >>> not_clear = [1, 2, 3, 4]  # Dilated Cloud, Cirrus, Cloud, Cloud Shadow
+        >>> get_qa_mask(numpy.ma.array([22080], dtype=numpy.int16, fill_value=1),
+        ...             clear_data=clear, not_clear_data=not_clear,
+        ...             nodata=1, confidence=mid_cloud_confidence)
+        masked_array(data=[--],
+                     mask=[ True],
+               fill_value=1,
+                    dtype=int16)
+        >>> # When no cloud confidence set, this value will be Clear since Cloud Pixel is off.
+        >>> get_qa_mask(numpy.ma.array([22080], dtype=numpy.int16, fill_value=1),
+        ...             clear_data=clear, not_clear_data=not_clear,
+        ...             nodata=1)
+        masked_array(data=[22080],
+                     mask=[False],
+               fill_value=1,
+                    dtype=int16)
+    Args:
+        data (numpy.ma.masked_array): The QA Raster Data
+        clear_data (List[float]): The bits values to be considered as Clear. Default is [].
+        not_clear_data (List[float]): The bits values to be considered as Not Clear Values (Cloud,Shadow, etc).
+        nodata (float): Pixel nodata value.
+        confidence (QAConfidence): The confidence rules mapping. See more in :class:`~cube_builder.utils.image.QAConfidence`.
+    Returns:
+        numpy.ma.masked_array An array which the values represents `clear_data` and the masked values represents `not_clear_data`.
+    """
+    is_numpy_or_masked_array = type(data) in (numpy.ndarray, numpy.ma.masked_array)
+    if type(data) in (float, int,):
+        data = numpy.ma.masked_array([data])
+    elif (isinstance(data, Iterable) and not is_numpy_or_masked_array) or (isinstance(data, numpy.ndarray) and not hasattr(data, 'mask')):
+        data = numpy.ma.masked_array(data, mask=data == nodata, fill_value=nodata)
+    elif not is_numpy_or_masked_array:
+        raise TypeError(f'Expected a number or numpy masked array for {data}')
+
+    result = data.copy()
+
+    # Cloud Confidence only once
+    if confidence:
+        result = qa_cloud_confidence(result, confidence=confidence)
+
+    # Mask all not clear data before get any valid data
+    for value in not_clear_data:
+        # consider value 2 only landsat_8 
+        if confidence and not confidence.landsat_8 and value == 2:
+            continue
+        masked = extract_qa_bits(result, value)
+        result = numpy.ma.masked_where(masked > 0, result)
+
+    clear_mask = result.mask.copy()
+    for value in clear_data:
+        masked = numpy.ma.getdata(extract_qa_bits(result, value))
+        clear_mask = numpy.ma.logical_or(masked > 0, clear_mask)
+
+    if len(result.mask.shape) > 0:
+        result = numpy.ma.masked_where(numpy.invert(clear_mask), result)
+    else:  # Adapt to work with single value
+        if clear_mask[0]:
+            result.mask = numpy.invert(clear_mask)
+
+    if nodata is not None:
+        result[data == nodata] = numpy.ma.masked
+
+    return result
+
+############################
 def qa_statistics(raster, mask, blocks) -> Tuple[float, float]:
     """Retrieve raster statistics efficacy and not clear ratio, based in Fmask values.
 
@@ -59,14 +206,33 @@ def qa_statistics(raster, mask, blocks) -> Tuple[float, float]:
     clear_pixels = 0
     not_clear_pixels = 0
 
+    data_masked = numpy.ma.masked_array(raster, mask=raster == mask['nodata'], fill_value=mask['nodata'])
+
+    confidence = None
+    if mask.get('confidence'):
+        confidence = QAConfidence(cloud=mask['confidence'].get('cloud'), 
+                                  cloud_shadow=mask['confidence'].get('cloud_shadow'),
+                                  cirrus=mask['confidence'].get('cirrus'),
+                                  snow=mask['confidence'].get('snow'),
+                                  landsat_8=mask['confidence'].get('landsat_8', False))
+
     for _, window in blocks:
         row_offset = window.row_off + window.height
         col_offset = window.col_off + window.width
 
         raster_block = raster[window.row_off: row_offset, window.col_off: col_offset]
 
-        clear_pixels += raster_block[numpy.where(numpy.isin(raster_block, mask['clear_data']))].size
-        not_clear_pixels += raster_block[numpy.where(numpy.isin(raster_block, mask['not_clear_data']))].size
+        if mask.get('bits'):
+            nodata_pixels = raster[raster == mask['nodata']].size
+            qa_mask = get_qa_mask(data_masked, clear_data=mask['clear_data'], 
+                                    not_clear_data=mask['not_clear_data'], nodata=mask['nodata'],
+                                    confidence=confidence)
+            # Since the nodata values is already masked, we should remove the difference
+            not_clear_pixels = qa_mask[qa_mask.mask].size - nodata_pixels
+            clear_pixels = qa_mask[numpy.invert(qa_mask.mask)].size
+        else:
+            clear_pixels += raster_block[numpy.where(numpy.isin(raster_block, mask['clear_data']))].size
+            not_clear_pixels += raster_block[numpy.where(numpy.isin(raster_block, mask['not_clear_data']))].size
 
     # Image area is everything, except nodata.
     image_area = clear_pixels + not_clear_pixels
@@ -94,7 +260,7 @@ def getMask(raster, mask, blocks):
 
     efficacy, cloudratio = qa_statistics(rastercm, mask=mask, blocks=blocks)
 
-    return rastercm.astype(numpy.uint8), efficacy, cloudratio
+    return rastercm, efficacy, cloudratio
 
 
 ############################
@@ -226,13 +392,16 @@ def generate_hash_md5(word):
 
 
 ############################
-def create_cog_in_s3(services, profile, path, raster, is_quality, nodata, bucket_name):
+def create_cog_in_s3(services, profile, path, raster, bucket_name, nodata=None, tags=None):
     with MemoryFile() as dst_file:
         with MemoryFile() as memfile:
             with memfile.open(**profile) as mem:
-                if is_quality:
+                if nodata:
                     mem.nodata = nodata
                 mem.write_band(1, raster)
+
+                if tags:
+                    mem.update_tags(**tags)
                 
                 dst_profile = cog_profiles.get("deflate")        
                 cog_translate(
@@ -327,7 +496,7 @@ def create_index(services, index, bands_expressions, bands, bucket_name, index_f
 
         raster[window.row_off: row_offset, window.col_off: col_offset] = raster_block
 
-    create_cog_in_s3(services, profile, index_file_path, raster.astype(numpy.int16), False, None, bucket_name)
+    create_cog_in_s3(services, profile, index_file_path, raster.astype(numpy.int16), bucket_name)
 
 
 ############################
@@ -417,7 +586,7 @@ def create_asset_definition(services, bucket_name: str, href: str, mime_type: st
 
         raise e
 
-def apply_landsat_harmonization(url, band, angle_bucket_dir=None):
+def apply_landsat_harmonization(services, url, band, angle_bucket_dir=None, quality_band=False):
     """Generate Landsat NBAR.
 
     Args:
@@ -431,29 +600,51 @@ def apply_landsat_harmonization(url, band, angle_bucket_dir=None):
     scene_id = Path(url).stem.replace(f'_{band}', '')
 
     # download scene to temp directory
-    source_dir = f'/tmp/{scene_id}'
+    source_dir = f'/tmp/processing/{scene_id}'
     Path(source_dir).mkdir(parents=True, exist_ok=True)
-    CloudPath(url).download_to(source_dir)
+    _ = download_raster_aws(services, url, dst_path=f'{source_dir}/{Path(url).name}', requester_pays=True)
 
-    # search angle bands and copy to temp directory
-    if angle_bucket_dir:
-        angle_bucket_dir = CloudPath(angle_bucket_dir)
-    else:
-        angle_bucket_dir = CloudPath(url).parent
+    if quality_band:
+        return f'{source_dir}/{Path(url).name}'
+    # download angs to temp directory
+    url_parts = url.replace('s3://', '').split('/')
+    angle_folder = '/'.join(url_parts[2:-1])
+    for angle_key in ['sensor_azimuth', 'sensor_zenith', 'solar_azimuth', 'solar_zenith']:
+        angle_file = f'{scene_id}_{angle_key}_B04.tif'
+        path = f'{angle_bucket_dir}/{angle_folder}/{angle_file}'
+        _ = download_raster_aws(services, path, dst_path=f'{source_dir}/{angle_file}', requester_pays=True)
 
-    for angle_suffix in ['azimuth', 'zenith']:
-        angle_list = list(angle_bucket_dir.glob(f'**/*{scene_id}*{angle_suffix}*.tif'))
-        for angle in angle_list:
-            angle.download_to(source_dir)
-
-    target_dir = '/tmp/result'
+    target_dir = '/tmp/processing/result'
     result_path = url
 
     try:
-        _, result_path = landsat_harmonize(scene_id, source_dir, target_dir, bands=[band], cp_quality_band=False)
+        _, result_paths = landsat_harmonize(scene_id, source_dir, target_dir, bands=[band], cp_quality_band=False)
+        for r in result_paths:
+            if r.get(band, None):
+                result_path = r[band]
+
     except:
-        result_path = url
+        raise str('Error in harmonize: {}'.format(url))
 
     shutil.rmtree(source_dir)
 
     return str(result_path)
+
+def download_raster_aws(services, path, dst_path, requester_pays=False):
+    from rasterio.session import AWSSession
+
+    aws_session = AWSSession(services.session, requester_pays=requester_pays)
+    with rasterio.Env(aws_session, AWS_SESSION_TOKEN=""):
+        with rasterio.open(path) as src:
+            profile = src.profile.copy()
+            profile.update({
+                'blockxsize': 2048,
+                'blockysize': 2048,
+                'tiled': True
+            })
+            arr = src.read(1)
+
+            with rasterio.open(dst_path, 'w', **profile) as dataset:
+                dataset.write(arr, 1)
+
+    return dst_path
