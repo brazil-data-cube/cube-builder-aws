@@ -23,13 +23,16 @@ from rasterio.io import MemoryFile
 from rasterio.transform import Affine
 from rasterio.warp import Resampling, reproject
 
-from .constants import (APPLICATION_ID, CLEAR_OBSERVATION_ATTRIBUTES, CLEAR_OBSERVATION_NAME,
-                        COG_MIME_TYPE, DATASOURCE_ATTRIBUTES, DATASOURCE_NAME, PROVENANCE_ATTRIBUTES, PROVENANCE_NAME, SRID_BDC_GRID, TOTAL_OBSERVATION_ATTRIBUTES, TOTAL_OBSERVATION_NAME)
+from .constants import (APPLICATION_ID, CLEAR_OBSERVATION_ATTRIBUTES,
+                        CLEAR_OBSERVATION_NAME, COG_MIME_TYPE,
+                        DATASOURCE_ATTRIBUTES, DATASOURCE_NAME,
+                        PROVENANCE_ATTRIBUTES, PROVENANCE_NAME, SRID_BDC_GRID,
+                        TOTAL_OBSERVATION_ATTRIBUTES, TOTAL_OBSERVATION_NAME)
 from .logger import logger
 from .utils.processing import (QAConfidence, apply_landsat_harmonization,
                                create_asset_definition, create_cog_in_s3,
                                create_index, encode_key, format_version,
-                               generateQLook, getMask, get_qa_mask,
+                               generateQLook, get_qa_mask, getMask,
                                qa_statistics)
 from .utils.timeline import Timeline
 
