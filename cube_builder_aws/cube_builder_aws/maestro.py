@@ -212,6 +212,8 @@ def prepare_merge(self, datacube, irregular_datacube, datasets, satellite, bands
     activity['indexes_only_regular_cube'] = indexes_only_regular_cube
     activity['landsat_harmonization'] = landsat_harmonization
     activity['internal_bands'] = [CLEAR_OBSERVATION_NAME, TOTAL_OBSERVATION_NAME, PROVENANCE_NAME]
+    if landsat_harmonization and landsat_harmonization.get('build_provenance'):
+        activity['internal_bands'].append(DATASOURCE_NAME)
 
     activity['stac_list'] = []
     for stac in services.stac_list:
@@ -860,8 +862,7 @@ def blend(self, activity):
         build_provenance = activity.get('internal_band') == PROVENANCE_NAME
         build_clear_observation = activity.get('internal_band') == CLEAR_OBSERVATION_NAME
         build_total_observation = activity.get('internal_band') == TOTAL_OBSERVATION_NAME
-        build_datasource = build_provenance and activity.get('landsat_harmonization') and \
-                                activity['landsat_harmonization'].get('build_provenance')
+        build_datasource = activity.get('internal_band') == DATASOURCE_NAME
         if build_datasource:
             datasets = activity['landsat_harmonization'].get('datasets')
 
@@ -941,11 +942,11 @@ def blend(self, activity):
             clear_ob_profile.pop('nodata', None)
             clear_ob_dataset = rasterio.open(clear_ob_file, mode='w', **clear_ob_profile)
 
-        # Build the stack total observation
+        # Build the provenance
         if build_provenance:
             provenance_array = numpy.full((height, width), dtype=numpy.int16, fill_value=-1)
 
-        # Build the stack total observation
+        # Build the datasource
         if build_datasource:
             datasource_file = '/tmp/datasource.tif'
             datasource_profile = profile.copy()
@@ -1047,8 +1048,8 @@ def blend(self, activity):
                     if build_provenance:
                         provenance_array[window.row_off: row_offset, window.col_off: col_offset][where_intersec] = day_of_year
 
-                        if build_datasource:
-                            data_set_block[where_intersec] = datasource_block[where_intersec]
+                    if build_datasource:
+                        data_set_block[where_intersec] = datasource_block[where_intersec]
 
                 # Identify what is needed to stack, based in Array 2d bool
                 todomask = notdonemask * numpy.invert(bmask)
@@ -1065,8 +1066,8 @@ def blend(self, activity):
                     provenance_array[window.row_off: row_offset, window.col_off: col_offset][
                         clear_not_done_pixels] = day_of_year
 
-                    if build_datasource:
-                        data_set_block[clear_not_done_pixels] = datasource_block[clear_not_done_pixels]
+                if build_datasource:
+                    data_set_block[clear_not_done_pixels] = datasource_block[clear_not_done_pixels]
 
                 # Update what was done.
                 notdonemask = notdonemask * bmask
@@ -1120,20 +1121,22 @@ def blend(self, activity):
                 services.upload_file_S3(clear_ob_file, key_clearob, {'ACL': 'public-read'}, bucket_name=bucket_name)
             os.remove(clear_ob_file)
 
-        # Upload the PROVENANCE dataset
-        if build_provenance and 'STK' in activity['functions']:
-            provenance_profile = profile.copy()
-            provenance_profile.pop('nodata',  -1)
-            provenance_profile['dtype'] = PROVENANCE_ATTRIBUTES['data_type']
-            provenance_key = activity['STKfile'].replace(f'_{band}.tif', f'_{PROVENANCE_NAME}.tif')
-            create_cog_in_s3(
-                services, provenance_profile, provenance_key, provenance_array, bucket_name)
+        if 'STK' in activity['functions']:
+            # Upload the PROVENANCE dataset
+            if build_provenance:
+                provenance_profile = profile.copy()
+                provenance_profile.pop('nodata',  -1)
+                provenance_profile['dtype'] = PROVENANCE_ATTRIBUTES['data_type']
+                provenance_key = activity['STKfile'].replace(f'_{band}.tif', f'_{PROVENANCE_NAME}.tif')
+                create_cog_in_s3(
+                    services, provenance_profile, provenance_key, provenance_array, bucket_name)
 
+            # Upload the DATASOURCE dataset
             if build_datasource:
                 datasource_dataset.close()
                 datasource_dataset = None
 
-                datasource_key = provenance_key.replace(f'_{PROVENANCE_NAME}.tif', f'_{DATASOURCE_NAME}.tif')
+                datasource_key = activity['STKfile'].replace(f'_{band}.tif', f'_{DATASOURCE_NAME}.tif')
                 services.upload_file_S3(datasource_file, datasource_key, {'ACL': 'public-read'}, bucket_name=bucket_name)
                 os.remove(datasource_file)
 
