@@ -322,6 +322,7 @@ def prepare_merge(self, datacube, irregular_datacube, datasets, satellite, bands
                             activity['links'].append(scene['link'])
                             activity['platform'] = scene['platform']
                             activity['empty_file'] = scene.get('empty_file', False)
+                            activity['original_band_name'] = scene['original_band_name']
                             if 'source_nodata' in scene:
                                 activity['source_nodata'] = scene['source_nodata']
                         
@@ -484,7 +485,8 @@ def merge_warped(self, activity):
             new_url = url
             if activity.get('landsat_harmonization'):
                 bucket_angle_bands = activity['landsat_harmonization'].get('bucket_angle_bands', None)
-                new_url = apply_landsat_harmonization(services, new_url, band, 
+                band_name = activity['original_band_name']
+                new_url = apply_landsat_harmonization(services, new_url, band_name, 
                     bucket_angle_bands, quality_band=is_quality_band)
 
             with rasterio.Env(CPL_CURL_VERBOSE=False):
@@ -550,9 +552,13 @@ def merge_warped(self, activity):
                                 raster_merge = raster_merge + factor
 
                                 if build_provenance:
-                                    where_valid = numpy.where(factor != nodata)
-                                    raster_provenance[where_valid] = datasets.index(platform) * factor[where_valid].astype(numpy.bool_)
+                                    raster_masked = numpy.ma.masked_where(raster == nodata, raster)
+
+                                    where_valid = numpy.invert(raster_masked.mask)
+                                    raster_provenance[where_valid] = datasets.index(platform)
+
                                     where_valid = None
+                                    raster_masked = None
 
                                 raster_mask[raster != nodata] = 0
 
@@ -983,7 +989,7 @@ def blend(self, activity):
                 if activity_mask.get('bits'):
                     matched = get_qa_mask(masked, clear_data=clear_values, not_clear_data=not_clear_values,
                                           nodata=activity_mask['nodata'], confidence=confidence)
-                    masked.mask = numpy.invert(matched.mask)
+                    masked.mask = matched.mask
                 else:
                     # Mask cloud/snow/shadow/no-data as False
                     masked.mask[numpy.where(numpy.isin(masked, not_clear_values))] = True

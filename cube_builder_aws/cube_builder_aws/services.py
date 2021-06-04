@@ -387,7 +387,7 @@ class CubeServices:
         _ = self.stac.catalog
         return self.stac.collection(collection_id)
 
-    def _parse_stac_result(self, items, dataset, bands):
+    def _parse_stac_result(self, items, dataset, bands, harm_bands_map):
         scenes = dict()
 
         for f in items['features']:
@@ -399,7 +399,14 @@ class CubeServices:
                 # Get file link and name
                 assets = f['assets']
                 for band in bands:
-                    band_obj = assets.get(band, None) or assets.get(f'{band}.TIF', None)
+                    band_name = band
+                    if harm_bands_map.get(platform):
+                        if harm_bands_map[platform].get(band):
+                            band_name = harm_bands_map[platform][band]
+                        else:
+                            continue
+
+                    band_obj = assets.get(band_name, None) or assets.get(f'{band_name}.TIF', None)
                     if not band_obj: continue
 
                     scenes[band] = scenes.get(band, {})
@@ -409,12 +416,13 @@ class CubeServices:
                     scene['sceneid'] = id
                     scene['date'] = date
                     scene['band'] = band
+                    scene['original_band_name'] = band_name
                     scene['platform'] = platform
                     scene['link'] = band_obj['href']
 
                     if f['properties'].get('eo:bands'):
                         for _band in f['properties']['eo:bands']:
-                            if _band['name'] == band and 'nodata' in _band:
+                            if _band['name'] == band_name and 'nodata' in _band:
                                 scene['source_nodata'] = _band['nodata']
                                 break
 
@@ -461,6 +469,10 @@ class CubeServices:
             limit=10000
         )
 
+        harm_bands_map = dict()
+        if activity.get('landsat_harmonization') and activity['landsat_harmonization'].get('band_map'):
+            harm_bands_map = activity['landsat_harmonization']['band_map']
+
         for stac in self.stac_list:
             _ = stac['instance'].catalog
 
@@ -468,7 +480,7 @@ class CubeServices:
             filter_opts['query'] = dict(collections=[stac['collection']])
             items = stac['instance'].search(filter=filter_opts)
 
-            res = self._parse_stac_result(items, stac['collection'], bands)
+            res = self._parse_stac_result(items, stac['collection'], bands, harm_bands_map)
 
             if not scenes:
                 scenes.update(**res)
