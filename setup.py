@@ -52,7 +52,7 @@ install_requires = [
     'psycopg2-binary==2.8.5',
     'boto3==1.14.49',
     'botocore==1.17.49',
-    'marshmallow-sqlalchemy>=0.19.0,<1',
+    'marshmallow-sqlalchemy==0.25.0',
     'numpy==1.18.0',
     'numpngw==0.0.8',
     'rasterio>=1.1.2,<2',
