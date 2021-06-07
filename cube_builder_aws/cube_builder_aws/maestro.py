@@ -217,6 +217,8 @@ def prepare_merge(self, datacube, irregular_datacube, datasets, satellite, bands
     activity['internal_bands'] = [CLEAR_OBSERVATION_NAME, TOTAL_OBSERVATION_NAME, PROVENANCE_NAME]
     if landsat_harmonization and landsat_harmonization.get('build_provenance'):
         activity['internal_bands'].append(DATASOURCE_NAME)
+    
+    activity['bands'] = [band for band in activity['bands'] if band not in activity['internal_bands']]
 
     activity['stac_list'] = []
     for stac in services.stac_list:
