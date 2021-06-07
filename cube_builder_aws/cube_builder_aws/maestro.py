@@ -556,16 +556,16 @@ def merge_warped(self, activity):
                                 factor = raster * raster_mask
                                 raster_merge = raster_merge + factor
 
-                                if build_provenance:
-                                    raster_masked = numpy.ma.masked_where(raster == nodata, raster)
-
-                                    where_valid = numpy.invert(raster_masked.mask)
-                                    raster_provenance[where_valid] = datasets.index(platform)
-
-                                    where_valid = None
-                                    raster_masked = None
-
                                 raster_mask[raster != nodata] = 0
+
+                            if build_provenance:
+                                raster_masked = numpy.ma.masked_where(raster == nodata, raster)
+
+                                where_valid = numpy.invert(raster_masked.mask)
+                                raster_provenance[where_valid] = datasets.index(platform)
+
+                                where_valid = None
+                                raster_masked = None
 
                             if template is None:
                                 template = dst.profile
@@ -1018,7 +1018,7 @@ def blend(self, activity):
                     stack_total_observation[window.row_off: row_offset, window.col_off: col_offset] += copy_mask.astype(numpy.uint8)
 
                 # Get current observation file name
-                if build_provenance:
+                if build_provenance or build_datasource:
                     file_date = datetime.strptime(dates[order], '%Y-%m-%d')
                     day_of_year = file_date.timetuple().tm_yday
 
