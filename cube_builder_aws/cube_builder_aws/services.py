@@ -391,6 +391,7 @@ class CubeServices:
         scenes = dict()
 
         for f in items['features']:
+
             if f['type'] == 'Feature':
                 id = f['id']
                 date = f['properties']['datetime'][:10]
@@ -407,7 +408,8 @@ class CubeServices:
                             continue
 
                     band_obj = assets.get(band_name, None) or assets.get(f'{band_name}.TIF', None)
-                    if not band_obj: continue
+                    if not band_obj: 
+                        continue
 
                     scenes[band] = scenes.get(band, {})
                     scenes[band][dataset] = scenes[band].get(dataset, {})
@@ -470,8 +472,8 @@ class CubeServices:
         )
 
         harm_bands_map = dict()
-        if activity.get('landsat_harmonization') and activity['landsat_harmonization'].get('band_map'):
-            harm_bands_map = activity['landsat_harmonization']['band_map']
+        if activity.get('landsat_harmonization') and activity['landsat_harmonization'].get('map_bands'):
+            harm_bands_map = activity['landsat_harmonization']['map_bands']
 
         for stac in self.stac_list:
             _ = stac['instance'].catalog

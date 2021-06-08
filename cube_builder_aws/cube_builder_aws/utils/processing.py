@@ -597,38 +597,39 @@ def apply_landsat_harmonization(services, url, band, angle_bucket_dir=None, qual
     Returns:
         str: full path result images.
     """
-    scene_id = Path(url).stem.replace(f'_{band}', '')
-
-    # download scene to temp directory
-    source_dir = f'/tmp/processing/{scene_id}'
-    Path(source_dir).mkdir(parents=True, exist_ok=True)
-    _ = download_raster_aws(services, url, dst_path=f'{source_dir}/{Path(url).name}', requester_pays=True)
-
-    if quality_band:
-        return f'{source_dir}/{Path(url).name}'
-    # download angs to temp directory
-    url_parts = url.replace('s3://', '').split('/')
-    angle_folder = '/'.join(url_parts[2:-1])
-    for angle_key in ['sensor_azimuth', 'sensor_zenith', 'solar_azimuth', 'solar_zenith']:
-        angle_file = f'{scene_id}_{angle_key}_B04.tif'
-        path = f'{angle_bucket_dir}/{angle_folder}/{angle_file}'
-        _ = download_raster_aws(services, path, dst_path=f'{source_dir}/{angle_file}', requester_pays=True)
-
-    target_dir = '/tmp/processing/result'
-    result_path = url
-
     try:
+        scene_id = Path(url).stem.replace(f'_{band}', '')
+
+        # download scene to temp directory
+        source_dir = f'/tmp/processing/{scene_id}'
+        Path(source_dir).mkdir(parents=True, exist_ok=True)
+        _ = download_raster_aws(services, url, dst_path=f'{source_dir}/{Path(url).name}', requester_pays=True)
+
+        if quality_band:
+            return f'{source_dir}/{Path(url).name}'
+        # download angs to temp directory
+        url_parts = url.replace('s3://', '').split('/')
+        angle_folder = '/'.join(url_parts[2:-1])
+        for angle_key in ['sensor_azimuth', 'sensor_zenith', 'solar_azimuth', 'solar_zenith']:
+            angle_file = f'{scene_id}_{angle_key}_B04.tif'
+            path = f'{angle_bucket_dir}/{angle_folder}/{angle_file}'
+            _ = download_raster_aws(services, path, dst_path=f'{source_dir}/{angle_file}', requester_pays=True)
+
+        target_dir = '/tmp/processing/result'
+        result_path = url
+
         _, result_paths = landsat_harmonize(scene_id, source_dir, target_dir, bands=[band], cp_quality_band=False)
         for r in result_paths:
             if r.get(band, None):
                 result_path = r[band]
 
+        shutil.rmtree(source_dir)
+
+        return str(result_path)
+
     except:
         raise str('Error in harmonize: {}'.format(url))
-
-    shutil.rmtree(source_dir)
-
-    return str(result_path)
+        
 
 def download_raster_aws(services, path, dst_path, requester_pays=False):
     from rasterio.session import AWSSession

@@ -491,10 +491,13 @@ def merge_warped(self, activity):
         for url in activity['links']:
             new_url = url
             if activity.get('landsat_harmonization'):
-                bucket_angle_bands = activity['landsat_harmonization'].get('bucket_angle_bands', None)
-                band_name = activity['original_band_name']
-                new_url = apply_landsat_harmonization(services, new_url, band_name, 
-                    bucket_angle_bands, quality_band=is_quality_band)
+                try:
+                    bucket_angle_bands = activity['landsat_harmonization'].get('bucket_angle_bands', None)
+                    band_name = activity['original_band_name']
+                    new_url = apply_landsat_harmonization(services, new_url, band_name, 
+                        bucket_angle_bands, quality_band=is_quality_band)
+                except:
+                    continue
 
             with rasterio.Env(CPL_CURL_VERBOSE=False):
                 with rasterio.open(new_url) as src:
