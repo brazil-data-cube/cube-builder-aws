@@ -21,6 +21,7 @@ provider:
   runtime: python3.8
   stage: ${env:STAGE}
   region: ${env:REGION}
+  profile: ${env:PROFILE}
   apiKeys:
     - name: apikey-${env:PROJECT_NAME}-${env:STAGE}
       value: ${env:TOKEN}

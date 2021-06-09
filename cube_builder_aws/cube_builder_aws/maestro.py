@@ -1484,6 +1484,8 @@ def publish(self, activity):
     indexes_only_regular_cube = activity.get('indexes_only_regular_cube', False)
     empty_file = activity.get('empty_file', False)
 
+    srid = SRID_BDC_GRID
+
     activity['mystart'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     try:
         identity_cube = activity['irregular_datacube']
@@ -1504,6 +1506,8 @@ def publish(self, activity):
 
             general_scene_id = '{}_{}_{}_{}_{}'.format(
                 cube_name, activity['version'], activity['tileid'], activity['start'], activity['end'])
+
+            srid = cube.grs.geom_table.columns.geom.type.srid
 
             # Generate quicklook
             qlfiles = []
@@ -1541,7 +1545,7 @@ def publish(self, activity):
                         start_date=activity['start'],
                         end_date=activity['end'],
                         cloud_cover=float(activity['cloudratio']),
-                        srid=SRID_BDC_GRID,
+                        srid=srid,
                         application_id=APPLICATION_ID
                     )
 
@@ -1636,7 +1640,7 @@ def publish(self, activity):
                             start_date=scene['date'],
                             end_date=scene['date'],
                             cloud_cover=float(scene['cloudratio']),
-                            srid=SRID_BDC_GRID,
+                            srid=srid,
                             application_id=APPLICATION_ID
                         )
 
