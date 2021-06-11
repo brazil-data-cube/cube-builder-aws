@@ -426,9 +426,11 @@ def merge_warped(self, activity):
 
                                 unique, counts = numpy.unique(provenance_valid, return_counts=True)
                                 count_map = dict(zip(unique, counts))
-                                valor_indice, total = max(count_map.items(), key=itemgetter(1))
-                                
-                                activity['platform'] = datasets[valor_indice]
+                                if count_map:
+                                    valor_indice, total = max(count_map.items(), key=itemgetter(1))
+                                    activity['platform'] = datasets[valor_indice]
+                                else:
+                                    activity['platform'] = None
 
                                 confidence.landsat_8 = raster_provenance == index_landsat
 
@@ -560,8 +562,8 @@ def merge_warped(self, activity):
 
                     if is_quality_band and activity_mask.get('bits'):
                         kwargs.update({
-                            'blockxsize': 2048,
-                            'blockysize': 2048,
+                            'blockxsize': 4096,
+                            'blockysize': 4096,
                             'tiled': True
                         })
 
@@ -623,9 +625,11 @@ def merge_warped(self, activity):
             unique, counts = numpy.unique(provenance_valid, return_counts=True)
 
             count_map = dict(zip(unique, counts))
-            valor_indice, total = max(count_map.items(), key=itemgetter(1))
-            
-            activity['platform'] = datasets[valor_indice]
+            if count_map:
+                valor_indice, total = max(count_map.items(), key=itemgetter(1))
+                activity['platform'] = datasets[valor_indice]
+            else:
+                activity['platform'] = None
 
             confidence.landsat_8 = raster_provenance == index_landsat
 
@@ -898,7 +902,7 @@ def blend(self, activity):
                 resolution = 10
                 mask_tuple = (100. * efficacy / resolution, key)
 
-                platform = re.sub('[_-]', '', scene['platform']) if scene.get('platform') else None
+                platform = re.sub('[_-]', '', scene['platform']) if scene.get('platform') else ''
                 if platform.lower() in ['landsat7', 'l7', 'le07', 'le7'] and \
                     datetime.strptime(scene['date'][:10], '%Y-%m-%d') < datetime(2003,5,31):
                     scenes_l7_with_problem.append(mask_tuple)

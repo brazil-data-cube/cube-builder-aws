@@ -132,7 +132,7 @@ functions:
   app_merge: 
     handler: app.continue_process
     timeout: 900
-    memorySize: 3584
+    memorySize: 4096
     events:
       - sqs:
           batchSize: 1

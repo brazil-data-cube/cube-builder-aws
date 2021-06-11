@@ -644,8 +644,8 @@ def download_raster_aws(services, path, dst_path, requester_pays=False):
         with rasterio.open(path) as src:
             profile = src.profile.copy()
             profile.update({
-                'blockxsize': 2048,
-                'blockysize': 2048,
+                'blockxsize': 4096,
+                'blockysize': 4096,
                 'tiled': True
             })
             arr = src.read(1)
