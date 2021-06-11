@@ -12,6 +12,7 @@ import re
 import shutil
 from copy import deepcopy
 from datetime import date, datetime
+from operator import itemgetter
 from pathlib import Path
 
 import numpy
@@ -32,8 +33,7 @@ from .logger import logger
 from .utils.processing import (QAConfidence, apply_landsat_harmonization,
                                create_asset_definition, create_cog_in_s3,
                                create_index, encode_key, format_version,
-                               generateQLook, get_qa_mask, getMask,
-                               qa_statistics)
+                               generateQLook, get_qa_mask, qa_statistics)
 from .utils.timeline import Timeline
 
 
@@ -293,10 +293,12 @@ def prepare_merge(self, datacube, irregular_datacube, datasets, satellite, bands
                     self.score['items'][tile_name]['periods'][periodkey]['scenes'][band][first_collection] = {}
                     self.score['items'][tile_name]['periods'][periodkey]['scenes'][band][first_collection][first_date] = [dict(
                         band = band,
+                        original_band_name = band,
                         date = first_date,
                         link = '',
                         sceneid = '',
-                        empty_file=True
+                        empty_file = True,
+                        platform = 'LANDSAT_5'
                     )]
             
             activity['instancesToBeDone'] = number_of_datasets_dates
@@ -325,16 +327,15 @@ def prepare_merge(self, datacube, irregular_datacube, datasets, satellite, bands
                         activity['dynamoKey'] = encode_key(activity, ['action','irregular_datacube','tileid','date','band'])
 
                         # Get all scenes that were acquired in the same date
+                        activity['original_band_name'] = dict()
+                        activity['platforms'] = dict()
                         for scene in self.score['items'][tile_name]['periods'][periodkey]['scenes'][band][dataset][date]:
                             activity['links'].append(scene['link'])
-                            activity['platform'] = scene['platform']
                             activity['empty_file'] = scene.get('empty_file', False)
-                            activity['original_band_name'] = scene['original_band_name']
+                            activity['original_band_name'][scene['link']] = scene['original_band_name']
+                            activity['platforms'][scene['link']] = scene['platform']
                             if 'source_nodata' in scene:
                                 activity['source_nodata'] = scene['source_nodata']
-                        
-                        platform = re.sub('[_-]', '', activity['platform']) if activity.get('platform') else None
-                        activity['mask']['confidence']['landsat_8'] = platform.lower() in ['landsat8', 'lc8']
 
                         # Continue filling the activity
                         activity['ARDfile'] = activity['dirname']+'{}/{}_{}_{}_{}_{}.tif'.format(activity['date'],
@@ -388,10 +389,21 @@ def merge_warped(self, activity):
 
     # using in landsat_harmionization
     build_provenance = None
+    confidence = None
     if is_quality_band and activity.get('landsat_harmonization'):
         build_provenance = activity['landsat_harmonization'].get('build_provenance')
         datasets = activity['landsat_harmonization'].get('datasets')
-    platform = activity.get('platform')
+
+        if build_provenance and activity_mask.get('confidence'):
+            confidence = QAConfidence(cloud=activity_mask['confidence'].get('cloud'), 
+                                        cloud_shadow=activity_mask['confidence'].get('cloud_shadow'),
+                                        cirrus=activity_mask['confidence'].get('cirrus'),
+                                        snow=activity_mask['confidence'].get('snow'),
+                                        landsat_8=activity_mask['confidence'].get('landsat_8', True))
+            # TODO:
+            index_landsat = datasets.index('LANDSAT_8')
+
+    platforms = activity.get('platforms')
 
     # Flag to force merge generation without cache
     force = activity.get('force')
@@ -402,11 +414,27 @@ def merge_warped(self, activity):
             efficacy = 0
             cloudratio = 100
             try:
-                with rasterio.open('{}{}'.format(prefix, key)) as src:
-                    values = src.read(1)
-                    if is_quality_band:
+                if is_quality_band:
+                    file_path = '{}{}'.format(prefix, key)
+                    with rasterio.open(file_path) as src:
+                        values = src.read(1)
+
+                        if build_provenance:
+                            with rasterio.open(file_path.replace(f'_{band}', f'_{DATASOURCE_NAME}')) as ds_provenance:
+                                raster_provenance = ds_provenance.read(1)
+                                provenance_valid = raster_provenance[raster_provenance != DATASOURCE_ATTRIBUTES['nodata']]
+
+                                unique, counts = numpy.unique(provenance_valid, return_counts=True)
+                                count_map = dict(zip(unique, counts))
+                                valor_indice, total = max(count_map.items(), key=itemgetter(1))
+                                
+                                activity['platform'] = datasets[valor_indice]
+
+                                confidence.landsat_8 = raster_provenance == index_landsat
+
                         efficacy, cloudratio = qa_statistics(values, mask=activity_mask, 
-                                                             blocks=list(src.block_windows()))
+                                                             blocks=list(src.block_windows()),
+                                                             confidence=confidence)
 
                 # Update entry in DynamoDB
                 activity['myend'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -493,10 +521,11 @@ def merge_warped(self, activity):
             if activity.get('landsat_harmonization'):
                 try:
                     bucket_angle_bands = activity['landsat_harmonization'].get('bucket_angle_bands', None)
-                    band_name = activity['original_band_name']
+                    band_name = activity['original_band_name'][url]
                     new_url = apply_landsat_harmonization(services, new_url, band_name, 
                         bucket_angle_bands, quality_band=is_quality_band)
-                except:
+                except Exception as e:
+                    logger.error(str(e), exc_info=True)
                     continue
 
             with rasterio.Env(CPL_CURL_VERBOSE=False):
@@ -567,7 +596,7 @@ def merge_warped(self, activity):
                                 raster_masked = numpy.ma.masked_where(raster == nodata, raster)
 
                                 where_valid = numpy.invert(raster_masked.mask)
-                                raster_provenance[where_valid] = datasets.index(platform)
+                                raster_provenance[where_valid] = datasets.index(platforms[url])
 
                                 where_valid = None
                                 raster_masked = None
@@ -589,12 +618,24 @@ def merge_warped(self, activity):
         raster = None
         raster_mask = None
 
+        if build_provenance:
+            provenance_valid = raster_provenance[raster_provenance != DATASOURCE_ATTRIBUTES['nodata']]
+            unique, counts = numpy.unique(provenance_valid, return_counts=True)
+
+            count_map = dict(zip(unique, counts))
+            valor_indice, total = max(count_map.items(), key=itemgetter(1))
+            
+            activity['platform'] = datasets[valor_indice]
+
+            confidence.landsat_8 = raster_provenance == index_landsat
+
         # Evaluate cloud cover and efficacy if band is quality
         efficacy = 0
         cloudratio = 100
         if is_quality_band:
             if not empty_file:
-                raster_merge, efficacy, cloudratio = getMask(raster_merge, mask=activity_mask, blocks=raster_blocks)
+                efficacy, cloudratio = qa_statistics(raster_merge, mask=activity_mask, 
+                                                     blocks=raster_blocks, confidence=confidence)
             else:
                 raster_merge = raster_merge.astype(numpy.uint8)
                 
@@ -762,10 +803,11 @@ def fill_blend(services, mergeactivity, blendactivity, internal_band=False):
             blendactivity['scenes'][date_ref] = {}
             blendactivity['scenes'][date_ref]['efficacy'] = item['efficacy']
             blendactivity['scenes'][date_ref]['date'] = activity['date']
-            blendactivity['scenes'][date_ref]['dataset'] = activity['dataset']
             blendactivity['scenes'][date_ref]['satellite'] = activity['satellite']
             blendactivity['scenes'][date_ref]['cloudratio'] = item['cloudratio']
-            blendactivity['scenes'][date_ref]['platform'] = activity['platform']
+            if activity.get('platform'):
+                blendactivity['scenes'][date_ref]['platform'] = activity['platform']
+
         if 'ARDfiles' not in blendactivity['scenes'][date_ref]:
             blendactivity['scenes'][date_ref]['ARDfiles'] = {}
         basename = os.path.basename(activity['ARDfile'])
@@ -795,13 +837,20 @@ def blend(self, activity):
     prefix = services.get_s3_prefix(bucket_name)
     activity_mask = activity['mask']
 
+    is_landsat_harmonization = activity.get('landsat_harmonization')
+
     confidence = None
+    if is_landsat_harmonization:
+        datasets = activity['landsat_harmonization'].get('datasets')
+
     if activity_mask.get('confidence'):
         confidence = QAConfidence(cloud=activity_mask['confidence'].get('cloud'), 
                                     cloud_shadow=activity_mask['confidence'].get('cloud_shadow'),
                                     cirrus=activity_mask['confidence'].get('cirrus'),
                                     snow=activity_mask['confidence'].get('snow'),
                                     landsat_8=activity_mask['confidence'].get('landsat_8', True))
+        # TODO:
+        index_landsat = datasets.index('LANDSAT_8')
 
     band = activity['band']
     numscenes = len(activity['scenes'])
@@ -835,7 +884,7 @@ def blend(self, activity):
             tilelist = list(src.block_windows())
 
         mask_tuples = []
-        if activity.get('landsat_harmonization'):
+        if is_landsat_harmonization:
             # Images of Landsat 7 after 2003/05/31 have problems
             # more about it: https://www.usgs.gov/faqs/what-landsat-7-etm-slc-data?qt-news_science_products=0#qt-news_science_products
 
@@ -871,13 +920,12 @@ def blend(self, activity):
         build_clear_observation = activity.get('internal_band') == CLEAR_OBSERVATION_NAME
         build_total_observation = activity.get('internal_band') == TOTAL_OBSERVATION_NAME
         build_datasource = activity.get('internal_band') == DATASOURCE_NAME
-        if build_datasource:
-            datasets = activity['landsat_harmonization'].get('datasets')
 
         # Open all input files and save the datasets in two lists, one for masks and other for the current band.
         # The list will be ordered by efficacy/resolution
         masklist = []
         bandlist = []
+        provenancelist = []
         dates = []
         for m in mask_tuples:
             key = m[1]
@@ -893,6 +941,15 @@ def blend(self, activity):
 
             try:
                 masklist.append(rasterio.open(filename))
+
+                # build datasource
+                provenance_merge_map.setdefault(key, None)
+                if is_landsat_harmonization:
+                    datasource_key = filename.replace(f'_{activity["quality_band"]}.tif', f'_{DATASOURCE_NAME}.tif')
+
+                    provenancelist.append(rasterio.open(datasource_key))
+                    provenance_merge_map[key] = rasterio.open(datasource_key)
+
             except:
                 activity['mystatus'] = 'ERROR'
                 activity['errors'] = dict(
@@ -918,12 +975,6 @@ def blend(self, activity):
                 )
                 services.put_item_kinesis(activity)
                 return
-
-            # build datasource
-            provenance_merge_map.setdefault(key, None)
-            if build_datasource:
-                datasource_key = filename.replace(f'_{band}.tif', f'_{DATASOURCE_NAME}.tif')
-                provenance_merge_map[key] = rasterio.open(datasource_key)
 
         # Build the raster to store the output images.
         width = profile['width']
@@ -976,7 +1027,7 @@ def blend(self, activity):
 
             notdonemask = numpy.ones(shape=(window.height, window.width), dtype=numpy.bool_)
 
-            if build_datasource:
+            if is_landsat_harmonization:
                 data_set_block = numpy.full((window.height, window.width),
                                         fill_value=DATASOURCE_ATTRIBUTES['nodata'],
                                         dtype=DATASOURCE_ATTRIBUTES['data_type'])
@@ -991,6 +1042,11 @@ def blend(self, activity):
                 msrc = masklist[order]
                 raster = ssrc.read(1, window=window)
                 masked = msrc.read(1, window=window, masked=True)
+
+                if is_landsat_harmonization:
+                    psrc = provenancelist[order]
+                    raster_merge_provance = psrc.read(1, window=window)
+                    confidence.landsat_8 = raster_merge_provance == index_landsat
 
                 if build_total_observation:
                     copy_mask = numpy.array(masked, copy=True)
@@ -1023,7 +1079,7 @@ def blend(self, activity):
                     stack_total_observation[window.row_off: row_offset, window.col_off: col_offset] += copy_mask.astype(numpy.uint8)
 
                 # Get current observation file name
-                if build_provenance or build_datasource:
+                if build_provenance or is_landsat_harmonization:
                     file_date = datetime.strptime(dates[order], '%Y-%m-%d')
                     day_of_year = file_date.timetuple().tm_yday
 
@@ -1038,7 +1094,7 @@ def blend(self, activity):
                     stack_raster[window.row_off: row_offset, window.col_off: col_offset].shape
                 )
 
-                if build_datasource:
+                if is_landsat_harmonization:
                     datasource_block = provenance_merge_map[file_date.strftime('%Y-%m-%d')].read(1, window=window)
 
                 # Find all valid/cloud in destination STACK image
@@ -1056,7 +1112,7 @@ def blend(self, activity):
                     if build_provenance:
                         provenance_array[window.row_off: row_offset, window.col_off: col_offset][where_intersec] = day_of_year
 
-                    if build_datasource:
+                    if is_landsat_harmonization:
                         data_set_block[where_intersec] = datasource_block[where_intersec]
 
                 # Identify what is needed to stack, based in Array 2d bool
@@ -1074,7 +1130,7 @@ def blend(self, activity):
                     provenance_array[window.row_off: row_offset, window.col_off: col_offset][
                         clear_not_done_pixels] = day_of_year
 
-                if build_datasource:
+                if is_landsat_harmonization:
                     data_set_block[clear_not_done_pixels] = datasource_block[clear_not_done_pixels]
 
                 # Update what was done.
@@ -1097,11 +1153,12 @@ def blend(self, activity):
         for order in range(numscenes):
             bandlist[order].close()
             masklist[order].close()
+            if is_landsat_harmonization:
+                provenancelist[order].close()
 
         # Evaluate cloud cover
         if activity['quality_band'] == band:
             activity_mask_formated = deepcopy(activity_mask)
-            activity_mask_formated['confidence'] = confidence
             if activity_mask_formated.get('bits'):
                 profile_quality = profile.copy()
                 profile_quality.update({
@@ -1114,7 +1171,11 @@ def blend(self, activity):
                     with memfile.open(**profile_quality) as dst:
                         tilelist = list(dst.block_windows())
 
-            efficacy, cloud_cover = qa_statistics(stack_raster, mask=activity_mask, blocks=tilelist)
+                if confidence and is_landsat_harmonization:
+                    confidence.landsat_8 = data_set_block == index_landsat
+
+            efficacy, cloud_cover = qa_statistics(stack_raster, mask=activity_mask, 
+                                                  blocks=tilelist, confidence=confidence)
 
             activity['efficacy'] = str(efficacy)
             activity['cloudratio'] = str(cloud_cover)

@@ -62,7 +62,7 @@ MEDIUM = RESERVED = 2  # 0b10
 HIGH = 3  # 0b11
 
 
-class QAConfidence(NamedTuple):
+class QAConfidence:
     """Type for Quality Assessment definition for Landsat Collection 2.
     These properties will be evaluated using Python Virtual Machine like::
         # Define that will discard all cloud values which has confidence greater or equal MEDIUM.
@@ -79,6 +79,13 @@ class QAConfidence(NamedTuple):
     """Represent the Snow/Ice."""
     landsat_8: bool
     """Flag to identify Landsat-8 Satellite."""
+
+    def __init__(self, cloud=None, cloud_shadow=None, cirrus=None, snow=None, landsat_8=None):
+        self.cloud = cloud
+        self.cloud_shadow = cloud_shadow
+        self.cirrus = cirrus
+        self.snow = snow
+        self.landsat_8 = landsat_8
 
 
 def qa_cloud_confidence(data, confidence: QAConfidence):
@@ -111,8 +118,17 @@ def qa_cloud_confidence(data, confidence: QAConfidence):
         data = _invoke(confidence.cloud_shadow, 'cloud_shadow', 10, 12, data)
     if confidence.snow:
         data = _invoke(confidence.snow, 'snow', 12, 14, data)
-    if confidence.landsat_8 and confidence.cirrus:
-        data = _invoke(confidence.cirrus, 'cirrus', 14, 16, data)
+
+    if confidence.cirrus:
+        if isinstance(confidence.landsat_8, bool):
+            confidence.landsat_8 = numpy.full(data.shape,
+                                              dtype=numpy.bool_,
+                                              fill_value=confidence.landsat_8)
+
+        landsat_8_pixels = data[confidence.landsat_8]
+        res = _invoke(confidence.cirrus, 'cirrus', 14, 16, landsat_8_pixels)
+
+        data[confidence.landsat_8] = res
 
     return data
 
@@ -123,11 +139,14 @@ def get_qa_mask(data: numpy.ma.masked_array,
                 nodata: float = None,
                 confidence: QAConfidence = None) -> numpy.ma.masked_array:
     """Extract Quality Assessment Bits from Landsat-8 Collection 2 Level-2 products.
+
     This method uses the bitwise operation to extract bits according to the document
     `Landsat 8 Collection 2 (C2) Level 2 Science Product (L2SP) Guide <https://prd-wret.s3.us-west-2.amazonaws.com/assets/palladium/production/atoms/files/LSDS-1619_Landsat8-C2-L2-ScienceProductGuide-v2.pdf>`_, page 13.
+
     Example:
         >>> import numpy
         >>> from cube_builder.utils.image import QAConfidence, get_qa_mask
+
         >>> mid_cloud_confidence = QAConfidence(cloud='cloud == MEDIUM', cloud_shadow=None, cirrus=None, snow=None, landsat_8=True)
         >>> clear = [6, 7]  # Clear and Water
         >>> not_clear = [1, 2, 3, 4]  # Dilated Cloud, Cirrus, Cloud, Cloud Shadow
@@ -146,14 +165,16 @@ def get_qa_mask(data: numpy.ma.masked_array,
                      mask=[False],
                fill_value=1,
                     dtype=int16)
+
     Args:
         data (numpy.ma.masked_array): The QA Raster Data
         clear_data (List[float]): The bits values to be considered as Clear. Default is [].
         not_clear_data (List[float]): The bits values to be considered as Not Clear Values (Cloud,Shadow, etc).
         nodata (float): Pixel nodata value.
         confidence (QAConfidence): The confidence rules mapping. See more in :class:`~cube_builder.utils.image.QAConfidence`.
+
     Returns:
-        numpy.ma.masked_array An array which the values represents `clear_data` and the masked values represents `not_clear_data`.
+        numpy.ma.masked_array: An array which the values represents `clear_data` and the masked values represents `not_clear_data`.
     """
     is_numpy_or_masked_array = type(data) in (numpy.ndarray, numpy.ma.masked_array)
     if type(data) in (float, int,):
@@ -163,38 +184,47 @@ def get_qa_mask(data: numpy.ma.masked_array,
     elif not is_numpy_or_masked_array:
         raise TypeError(f'Expected a number or numpy masked array for {data}')
 
-    result = data.copy()
+    if nodata is not None:
+        data[data == nodata] = numpy.ma.masked
 
     # Cloud Confidence only once
     if confidence:
-        result = qa_cloud_confidence(result, confidence=confidence)
+        data = qa_cloud_confidence(data, confidence=confidence)
 
     # Mask all not clear data before get any valid data
     for value in not_clear_data:
-        # consider value 2 only landsat_8 
-        if confidence and not confidence.landsat_8 and value == 2:
-            continue
-        masked = extract_qa_bits(result, value)
-        result = numpy.ma.masked_where(masked > 0, result)
+        if value == 2 and confidence:
+            not_landsat_8_positions = numpy.where(numpy.invert(confidence.landsat_8))
+            tmp_result = numpy.ma.masked_where(data.mask, data)
+            tmp_result.mask[not_landsat_8_positions] = True
 
-    clear_mask = result.mask.copy()
+            masked = extract_qa_bits(tmp_result, value)
+            if isinstance(masked.mask, numpy.bool_):
+                masked.mask = numpy.full(data.shape, fill_value=masked.mask, dtype=numpy.bool_)
+                
+            masked.mask[not_landsat_8_positions] = data[not_landsat_8_positions].mask
+
+            tmp_result = None
+        else:
+            masked = extract_qa_bits(data, value)
+
+        data = numpy.ma.masked_where(masked > 0, data)
+
+    clear_mask = data.mask.copy()
     for value in clear_data:
-        masked = numpy.ma.getdata(extract_qa_bits(result, value))
+        masked = numpy.ma.getdata(extract_qa_bits(data, value))
         clear_mask = numpy.ma.logical_or(masked > 0, clear_mask)
 
-    if len(result.mask.shape) > 0:
-        result = numpy.ma.masked_where(numpy.invert(clear_mask), result)
+    if len(data.mask.shape) > 0:
+        data = numpy.ma.masked_where(numpy.invert(clear_mask), data)
     else:  # Adapt to work with single value
         if clear_mask[0]:
-            result.mask = numpy.invert(clear_mask)
+            data.mask = numpy.invert(clear_mask)
 
-    if nodata is not None:
-        result[data == nodata] = numpy.ma.masked
-
-    return result
+    return data
 
 ############################
-def qa_statistics(raster, mask, blocks) -> Tuple[float, float]:
+def qa_statistics(raster, mask, blocks, confidence=None) -> Tuple[float, float]:
     """Retrieve raster statistics efficacy and not clear ratio, based in Fmask values.
 
     Notes:
@@ -207,14 +237,6 @@ def qa_statistics(raster, mask, blocks) -> Tuple[float, float]:
     not_clear_pixels = 0
 
     data_masked = numpy.ma.masked_array(raster, mask=raster == mask['nodata'], fill_value=mask['nodata'])
-
-    confidence = None
-    if mask.get('confidence'):
-        confidence = QAConfidence(cloud=mask['confidence'].get('cloud'), 
-                                  cloud_shadow=mask['confidence'].get('cloud_shadow'),
-                                  cirrus=mask['confidence'].get('cirrus'),
-                                  snow=mask['confidence'].get('snow'),
-                                  landsat_8=mask['confidence'].get('landsat_8', False))
 
     for _, window in blocks:
         row_offset = window.row_off + window.height
@@ -244,23 +266,6 @@ def qa_statistics(raster, mask, blocks) -> Tuple[float, float]:
     efficacy = round(100. * clear_pixels / raster.size, 2)
 
     return efficacy, not_clear_ratio
-
-
-############################
-def getMask(raster, mask, blocks):
-    """Retrieves and re-sample quality raster to well-known values used in Brazil Data Cube.
-
-    Args:
-        raster - Raster with Quality band values
-
-    Returns:
-        Tuple containing formatted quality raster, efficacy and cloud ratio, respectively
-    """
-    rastercm = raster
-
-    efficacy, cloudratio = qa_statistics(rastercm, mask=mask, blocks=blocks)
-
-    return rastercm, efficacy, cloudratio
 
 
 ############################
@@ -627,8 +632,8 @@ def apply_landsat_harmonization(services, url, band, angle_bucket_dir=None, qual
 
         return str(result_path)
 
-    except:
-        raise str('Error in harmonize: {}'.format(url))
+    except Exception:
+        raise
         
 
 def download_raster_aws(services, path, dst_path, requester_pays=False):

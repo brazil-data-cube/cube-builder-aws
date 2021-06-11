@@ -99,7 +99,7 @@ package:
 functions:
   app:
     handler: wsgi.handler
-    timeout: 720
+    timeout: 900
     memorySize: 512
     events:
       - http: 
@@ -131,8 +131,8 @@ functions:
 
   app_merge: 
     handler: app.continue_process
-    timeout: 720
-    memorySize: 3008
+    timeout: 900
+    memorySize: 3584
     events:
       - sqs:
           batchSize: 1
@@ -144,7 +144,7 @@ functions:
   app_blend: 
     handler: app.continue_process
     timeout: 720
-    memorySize: 3008
+    memorySize: 3584
     events:
       - sqs:
           batchSize: 1
@@ -190,7 +190,7 @@ resources:
       Type: AWS::SQS::Queue
       Properties:
         QueueName: ${self:service}-${self:provider.stage}-queue-merge
-        VisibilityTimeout: 720
+        VisibilityTimeout: 900
 
     cubeBuilderQueueBlend:
       Type: AWS::SQS::Queue
