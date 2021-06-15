@@ -6,28 +6,25 @@
 # under the terms of the MIT License; see LICENSE file for more details.
 #
 
-import base64
 import json
 import re
 from urllib.parse import urlparse
 
 import boto3
-import botocore
-import requests
 from boto3.dynamodb.conditions import Attr, Key
 from botocore.errorfactory import ClientError
 from stac import STAC
 
 from .config import (AWS_KEY_ID, AWS_SECRET_KEY, DBNAME_TB_CONTROL,
-                     DBNAME_TB_PROCESS, DYNAMO_TB_ACTIVITY, KINESIS_NAME,
-                     LAMBDA_FUNCTION_NAME, QUEUE_NAME)
+                     DBNAME_TB_HARM, DBNAME_TB_PROCESS, DYNAMO_TB_ACTIVITY,
+                     KINESIS_NAME, LAMBDA_FUNCTION_NAME, QUEUE_NAME)
 
 
 class CubeServices:
     
     def __init__(self, bucket=None, stac_list=[]):
         # session = boto3.Session(profile_name='default')
-        session = boto3.Session(
+        self.session = session = boto3.Session(
             aws_access_key_id=AWS_KEY_ID, 
             aws_secret_access_key=AWS_SECRET_KEY)
 
@@ -114,7 +111,7 @@ class CubeServices:
             # Wait until the table exists.
         	self.dynamoDBResource.meta.client.get_waiter('table_exists').wait(TableName=DBNAME_TB_CONTROL)
 
-        # Create the cubeBuilderActivitiesControl table in DynamoDB to manage activities completion
+        # Create the cubeBuilderProcess table in DynamoDB to manage process/cubes started
         self.processTable = self.dynamoDBResource.Table(DBNAME_TB_PROCESS)
         table_exists = False
         try:
@@ -139,6 +136,30 @@ class CubeServices:
         	)
             # Wait until the table exists.
         	self.dynamoDBResource.meta.client.get_waiter('table_exists').wait(TableName=DBNAME_TB_PROCESS)
+
+
+        # Create the cubeBuilderActivitiesHarmonization table in DynamoDB to manage activities completion
+        self.harmTable = self.dynamoDBResource.Table(DBNAME_TB_HARM)
+        table_exists = False
+        try:
+        	self.harmTable.creation_date_time
+        	table_exists = True
+        except:
+        	table_exists = False
+
+        if not table_exists:
+        	self.harmTable = self.dynamoDBResource.create_table(
+        		TableName=DBNAME_TB_HARM,
+        		KeySchema=[
+        			{'AttributeName': 'id', 'KeyType': 'HASH' },
+        		],
+        		AttributeDefinitions=[
+        			{'AttributeName': 'id','AttributeType': 'S'},
+        		],
+        		BillingMode='PAY_PER_REQUEST',
+        	)
+            # Wait until the table exists.
+        	self.dynamoDBResource.meta.client.get_waiter('table_exists').wait(TableName=DBNAME_TB_HARM)
 
     def get_activities_by_key(self, dinamo_key):
         return self.activitiesTable.query(
@@ -230,6 +251,19 @@ class CubeServices:
         )
         return True
 
+
+    def put_harmonization_activity(self, activity):
+        self.harmTable.put_item(
+            Item={
+                'id': activity['dynamoKey'],
+                'mystatus': activity['mystatus'],
+                'mystart': activity['mystart'],
+                'myend': activity['myend'],
+                'activity': json.dumps(activity),
+            }
+        )
+        return True
+
     def put_process_table(self, key, datacube_id, i_datacube_id, infos):
         self.processTable.put_item(
             Item = {
@@ -311,7 +345,7 @@ class CubeServices:
     ## ----------------------
     # SQS
     def get_queue_url(self):
-        for action in ['merge', 'blend', 'posblend', 'publish']:
+        for action in ['harmonization', 'merge', 'blend', 'posblend', 'publish']:
             queue = '{}-{}'.format(QUEUE_NAME, action)
             if self.QueueUrl.get(action, None) is not None:
                 continue
@@ -390,19 +424,29 @@ class CubeServices:
         _ = self.stac.catalog
         return self.stac.collection(collection_id)
 
-    def _parse_stac_result(self, items, dataset, bands, quality_band):
+    def _parse_stac_result(self, items, dataset, bands, harm_bands_map):
         scenes = dict()
 
         for f in items['features']:
+
             if f['type'] == 'Feature':
                 id = f['id']
                 date = f['properties']['datetime'][:10]
+                platform = f['properties'].get('platform', None)
 
                 # Get file link and name
                 assets = f['assets']
                 for band in bands:
-                    band_obj = assets.get(band, None)
-                    if not band_obj: continue
+                    band_name = band
+                    if platform and harm_bands_map.get(platform):
+                        if harm_bands_map[platform].get(band):
+                            band_name = harm_bands_map[platform][band]
+                        else:
+                            continue
+
+                    band_obj = assets.get(band_name, None) or assets.get(f'{band_name}.TIF', None)
+                    if not band_obj: 
+                        continue
 
                     scenes[band] = scenes.get(band, {})
                     scenes[band][dataset] = scenes[band].get(dataset, {})
@@ -411,13 +455,18 @@ class CubeServices:
                     scene['sceneid'] = id
                     scene['date'] = date
                     scene['band'] = band
+                    scene['original_band_name'] = band_name
+                    scene['platform'] = platform
                     scene['link'] = band_obj['href']
 
                     if f['properties'].get('eo:bands'):
                         for _band in f['properties']['eo:bands']:
-                            if _band['name'] == band and 'nodata' in _band:
+                            if _band['name'] == band_name and 'nodata' in _band:
                                 scene['source_nodata'] = _band['nodata']
                                 break
+
+                    if scene['link'].startswith('https://landsatlook.usgs.gov/data/'):
+                        scene['link'] = scene['link'].replace('https://landsatlook.usgs.gov/data/', 's3://usgs-landsat/')
 
                     if re.match(r'https://([a-zA-Z0-9-_]{1,}).s3.([a-zA-Z0-9-_]{1,}).amazonaws.com/([-.a-zA-Z0-9\/_]{1,})', scene['link']):
                         parser = urlparse(scene['link'])
@@ -431,7 +480,7 @@ class CubeServices:
 
         return scenes
 
-    def search_STAC(self, activity, extra_catalogs=None):
+    def search_STAC(self, activity):
         """Search for activity in remote STAC server.
 
         Notes:
@@ -454,17 +503,23 @@ class CubeServices:
         collection_ref = ''
         filter_opts = dict(
             datetime=time,
+            time=time,
             intersects=bbox_feature,
             limit=10000
         )
+
+        harm_bands_map = dict()
+        if activity.get('landsat_harmonization') and activity['landsat_harmonization'].get('map_bands'):
+            harm_bands_map = activity['landsat_harmonization']['map_bands']
 
         for stac in self.stac_list:
             _ = stac['instance'].catalog
 
             filter_opts['collections'] = [stac['collection']]
+            filter_opts['query'] = dict(collections=[stac['collection']])
             items = stac['instance'].search(filter=filter_opts)
 
-            res = self._parse_stac_result(items, stac['collection'], bands, activity['quality_band'])
+            res = self._parse_stac_result(items, stac['collection'], bands, harm_bands_map)
 
             if not scenes:
                 scenes.update(**res)

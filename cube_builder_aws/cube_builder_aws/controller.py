@@ -12,34 +12,30 @@ from copy import deepcopy
 from datetime import datetime
 from typing import Tuple, Union
 
-import rasterio
 import sqlalchemy
 from bdc_catalog.models import (Band, BandSRC, Collection, CompositeFunction,
                                 GridRefSys, Item, MimeType, Quicklook,
                                 ResolutionUnit, SpatialRefSys, Tile)
-from bdc_catalog.models.base_sql import BaseModel, db
+from bdc_catalog.models.base_sql import db
 from geoalchemy2 import func
 from geoalchemy2.shape import from_shape
 from rasterio.crs import CRS
 from rasterio.warp import transform
 from shapely.geometry import Polygon
-from werkzeug.exceptions import BadRequest, Conflict, NotFound
+from werkzeug.exceptions import BadRequest, NotFound
 
 from .config import ITEM_PREFIX
-from .constants import (CENTER_WAVELENGTH, CLEAR_OBSERVATION_ATTRIBUTES,
-                        CLEAR_OBSERVATION_NAME, COG_MIME_TYPE,
-                        DATASOURCE_ATTRIBUTES, FULL_WIDTH_HALF_MAX,
+from .constants import (CLEAR_OBSERVATION_ATTRIBUTES, CLEAR_OBSERVATION_NAME,
+                        COG_MIME_TYPE, DATASOURCE_ATTRIBUTES,
                         PROVENANCE_ATTRIBUTES, PROVENANCE_NAME,
-                        REVISIT_BY_SATELLITE, SRID_ALBERS_EQUAL_AREA,
-                        SRID_BDC_GRID, TOTAL_OBSERVATION_ATTRIBUTES,
+                        SRID_ALBERS_EQUAL_AREA, TOTAL_OBSERVATION_ATTRIBUTES,
                         TOTAL_OBSERVATION_NAME)
 from .forms import CollectionForm
-from .maestro import (blend, merge_warped, orchestrate, posblend,
-                      prepare_merge, publish, solo)
+from .maestro import (blend, harmonization, merge_warped, orchestrate,
+                      posblend, prepare_harm, prepare_merge, publish, solo)
 from .services import CubeServices
 from .utils.image import validate_merges
-from .utils.processing import (format_version, generate_hash_md5,
-                               get_cube_name, get_cube_parts, get_date,
+from .utils.processing import (format_version, get_cube_parts, get_date,
                                get_or_create_model)
 from .utils.serializer import DecimalEncoder, Serializer
 from .utils.timeline import Timeline
@@ -58,6 +54,10 @@ class CubeController:
         params = params_list[0]
         if 'channel' in params and params['channel'] == 'kinesis':
             solo(self, params_list)
+
+        # dispatch HARMONIZATION
+        elif params['action'] == 'harmonization':
+            harmonization(self, params)
 
         # dispatch MERGE
         elif params['action'] == 'merge':
@@ -246,7 +246,7 @@ class CubeController:
                     collection=cube,
                     min_value=0,
                     max_value=10000 if is_not_cloud else 4,
-                    nodata=-9999 if is_not_cloud else 255,
+                    nodata=band['nodata'],
                     scale=0.0001 if is_not_cloud else 1,
                     data_type=data_type,
                     resolution_x=params['resolution'],
@@ -287,7 +287,8 @@ class CubeController:
                 _ = self.get_or_create_band(cube.id, **PROVENANCE_ATTRIBUTES, resolution_unit_id=resolution_meter.id,
                                            resolution_x=params['resolution'], resolution_y=params['resolution'])
 
-        if params.get('is_combined') and function != 'MED':
+        landsat_harm = params['parameters'].get('landsat_harmonization')
+        if landsat_harm and landsat_harm.get('datasets') and function != 'MED':
             _ = self.get_or_create_band(cube.id, **DATASOURCE_ATTRIBUTES, resolution_unit_id=resolution_meter.id,
                                        resolution_x=params['resolution'], resolution_y=params['resolution'])
 
@@ -464,6 +465,15 @@ class CubeController:
             not_done = 0,
             error = 0
         ), 200
+
+
+    def start_harmonization_process(self, params):
+        _ = prepare_harm(self, params['scenes'], params['bucket_dst'], params['bucket_angles'])
+
+        return dict(
+            message='Harmonization processing started with succesfully'
+        ), 200
+
 
     def start_process(self, params):
         response = {}

@@ -43,13 +43,16 @@ extras_require['all'] = [ req for exts, reqs in extras_require.items() for req i
 setup_requires = []
 
 install_requires = [
+    'Werkzeug<2',
+    'Click<8',
+    'SQLAlchemy[postgresql_psycopg2binary]<1.4,>=1.3',
     'bdc-catalog @ git+git://github.com/brazil-data-cube/bdc-catalog.git@v0.8.1#egg=bdc-catalog',
     'Flask>=1.1.1,<2',
     'Flask-SQLAlchemy==2.4.1',
     'psycopg2-binary==2.8.5',
     'boto3==1.14.49',
     'botocore==1.17.49',
-    'marshmallow-sqlalchemy>=0.19.0,<1',
+    'marshmallow-sqlalchemy==0.25.0',
     'numpy==1.18.0',
     'numpngw==0.0.8',
     'rasterio>=1.1.2,<2',
@@ -57,7 +60,7 @@ install_requires = [
     'rio-cogeo==1.1.10',
     'shapely==1.7.0',
     'stac.py==0.9.0.post5',
-    'sensor-harm @ git+git://github.com/brazil-data-cube/sensor-harm@v0.4.0#egg=sensor-harm',
+    'sensor-harm @ git+git://github.com/brazil-data-cube/sensor-harm@v0.6.0#egg=sensor-harm',
     'cloudpathlib[s3]==0.4.0',
 ]
 

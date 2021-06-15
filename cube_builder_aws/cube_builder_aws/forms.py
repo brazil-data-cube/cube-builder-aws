@@ -56,7 +56,18 @@ class BandDefinition(Schema):
     name = fields.String(required=True, allow_none=False)
     common_name = fields.String(required=True, allow_none=False)
     data_type = fields.String(required=True, allow_none=False, validate=OneOf(SUPPORTED_DATA_TYPES))
+    nodata = fields.Integer(required=False, allow_none=False)
     metadata = fields.Dict(required=False, allow_none=False)
+
+
+class QAConfidence(Schema):
+    """Define that will discard all cloud values which has confidence greater or equal MEDIUM.
+    qa = QAConfidence(cloud='cloud >= MEDIUM', cloud_shadow=None, cirrus=None, snow=None, landsat_8=True)."""
+    
+    cloud = fields.String(required=False, allow_none=True)
+    cloud_shadow = fields.String(required=False, allow_none=True)
+    cirrus = fields.String(required=False, allow_none=True)
+    snow = fields.String(required=False, allow_none=True)
 
 
 class CustomMaskDefinition(Schema):
@@ -66,6 +77,8 @@ class CustomMaskDefinition(Schema):
     not_clear_data = fields.List(fields.Integer, required=True, allow_none=False)
     saturated_data = fields.List(fields.Integer, required=True, allow_none=False)
     nodata = fields.Integer(required=True, allow_none=False)
+    bits = fields.Boolean(required=False, allow_none=False, default=False)
+    confidence = fields.Nested(QAConfidence)
 
 
 class StacDefinitionForm(Schema):
@@ -74,6 +87,15 @@ class StacDefinitionForm(Schema):
     url = fields.String(required=True, allow_none=False)
     token = fields.String(required=False, allow_none=True)
     collection = fields.String(required=True, allow_none=False)
+
+
+class LandsatHarmonization(Schema):
+    """Define parser for params of the landsat harmonization."""
+
+    apply = fields.Boolean(required=False, allow_none=False, default=False)
+    bucket_dst = fields.String(required=True, allow_none=False)
+    datasets = fields.List(fields.String(required=True, allow_none=False))
+    map_bands = fields.Dict(required=False, allow_none=False)
 
 
 class DataCubeForm(Schema):
@@ -98,7 +120,8 @@ class DataCubeForm(Schema):
     is_combined = fields.Boolean(required=False, allow_none=False, default=False)
     parameters = fields.Dict(
         mask = fields.Nested(CustomMaskDefinition),
-        stac_list = fields.List(fields.Nested(StacDefinitionForm))
+        stac_list = fields.List(fields.Nested(StacDefinitionForm)),
+        landsat_harmonization = fields.Nested(LandsatHarmonization)
     )
 
     @pre_load
@@ -165,6 +188,15 @@ class DataCubeProcessForm(Schema):
     # Reuse data cube from another data cube
     reuse_from = fields.String(required=False, allow_none=True)
     indexes_only_regular_cube = fields.Boolean(required=False, allow_none=True, default=False)
+
+
+class DataCubeHarmonizationForm(Schema):
+    """Define parser for harmonization generate."""
+
+    scenes = fields.List(fields.String, required=True, allow_none=False)
+    bucket_dst = fields.String(required=True, allow_none=False)
+    bucket_angles = fields.String(required=True, allow_none=False)
+    satellite = fields.String(required=True, allow_none=False, validate=OneOf(['landsat']))
 
 
 class PeriodForm(Schema):
