@@ -9,9 +9,9 @@
 from flask import Blueprint, jsonify, request
 
 from .controller import CubeController
-from .forms import (CubeItemsForm, CubeStatusForm, DataCubeForm, DataCubeHarmonizationForm,
-                    DataCubeMetadataForm, DataCubeProcessForm, GridRefSysForm,
-                    PeriodForm)
+from .forms import (CubeItemsForm, CubeStatusForm, DataCubeForm,
+                    DataCubeHarmonizationForm, DataCubeMetadataForm,
+                    DataCubeProcessForm, GridRefSysForm, PeriodForm)
 from .version import __version__
 
 controller = CubeController()

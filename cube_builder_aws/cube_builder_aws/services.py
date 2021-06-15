@@ -15,9 +15,9 @@ from boto3.dynamodb.conditions import Attr, Key
 from botocore.errorfactory import ClientError
 from stac import STAC
 
-from .config import (AWS_KEY_ID, AWS_SECRET_KEY, DBNAME_TB_CONTROL, DBNAME_TB_HARM,
-                     DBNAME_TB_PROCESS, DYNAMO_TB_ACTIVITY, KINESIS_NAME,
-                     LAMBDA_FUNCTION_NAME, QUEUE_NAME)
+from .config import (AWS_KEY_ID, AWS_SECRET_KEY, DBNAME_TB_CONTROL,
+                     DBNAME_TB_HARM, DBNAME_TB_PROCESS, DYNAMO_TB_ACTIVITY,
+                     KINESIS_NAME, LAMBDA_FUNCTION_NAME, QUEUE_NAME)
 
 
 class CubeServices:

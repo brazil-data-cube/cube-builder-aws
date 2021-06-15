@@ -12,12 +12,11 @@ from copy import deepcopy
 from datetime import datetime
 from typing import Tuple, Union
 
-import rasterio
 import sqlalchemy
 from bdc_catalog.models import (Band, BandSRC, Collection, CompositeFunction,
                                 GridRefSys, Item, MimeType, Quicklook,
                                 ResolutionUnit, SpatialRefSys, Tile)
-from bdc_catalog.models.base_sql import BaseModel, db
+from bdc_catalog.models.base_sql import db
 from geoalchemy2 import func
 from geoalchemy2.shape import from_shape
 from rasterio.crs import CRS
@@ -26,20 +25,17 @@ from shapely.geometry import Polygon
 from werkzeug.exceptions import BadRequest, NotFound
 
 from .config import ITEM_PREFIX
-from .constants import (CLEAR_OBSERVATION_ATTRIBUTES,
-                        CLEAR_OBSERVATION_NAME, COG_MIME_TYPE,
-                        DATASOURCE_ATTRIBUTES, 
+from .constants import (CLEAR_OBSERVATION_ATTRIBUTES, CLEAR_OBSERVATION_NAME,
+                        COG_MIME_TYPE, DATASOURCE_ATTRIBUTES,
                         PROVENANCE_ATTRIBUTES, PROVENANCE_NAME,
-                        SRID_ALBERS_EQUAL_AREA,
-                        TOTAL_OBSERVATION_ATTRIBUTES,
+                        SRID_ALBERS_EQUAL_AREA, TOTAL_OBSERVATION_ATTRIBUTES,
                         TOTAL_OBSERVATION_NAME)
 from .forms import CollectionForm
-from .maestro import (blend, harmonization, merge_warped, orchestrate, posblend, prepare_harm,
-                      prepare_merge, publish, solo)
+from .maestro import (blend, harmonization, merge_warped, orchestrate,
+                      posblend, prepare_harm, prepare_merge, publish, solo)
 from .services import CubeServices
 from .utils.image import validate_merges
-from .utils.processing import (format_version, generate_hash_md5,
-                               get_cube_name, get_cube_parts, get_date,
+from .utils.processing import (format_version, get_cube_parts, get_date,
                                get_or_create_model)
 from .utils.serializer import DecimalEncoder, Serializer
 from .utils.timeline import Timeline
