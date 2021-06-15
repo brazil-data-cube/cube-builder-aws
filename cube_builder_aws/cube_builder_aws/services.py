@@ -15,7 +15,7 @@ from boto3.dynamodb.conditions import Attr, Key
 from botocore.errorfactory import ClientError
 from stac import STAC
 
-from .config import (AWS_KEY_ID, AWS_SECRET_KEY, DBNAME_TB_CONTROL,
+from .config import (AWS_KEY_ID, AWS_SECRET_KEY, DBNAME_TB_CONTROL, DBNAME_TB_HARM,
                      DBNAME_TB_PROCESS, DYNAMO_TB_ACTIVITY, KINESIS_NAME,
                      LAMBDA_FUNCTION_NAME, QUEUE_NAME)
 
@@ -111,7 +111,7 @@ class CubeServices:
             # Wait until the table exists.
         	self.dynamoDBResource.meta.client.get_waiter('table_exists').wait(TableName=DBNAME_TB_CONTROL)
 
-        # Create the cubeBuilderActivitiesControl table in DynamoDB to manage activities completion
+        # Create the cubeBuilderProcess table in DynamoDB to manage process/cubes started
         self.processTable = self.dynamoDBResource.Table(DBNAME_TB_PROCESS)
         table_exists = False
         try:
@@ -136,6 +136,30 @@ class CubeServices:
         	)
             # Wait until the table exists.
         	self.dynamoDBResource.meta.client.get_waiter('table_exists').wait(TableName=DBNAME_TB_PROCESS)
+
+
+        # Create the cubeBuilderActivitiesHarmonization table in DynamoDB to manage activities completion
+        self.harmTable = self.dynamoDBResource.Table(DBNAME_TB_HARM)
+        table_exists = False
+        try:
+        	self.harmTable.creation_date_time
+        	table_exists = True
+        except:
+        	table_exists = False
+
+        if not table_exists:
+        	self.harmTable = self.dynamoDBResource.create_table(
+        		TableName=DBNAME_TB_HARM,
+        		KeySchema=[
+        			{'AttributeName': 'id', 'KeyType': 'HASH' },
+        		],
+        		AttributeDefinitions=[
+        			{'AttributeName': 'id','AttributeType': 'S'},
+        		],
+        		BillingMode='PAY_PER_REQUEST',
+        	)
+            # Wait until the table exists.
+        	self.dynamoDBResource.meta.client.get_waiter('table_exists').wait(TableName=DBNAME_TB_HARM)
 
     def get_activities_by_key(self, dinamo_key):
         return self.activitiesTable.query(
@@ -227,6 +251,19 @@ class CubeServices:
         )
         return True
 
+
+    def put_harmonization_activity(self, activity):
+        self.harmTable.put_item(
+            Item={
+                'id': activity['dynamoKey'],
+                'mystatus': activity['mystatus'],
+                'mystart': activity['mystart'],
+                'myend': activity['myend'],
+                'activity': json.dumps(activity),
+            }
+        )
+        return True
+
     def put_process_table(self, key, datacube_id, i_datacube_id, infos):
         self.processTable.put_item(
             Item = {
@@ -308,7 +345,7 @@ class CubeServices:
     ## ----------------------
     # SQS
     def get_queue_url(self):
-        for action in ['merge', 'blend', 'posblend', 'publish']:
+        for action in ['harmonization', 'merge', 'blend', 'posblend', 'publish']:
             queue = '{}-{}'.format(QUEUE_NAME, action)
             if self.QueueUrl.get(action, None) is not None:
                 continue
@@ -395,13 +432,13 @@ class CubeServices:
             if f['type'] == 'Feature':
                 id = f['id']
                 date = f['properties']['datetime'][:10]
-                platform = f['properties'].get('platform')
+                platform = f['properties'].get('platform', None)
 
                 # Get file link and name
                 assets = f['assets']
                 for band in bands:
                     band_name = band
-                    if harm_bands_map.get(platform):
+                    if platform and harm_bands_map.get(platform):
                         if harm_bands_map[platform].get(band):
                             band_name = harm_bands_map[platform][band]
                         else:

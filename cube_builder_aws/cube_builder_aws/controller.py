@@ -23,18 +23,18 @@ from geoalchemy2.shape import from_shape
 from rasterio.crs import CRS
 from rasterio.warp import transform
 from shapely.geometry import Polygon
-from werkzeug.exceptions import BadRequest, Conflict, NotFound
+from werkzeug.exceptions import BadRequest, NotFound
 
 from .config import ITEM_PREFIX
-from .constants import (CENTER_WAVELENGTH, CLEAR_OBSERVATION_ATTRIBUTES,
+from .constants import (CLEAR_OBSERVATION_ATTRIBUTES,
                         CLEAR_OBSERVATION_NAME, COG_MIME_TYPE,
-                        DATASOURCE_ATTRIBUTES, FULL_WIDTH_HALF_MAX,
+                        DATASOURCE_ATTRIBUTES, 
                         PROVENANCE_ATTRIBUTES, PROVENANCE_NAME,
-                        REVISIT_BY_SATELLITE, SRID_ALBERS_EQUAL_AREA,
-                        SRID_BDC_GRID, TOTAL_OBSERVATION_ATTRIBUTES,
+                        SRID_ALBERS_EQUAL_AREA,
+                        TOTAL_OBSERVATION_ATTRIBUTES,
                         TOTAL_OBSERVATION_NAME)
 from .forms import CollectionForm
-from .maestro import (blend, merge_warped, orchestrate, posblend,
+from .maestro import (blend, harmonization, merge_warped, orchestrate, posblend, prepare_harm,
                       prepare_merge, publish, solo)
 from .services import CubeServices
 from .utils.image import validate_merges
@@ -58,6 +58,10 @@ class CubeController:
         params = params_list[0]
         if 'channel' in params and params['channel'] == 'kinesis':
             solo(self, params_list)
+
+        # dispatch HARMONIZATION
+        elif params['action'] == 'harmonization':
+            harmonization(self, params)
 
         # dispatch MERGE
         elif params['action'] == 'merge':
@@ -465,6 +469,15 @@ class CubeController:
             not_done = 0,
             error = 0
         ), 200
+
+
+    def start_harmonization_process(self, params):
+        _ = prepare_harm(self, params['scenes'], params['bucket_dst'], params['bucket_angles'])
+
+        return dict(
+            message='Harmonization processing started with succesfully'
+        ), 200
+
 
     def start_process(self, params):
         response = {}

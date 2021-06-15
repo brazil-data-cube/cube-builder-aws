@@ -153,3 +153,15 @@ COG_MIME_TYPE = 'image/tiff; application=geotiff; profile=cloud-optimized'
 PNG_MIME_TYPE = 'image/png'
 
 SRID_ALBERS_EQUAL_AREA = 100001
+
+HARMONIZATION = dict(
+    landsat = dict(
+        bands = dict(
+            L05 = ["SR_B1" ,"SR_B2", "SR_B3", "SR_B4", "SR_B5", "SR_B7"],
+            L07 = ["SR_B1" ,"SR_B2", "SR_B3", "SR_B4", "SR_B5", "SR_B7"],
+            L08 = ["SR_B2", "SR_B3", "SR_B4", "SR_B5", "SR_B6", "SR_B7"]
+        ),
+        bucket_src = 's3://usgs-landsat',
+        format_path = 'collection{collectionNumber}/level-2/standard/{instrument}/{acquisitionYear}/{path}/{row}/{scene_id}/{scene_id}_{band}.TIF'
+    )
+)

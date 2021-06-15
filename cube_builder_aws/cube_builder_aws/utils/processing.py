@@ -606,12 +606,13 @@ def apply_landsat_harmonization(services, url, band, angle_bucket_dir=None, qual
         scene_id = Path(url).stem.replace(f'_{band}', '')
 
         # download scene to temp directory
-        source_dir = f'/tmp/processing/{scene_id}'
+        source_dir = f'/tmp/processing/{scene_id}' if not quality_band else '/tmp/processing/quality'
         Path(source_dir).mkdir(parents=True, exist_ok=True)
         _ = download_raster_aws(services, url, dst_path=f'{source_dir}/{Path(url).name}', requester_pays=True)
 
         if quality_band:
             return f'{source_dir}/{Path(url).name}'
+            
         # download angs to temp directory
         url_parts = url.replace('s3://', '').split('/')
         angle_folder = '/'.join(url_parts[2:-1])
@@ -644,8 +645,8 @@ def download_raster_aws(services, path, dst_path, requester_pays=False):
         with rasterio.open(path) as src:
             profile = src.profile.copy()
             profile.update({
-                'blockxsize': 4096,
-                'blockysize': 4096,
+                'blockxsize': 2048,
+                'blockysize': 2048,
                 'tiled': True
             })
             arr = src.read(1)

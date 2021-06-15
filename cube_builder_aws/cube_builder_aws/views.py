@@ -9,7 +9,7 @@
 from flask import Blueprint, jsonify, request
 
 from .controller import CubeController
-from .forms import (CubeItemsForm, CubeStatusForm, DataCubeForm,
+from .forms import (CubeItemsForm, CubeStatusForm, DataCubeForm, DataCubeHarmonizationForm,
                     DataCubeMetadataForm, DataCubeProcessForm, GridRefSysForm,
                     PeriodForm)
 from .version import __version__
@@ -192,6 +192,29 @@ def start():
 
     controller = CubeController(bucket=args['bucket'])
     message, status = controller.start_process(data)
+
+    return jsonify(message), status
+
+
+# Start Harmonization Processing
+@bp.route("/start-harmonization", methods=["POST"])
+def start_harm():
+    """Define POST handler for datacube execution.
+    Expects a JSON that matches with ``DataCubeHarmonizationForm``.
+    """
+    args = request.get_json()
+
+    form = DataCubeHarmonizationForm()
+
+    errors = form.validate(args)
+
+    if errors:
+        return errors, 400
+
+    data = form.load(args)
+
+    controller = CubeController(bucket='')
+    message, status = controller.start_harmonization_process(data)
 
     return jsonify(message), status
 

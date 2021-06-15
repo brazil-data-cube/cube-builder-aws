@@ -11,7 +11,7 @@ import os
 import re
 import shutil
 from copy import deepcopy
-from datetime import date, datetime
+from datetime import datetime
 from operator import itemgetter
 from pathlib import Path
 
@@ -26,7 +26,7 @@ from rasterio.warp import Resampling, reproject
 
 from .constants import (APPLICATION_ID, CLEAR_OBSERVATION_ATTRIBUTES,
                         CLEAR_OBSERVATION_NAME, COG_MIME_TYPE,
-                        DATASOURCE_ATTRIBUTES, DATASOURCE_NAME,
+                        DATASOURCE_ATTRIBUTES, DATASOURCE_NAME, HARMONIZATION,
                         PROVENANCE_ATTRIBUTES, PROVENANCE_NAME, SRID_BDC_GRID,
                         TOTAL_OBSERVATION_ATTRIBUTES, TOTAL_OBSERVATION_NAME)
 from .logger import logger
@@ -34,6 +34,7 @@ from .utils.processing import (QAConfidence, apply_landsat_harmonization,
                                create_asset_definition, create_cog_in_s3,
                                create_index, encode_key, format_version,
                                generateQLook, get_qa_mask, qa_statistics)
+from .utils.scene_parser import SceneParser
 from .utils.timeline import Timeline
 
 
@@ -139,48 +140,135 @@ def solo(self, activitylist):
     services = self.services
 
     for activity in activitylist:
-        services.put_activity(activity)
+        if activity['action'] == 'harmonization':
+            services.put_harmonization_activity(activity)
 
-        activitiesControlTableKey = get_key_to_controltable(activity)
+        else:
+            services.put_activity(activity)
 
-        if activity['mystatus'] == 'DONE':
-            next_step(services, activity)
+            activitiesControlTableKey = get_key_to_controltable(activity)
 
-        elif activity['mystatus'] == 'ERROR':
-            response = services.update_control_table(
-                Key = {'id': activitiesControlTableKey},
-                UpdateExpression = "ADD #errors :increment",
-                ExpressionAttributeNames = {'#errors': 'errors'},
-                ExpressionAttributeValues = {':increment': 1},
-                ReturnValues = "UPDATED_NEW"
-            )
+            if activity['mystatus'] == 'DONE':
+                next_step(services, activity)
+
+            elif activity['mystatus'] == 'ERROR':
+                _ = services.update_control_table(
+                    Key = {'id': activitiesControlTableKey},
+                    UpdateExpression = "ADD #errors :increment",
+                    ExpressionAttributeNames = {'#errors': 'errors'},
+                    ExpressionAttributeValues = {':increment': 1},
+                    ReturnValues = "UPDATED_NEW"
+                )
 
 
 def next_step(services, activity):
-    activitiesControlTableKey = get_key_to_controltable(activity)
+    if activity['action'] != 'harmonization':
+        activitiesControlTableKey = get_key_to_controltable(activity)
 
-    response = services.update_control_table(
-        Key = {'id': activitiesControlTableKey},
-        UpdateExpression = "SET #mycount = #mycount + :increment, #end_date = :date",
-        ExpressionAttributeNames = {'#mycount': 'mycount', '#end_date': 'end_date'},
-        ExpressionAttributeValues = {':increment': 1, ':date': datetime.now().strftime('%Y-%m-%d %H:%M:%S')},
-        ReturnValues = "UPDATED_NEW"
-    )
-    if 'Attributes' in response and 'mycount' in response['Attributes']:
-        mycount = int(response['Attributes']['mycount'])
+        response = services.update_control_table(
+            Key = {'id': activitiesControlTableKey},
+            UpdateExpression = "SET #mycount = #mycount + :increment, #end_date = :date",
+            ExpressionAttributeNames = {'#mycount': 'mycount', '#end_date': 'end_date'},
+            ExpressionAttributeValues = {':increment': 1, ':date': datetime.now().strftime('%Y-%m-%d %H:%M:%S')},
+            ReturnValues = "UPDATED_NEW"
+        )
+        if 'Attributes' in response and 'mycount' in response['Attributes']:
+            mycount = int(response['Attributes']['mycount'])
 
-        if mycount >= activity['totalInstancesToBeDone']:
-            if activity['action'] == 'merge':
-                next_blend(services, activity)
+            if mycount >= activity['totalInstancesToBeDone']:
+                if activity['action'] == 'merge':
+                    next_blend(services, activity)
 
-            elif activity['action'] == 'blend':
-                if activity.get('bands_expressions') and len(activity['bands_expressions'].keys()) > 0:
-                    next_posblend(services, activity)
-                else:
+                elif activity['action'] == 'blend':
+                    if activity.get('bands_expressions') and len(activity['bands_expressions'].keys()) > 0:
+                        next_posblend(services, activity)
+                    else:
+                        next_publish(services, activity)
+
+                elif activity['action'] == 'posblend':
                     next_publish(services, activity)
 
-            elif activity['action'] == 'posblend':
-                next_publish(services, activity)
+###############################
+# HARMONIZATION
+###############################
+def prepare_harm(self, scenes, bucket_dst, bucket_angles, satellite):
+    services = self.services
+
+    p = SceneParser(satellite)
+
+    bands = HARMONIZATION[satellite]['bands']
+    bucket_src =  HARMONIZATION[satellite]['bucket_src']
+    format_path =  HARMONIZATION[satellite]['format_path']
+    
+    activity = dict(
+        action = 'harmonization',
+        mystatus = 'NOTDONE',
+        mystart = 'SSSS-SS-SS',
+        myend = 'EEEE-EE-EE',
+        bucket_dst = bucket_dst,
+        bucket_angles = bucket_angles
+    )
+
+    for scene in scenes:
+        scene_infos = p.parser_sceneid(scene, args=dict())
+        sat_version = f'L{scene_infos["satellite"]}'
+
+        for band in bands[sat_version]:
+            path_file = format_path.format(**dict(band=band, **scene_infos))
+
+            path_src = f'{bucket_src}/{path_file}'
+            key_path_dst = path_file
+            dynamoKey = f'{scene}_{band}'
+
+            activity['dynamoKey'] = dynamoKey
+            activity['scene'] = scene
+            activity['band'] = band
+            activity['path_src'] = path_src
+            activity['key_path_dst'] = key_path_dst
+
+            # Send to queue to activate harmonization lambda
+            services.put_item_kinesis(activity)
+            services.send_to_sqs(activity)
+
+    return
+
+def harmonization(self, activity):
+    logger.info('==> start HARMONIZATION')
+    services = self.services
+
+    shutil.rmtree('/tmp/processing', ignore_errors=True)
+
+    mystart = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    activity['mystart'] = mystart
+    activity['mystatus'] = 'DONE'
+
+    try:
+        # If file already exists
+        if services.s3_file_exists(bucket_name=activity['bucket_dst'], key=activity['key_path_dst']):
+            # Update entry in DynamoDB
+            activity['myend'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            services.put_item_kinesis(activity)
+            return
+
+        file_path = apply_landsat_harmonization(services, activity['path_src'], activity['band'], activity['bucket_angles'], False)
+        services.upload_file_S3(file_path, activity['key_path_dst'], {'ACL': 'public-read'}, bucket_name=activity['bucket_dst'])
+
+        # Update entry in DynamoDB
+        activity['myend'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        services.put_item_kinesis(activity)
+
+    except Exception as e:
+        # Update entry in DynamoDB
+        activity['mystatus'] = 'ERROR'
+        activity['errors'] = dict(
+            step='harmonization',
+            message=str(e)
+        )
+        activity['myend'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        services.put_item_kinesis(activity)
+
+        logger.error(str(e), exc_info=True)
+
 
 
 ###############################
@@ -215,7 +303,7 @@ def prepare_merge(self, datacube, irregular_datacube, datasets, satellite, bands
     activity['indexes_only_regular_cube'] = indexes_only_regular_cube
     activity['landsat_harmonization'] = landsat_harmonization
     activity['internal_bands'] = [CLEAR_OBSERVATION_NAME, TOTAL_OBSERVATION_NAME, PROVENANCE_NAME]
-    if landsat_harmonization and landsat_harmonization.get('build_provenance'):
+    if landsat_harmonization:
         activity['internal_bands'].append(DATASOURCE_NAME)
     
     activity['bands'] = [band for band in activity['bands'] if band not in activity['internal_bands']]
@@ -291,15 +379,18 @@ def prepare_merge(self, datacube, irregular_datacube, datasets, satellite, bands
                 for band in activity['bands']:
                     self.score['items'][tile_name]['periods'][periodkey]['scenes'][band] = {}
                     self.score['items'][tile_name]['periods'][periodkey]['scenes'][band][first_collection] = {}
-                    self.score['items'][tile_name]['periods'][periodkey]['scenes'][band][first_collection][first_date] = [dict(
+                    params = dict(
                         band = band,
                         original_band_name = band,
                         date = first_date,
                         link = '',
                         sceneid = '',
-                        empty_file = True,
-                        platform = 'LANDSAT_5'
-                    )]
+                        empty_file = True
+                    )
+                    if landsat_harmonization:
+                        params['platform'] = 'LANDSAT_5'
+
+                    self.score['items'][tile_name]['periods'][periodkey]['scenes'][band][first_collection][first_date] = [params]
             
             activity['instancesToBeDone'] = number_of_datasets_dates
             activity['totalInstancesToBeDone'] = number_of_datasets_dates * len(activity['bands'])
@@ -333,7 +424,8 @@ def prepare_merge(self, datacube, irregular_datacube, datasets, satellite, bands
                             activity['links'].append(scene['link'])
                             activity['empty_file'] = scene.get('empty_file', False)
                             activity['original_band_name'][scene['link']] = scene['original_band_name']
-                            activity['platforms'][scene['link']] = scene['platform']
+                            if landsat_harmonization:
+                                activity['platforms'][scene['link']] = scene['platform']
                             if 'source_nodata' in scene:
                                 activity['source_nodata'] = scene['source_nodata']
 
@@ -387,12 +479,14 @@ def merge_warped(self, activity):
     band = activity['band']
     is_quality_band = band == activity['quality_band']
 
+    landsat_harmonization = activity.get('landsat_harmonization')
+
     # using in landsat_harmionization
     build_provenance = None
     confidence = None
-    if is_quality_band and activity.get('landsat_harmonization'):
-        build_provenance = activity['landsat_harmonization'].get('build_provenance')
-        datasets = activity['landsat_harmonization'].get('datasets')
+    if is_quality_band and landsat_harmonization:
+        build_provenance = True
+        datasets = landsat_harmonization.get('datasets')
 
         if build_provenance and activity_mask.get('confidence'):
             confidence = QAConfidence(cloud=activity_mask['confidence'].get('cloud'), 
@@ -520,102 +614,99 @@ def merge_warped(self, activity):
 
         for url in activity['links']:
             new_url = url
-            if activity.get('landsat_harmonization'):
-                try:
-                    bucket_angle_bands = activity['landsat_harmonization'].get('bucket_angle_bands', None)
-                    band_name = activity['original_band_name'][url]
-                    new_url = apply_landsat_harmonization(services, new_url, band_name, 
-                        bucket_angle_bands, quality_band=is_quality_band)
-                except Exception as e:
-                    logger.error(str(e), exc_info=True)
-                    continue
+            if landsat_harmonization:
+                if not is_quality_band:
+                    bucket_src = HARMONIZATION['landsat']['bucket_src']
+                    new_url = new_url.replace(bucket_src, landsat_harmonization['bucket_dst'])
 
-            with rasterio.Env(CPL_CURL_VERBOSE=False):
-                with rasterio.open(new_url) as src:
+                from rasterio.session import AWSSession
 
-                    kwargs = src.meta.copy()
-                    kwargs.update({
-                        'width': numcol,
-                        'height': numlin
-                    })
-                    if not shape:
+                aws_session = AWSSession(services.session, requester_pays=True)
+                with rasterio.Env(aws_session, AWS_SESSION_TOKEN=""):
+
+                    with rasterio.open(new_url) as src:
+
+                        kwargs = src.meta.copy()
                         kwargs.update({
-                            'crs': activity['srs'],
-                            'transform': transform
+                            'width': numcol,
+                            'height': numlin
+                        })
+                        if not shape:
+                            kwargs.update({
+                                'crs': activity['srs'],
+                                'transform': transform
+                            })
+
+                        if src.profile['nodata'] is not None:
+                            source_nodata = src.profile['nodata']
+                        
+                        elif 'source_nodata' in activity:
+                            source_nodata = activity['source_nodata']
+
+                        elif 'LANDSAT' in satellite and not is_quality_band:
+                            source_nodata = nodata if src.profile['dtype'] == 'int16' else 0
+
+                        elif 'CBERS' in satellite and not is_quality_band:
+                            source_nodata = nodata
+
+                        kwargs.update({
+                            'nodata': source_nodata
                         })
 
-                    if src.profile['nodata'] is not None:
-                        source_nodata = src.profile['nodata']
-                    
-                    elif 'source_nodata' in activity:
-                        source_nodata = activity['source_nodata']
+                        if is_quality_band and activity_mask.get('bits'):
+                            kwargs.update({
+                                'blockxsize': 2048,
+                                'blockysize': 2048,
+                                'tiled': True
+                            })
 
-                    elif 'LANDSAT' in satellite and not is_quality_band:
-                        source_nodata = nodata if src.profile['dtype'] == 'int16' else 0
+                        with MemoryFile() as memfile:
+                            with memfile.open(**kwargs) as dst:
+                                if shape:
+                                    raster = src.read(1)
+                                else:
+                                    reproject(
+                                        source=rasterio.band(src, 1),
+                                        destination=raster,
+                                        src_transform=src.transform,
+                                        src_crs=src.crs,
+                                        dst_transform=transform,
+                                        dst_crs=activity['srs'],
+                                        src_nodata=source_nodata,
+                                        dst_nodata=nodata,
+                                        resampling=resampling)
 
-                    elif 'CBERS' in satellite and not is_quality_band:
-                        source_nodata = nodata
+                                if not is_quality_band or is_sentinel_landsat_quality_fmask:
+                                    valid_data_scene = raster[raster != nodata]
+                                    raster_merge[raster != nodata] = valid_data_scene.reshape(numpy.size(valid_data_scene))
 
-                    kwargs.update({
-                        'nodata': source_nodata
-                    })
+                                    valid_data_scene = None
+                                else:
+                                    factor = raster * raster_mask
+                                    raster_merge = raster_merge + factor
 
-                    if is_quality_band and activity_mask.get('bits'):
-                        kwargs.update({
-                            'blockxsize': 4096,
-                            'blockysize': 4096,
-                            'tiled': True
-                        })
+                                    raster_mask[raster != nodata] = 0
 
-                    with MemoryFile() as memfile:
-                        with memfile.open(**kwargs) as dst:
-                            if shape:
-                                raster = src.read(1)
-                            else:
-                                reproject(
-                                    source=rasterio.band(src, 1),
-                                    destination=raster,
-                                    src_transform=src.transform,
-                                    src_crs=src.crs,
-                                    dst_transform=transform,
-                                    dst_crs=activity['srs'],
-                                    src_nodata=source_nodata,
-                                    dst_nodata=nodata,
-                                    resampling=resampling)
+                                if build_provenance:
+                                    raster_masked = numpy.ma.masked_where(raster == nodata, raster)
 
-                            if not is_quality_band or is_sentinel_landsat_quality_fmask:
-                                valid_data_scene = raster[raster != nodata]
-                                raster_merge[raster != nodata] = valid_data_scene.reshape(numpy.size(valid_data_scene))
+                                    where_valid = numpy.invert(raster_masked.mask)
+                                    raster_provenance[where_valid] = datasets.index(platforms[url])
 
-                                valid_data_scene = None
-                            else:
-                                factor = raster * raster_mask
-                                raster_merge = raster_merge + factor
+                                    where_valid = None
+                                    raster_masked = None
 
-                                raster_mask[raster != nodata] = 0
+                                if template is None:
+                                    template = dst.profile
 
-                            if build_provenance:
-                                raster_masked = numpy.ma.masked_where(raster == nodata, raster)
+                                    template['driver'] = 'GTiff'
 
-                                where_valid = numpy.invert(raster_masked.mask)
-                                raster_provenance[where_valid] = datasets.index(platforms[url])
+                                    raster_blocks = list(dst.block_windows())
 
-                                where_valid = None
-                                raster_masked = None
+                                    if not is_quality_band:
+                                        template.update({'dtype': 'int16'})
+                                        template['nodata'] = nodata
 
-                            if template is None:
-                                template = dst.profile
-
-                                template['driver'] = 'GTiff'
-
-                                raster_blocks = list(dst.block_windows())
-
-                                if not is_quality_band:
-                                    template.update({'dtype': 'int16'})
-                                    template['nodata'] = nodata
-
-            if activity.get('landsat_harmonization', None):
-                shutil.rmtree(Path(new_url).parent)
 
         raster = None
         raster_mask = None

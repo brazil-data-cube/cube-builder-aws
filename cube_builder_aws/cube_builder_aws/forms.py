@@ -93,8 +93,7 @@ class LandsatHarmonization(Schema):
     """Define parser for params of the landsat harmonization."""
 
     apply = fields.Boolean(required=False, allow_none=False, default=False)
-    bucket_angle_bands = fields.String(required=False, allow_none=True)
-    build_provenance = fields.Boolean(required=False, allow_none=False, default=False)
+    bucket_dst = fields.String(required=True, allow_none=False)
     datasets = fields.List(fields.String(required=True, allow_none=False))
     map_bands = fields.Dict(required=False, allow_none=False)
 
@@ -189,6 +188,15 @@ class DataCubeProcessForm(Schema):
     # Reuse data cube from another data cube
     reuse_from = fields.String(required=False, allow_none=True)
     indexes_only_regular_cube = fields.Boolean(required=False, allow_none=True, default=False)
+
+
+class DataCubeHarmonizationForm(Schema):
+    """Define parser for harmonization generate."""
+
+    scenes = fields.List(fields.String, required=True, allow_none=False)
+    bucket_dst = fields.String(required=True, allow_none=False)
+    bucket_angles = fields.String(required=True, allow_none=False)
+    satellite = fields.String(required=True, allow_none=False, validate=OneOf(['landsat']))
 
 
 class PeriodForm(Schema):

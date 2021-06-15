@@ -37,6 +37,7 @@ provider:
     DYNAMO_TB_ACTIVITY: ${self:service}-${self:provider.stage}-act
     DBNAME_TB_CONTROL: ${self:service}-${self:provider.stage}-actControl
     DBNAME_TB_PROCESS: ${self:service}-${self:provider.stage}-process
+    DBNAME_TB_HARM: ${self:service}-${self:provider.stage}-harmonization
     KEY_ID: ${env:KEY_ID}
     SECRET_KEY: ${env:SECRET_KEY}
     SQLALCHEMY_DATABASE_URI: ${env:SQLALCHEMY_DATABASE_URI}
@@ -60,6 +61,9 @@ provider:
         - sqs:GetQueueUrl
         - sqs:ListQueues
       Resource:
+        - Fn::GetAtt:
+          - cubeBuilderQueueHarmonization
+          - Arn
         - Fn::GetAtt:
           - cubeBuilderQueueMerge
           - Arn
@@ -129,10 +133,22 @@ functions:
               - X-Amz-Security-Token
               - X-Amz-User-Agent
 
+  app_harmonization: 
+    handler: app.continue_process
+    timeout: 300
+    memorySize: 2048
+    events:
+      - sqs:
+          batchSize: 1
+          arn:
+            Fn::GetAtt:
+              - cubeBuilderQueueHarmonization
+              - Arn
+
   app_merge: 
     handler: app.continue_process
-    timeout: 900
-    memorySize: 4096
+    timeout: 720
+    memorySize: 3584
     events:
       - sqs:
           batchSize: 1
@@ -186,11 +202,17 @@ functions:
 
 resources:
   Resources:
+    cubeBuilderQueueHarmonization:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:service}-${self:provider.stage}-queue-harmonization
+        VisibilityTimeout: 300
+    
     cubeBuilderQueueMerge:
       Type: AWS::SQS::Queue
       Properties:
         QueueName: ${self:service}-${self:provider.stage}-queue-merge
-        VisibilityTimeout: 900
+        VisibilityTimeout: 720
 
     cubeBuilderQueueBlend:
       Type: AWS::SQS::Queue
