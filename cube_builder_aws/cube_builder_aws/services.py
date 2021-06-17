@@ -516,7 +516,9 @@ class CubeServices:
             _ = stac['instance'].catalog
 
             filter_opts['collections'] = [stac['collection']]
-            filter_opts['query'] = dict(collections=[stac['collection']])
+            # TODO: STAC https://landsatlook.usgs.gov/  does not conform to specification
+            if '.usgs.gov' in stac['url']:
+                filter_opts['query'] = dict(collections=[stac['collection']])
             items = stac['instance'].search(filter=filter_opts)
 
             res = self._parse_stac_result(items, stac['collection'], bands, harm_bands_map)
@@ -561,11 +563,14 @@ class CubeServices:
             return False
         return True
 
-    def s3_file_exists(self, bucket_name=None, key=''):
+    def s3_file_exists(self, bucket_name=None, key='', request_payer=False):
         try:
             if not bucket_name:
                 bucket_name = self.bucket_name
-            return self.S3client.head_object(Bucket=bucket_name, Key=key)
+            if request_payer:
+                return self.S3client.head_object(Bucket=bucket_name, Key=key, RequestPayer='requester')
+            else:
+                return self.S3client.head_object(Bucket=bucket_name, Key=key)
         except ClientError:
             return False
 

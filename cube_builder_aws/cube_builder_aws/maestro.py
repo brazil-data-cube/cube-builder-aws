@@ -275,7 +275,7 @@ def harmonization(self, activity):
 # MERGE
 ###############################
 def prepare_merge(self, datacube, irregular_datacube, datasets, satellite, bands, bands_ids, 
-                  quicklook, resx, resy, nodata, crs, quality_band, functions, version,
+                  quicklook, resx, resy, crs, nodata, quality_nodata, quality_band, functions, version,
                   force=False, mask=None, bands_expressions=dict(), indexes_only_regular_cube=False,
                   landsat_harmonization=None):
     services = self.services
@@ -294,8 +294,9 @@ def prepare_merge(self, datacube, irregular_datacube, datasets, satellite, bands
     activity['quicklook'] = quicklook
     activity['resx'] = resx
     activity['resy'] = resy
-    activity['nodata'] = nodata
     activity['srs'] = crs
+    activity['nodata'] = nodata
+    activity['quality_nodata'] = quality_nodata
     activity['bucket_name'] = services.bucket_name
     activity['quality_band'] = quality_band
     activity['functions'] = functions
@@ -549,7 +550,7 @@ def merge_warped(self, activity):
         ymax = float(activity['ymax'])
         dist_x = float(activity['dist_x'])
         dist_y = float(activity['dist_y'])
-        nodata = int(activity['nodata'])
+        nodata = int(activity['quality_nodata']) if is_quality_band else int(activity['nodata'])
 
         shape = activity.get('shape', None)
         if shape:
@@ -570,14 +571,13 @@ def merge_warped(self, activity):
 
         is_sentinel_landsat_quality_fmask = ('LANDSAT' in satellite or satellite == 'SENTINEL-2') and \
                                             (is_quality_band and activity_mask['nodata'] != 0)
-        source_nodata = 0
+        source_nodata = activity.get('source_nodata', 0)
 
         # Quality band is resampled by nearest, other are bilinear
         if is_quality_band:
             resampling = Resampling.nearest
 
-            nodata = activity_mask['nodata']
-            source_nodata = nodata
+            source_nodata = source_nodata if activity.get('source_nodata') else activity_mask['nodata']
 
             raster = numpy.zeros((numlin, numcol,), dtype=numpy.uint16)
             raster_merge = numpy.full((numlin, numcol,), dtype=numpy.uint16, fill_value=source_nodata)
@@ -616,96 +616,98 @@ def merge_warped(self, activity):
             new_url = url
             if landsat_harmonization:
                 if not is_quality_band:
-                    bucket_src = HARMONIZATION['landsat']['bucket_src']
-                    new_url = new_url.replace(bucket_src, landsat_harmonization['bucket_dst'])
+                    key_path = new_url.replace(HARMONIZATION['landsat']['bucket_src'], '')
+                    if services.s3_file_exists(bucket_name=landsat_harmonization['bucket_dst'], key=key_path, request_payer=True):
+                        bucket_src = HARMONIZATION['landsat']['bucket_src'].replace('s3://', '')
+                        new_url = new_url.replace(bucket_src, landsat_harmonization['bucket_dst'])
 
-                from rasterio.session import AWSSession
+            from rasterio.session import AWSSession
 
-                aws_session = AWSSession(services.session, requester_pays=True)
-                with rasterio.Env(aws_session, AWS_SESSION_TOKEN=""):
+            aws_session = AWSSession(services.session, requester_pays=True)
+            with rasterio.Env(aws_session, AWS_SESSION_TOKEN=""):
 
-                    with rasterio.open(new_url) as src:
+                with rasterio.open(new_url) as src:
 
-                        kwargs = src.meta.copy()
+                    kwargs = src.meta.copy()
+                    kwargs.update({
+                        'width': numcol,
+                        'height': numlin
+                    })
+                    if not shape:
                         kwargs.update({
-                            'width': numcol,
-                            'height': numlin
-                        })
-                        if not shape:
-                            kwargs.update({
-                                'crs': activity['srs'],
-                                'transform': transform
-                            })
-
-                        if src.profile['nodata'] is not None:
-                            source_nodata = src.profile['nodata']
-                        
-                        elif 'source_nodata' in activity:
-                            source_nodata = activity['source_nodata']
-
-                        elif 'LANDSAT' in satellite and not is_quality_band:
-                            source_nodata = nodata if src.profile['dtype'] == 'int16' else 0
-
-                        elif 'CBERS' in satellite and not is_quality_band:
-                            source_nodata = nodata
-
-                        kwargs.update({
-                            'nodata': source_nodata
+                            'crs': activity['srs'],
+                            'transform': transform
                         })
 
-                        if is_quality_band and activity_mask.get('bits'):
-                            kwargs.update({
-                                'blockxsize': 2048,
-                                'blockysize': 2048,
-                                'tiled': True
-                            })
+                    if src.profile['nodata'] is not None:
+                        source_nodata = src.profile['nodata']
+                    
+                    elif 'source_nodata' in activity:
+                        source_nodata = activity['source_nodata']
 
-                        with MemoryFile() as memfile:
-                            with memfile.open(**kwargs) as dst:
-                                if shape:
-                                    raster = src.read(1)
-                                else:
-                                    reproject(
-                                        source=rasterio.band(src, 1),
-                                        destination=raster,
-                                        src_transform=src.transform,
-                                        src_crs=src.crs,
-                                        dst_transform=transform,
-                                        dst_crs=activity['srs'],
-                                        src_nodata=source_nodata,
-                                        dst_nodata=nodata,
-                                        resampling=resampling)
+                    elif 'LANDSAT' in satellite and not is_quality_band:
+                        source_nodata = nodata if src.profile['dtype'] == 'int16' else 0
 
-                                if not is_quality_band or is_sentinel_landsat_quality_fmask:
-                                    valid_data_scene = raster[raster != nodata]
-                                    raster_merge[raster != nodata] = valid_data_scene.reshape(numpy.size(valid_data_scene))
+                    elif 'CBERS' in satellite and not is_quality_band:
+                        source_nodata = nodata
 
-                                    valid_data_scene = None
-                                else:
-                                    factor = raster * raster_mask
-                                    raster_merge = raster_merge + factor
+                    kwargs.update({
+                        'nodata': source_nodata
+                    })
 
-                                    raster_mask[raster != nodata] = 0
+                    if is_quality_band and activity_mask.get('bits'):
+                        kwargs.update({
+                            'blockxsize': 2048,
+                            'blockysize': 2048,
+                            'tiled': True
+                        })
 
-                                if build_provenance:
-                                    raster_masked = numpy.ma.masked_where(raster == nodata, raster)
+                    with MemoryFile() as memfile:
+                        with memfile.open(**kwargs) as dst:
+                            if shape:
+                                raster = src.read(1)
+                            else:
+                                reproject(
+                                    source=rasterio.band(src, 1),
+                                    destination=raster,
+                                    src_transform=src.transform,
+                                    src_crs=src.crs,
+                                    dst_transform=transform,
+                                    dst_crs=activity['srs'],
+                                    src_nodata=source_nodata,
+                                    dst_nodata=nodata,
+                                    resampling=resampling)
 
-                                    where_valid = numpy.invert(raster_masked.mask)
-                                    raster_provenance[where_valid] = datasets.index(platforms[url])
+                            if not is_quality_band or is_sentinel_landsat_quality_fmask:
+                                valid_data_scene = raster[raster != nodata]
+                                raster_merge[raster != nodata] = valid_data_scene.reshape(numpy.size(valid_data_scene))
 
-                                    where_valid = None
-                                    raster_masked = None
+                                valid_data_scene = None
+                            else:
+                                factor = raster * raster_mask
+                                raster_merge = raster_merge + factor
 
-                                if template is None:
-                                    template = dst.profile
+                                raster_mask[raster != nodata] = 0
 
-                                    template['driver'] = 'GTiff'
+                            if build_provenance:
+                                raster_masked = numpy.ma.masked_where(raster == nodata, raster)
 
-                                    raster_blocks = list(dst.block_windows())
+                                where_valid = numpy.invert(raster_masked.mask)
+                                raster_provenance[where_valid] = datasets.index(platforms[url])
 
-                                    if not is_quality_band:
-                                        template.update({'dtype': 'int16'})
-                                        template['nodata'] = nodata
+                                where_valid = None
+                                raster_masked = None
+
+                            if template is None:
+                                template = dst.profile
+
+                                template['driver'] = 'GTiff'
+
+                                raster_blocks = list(dst.block_windows())
+
+                                if not is_quality_band:
+                                    template.update({'dtype': 'int16'})
+                                    template['nodata'] = nodata
 
 
         raster = None
@@ -734,7 +736,7 @@ def merge_warped(self, activity):
             else:
                 raster_merge = raster_merge.astype(numpy.uint8)
                 
-            nodata = activity_mask['nodata']
+            nodata = activity['quality_nodata']
 
             # Save merged image on S3
             create_cog_in_s3(services, template, key, raster_merge, bucket_name, nodata=nodata)
@@ -950,9 +952,7 @@ def blend(self, activity):
     band = activity['band']
     numscenes = len(activity['scenes'])
 
-    nodata = int(activity.get('nodata', -9999))
-    if band == activity['quality_band']:
-        nodata = activity_mask['nodata']
+    nodata = int(activity.get('nodata', -9999)) if band != activity['quality_band'] else activity['quality_nodata']
 
     # Check if band ARDfiles are in activity
     for date_ref in activity['scenes']:
