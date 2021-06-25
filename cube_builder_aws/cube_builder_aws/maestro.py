@@ -283,6 +283,7 @@ def prepare_merge(self, datacube, irregular_datacube, datasets, satellite, bands
     # Build the basics of the merge activity
     activity = {}
     activity['action'] = 'merge'
+    activity['bucket_name'] = services.bucket_name
     activity['datacube'] = datacube
     activity['irregular_datacube'] = irregular_datacube
     activity['version'] = version
@@ -295,9 +296,8 @@ def prepare_merge(self, datacube, irregular_datacube, datasets, satellite, bands
     activity['resx'] = resx
     activity['resy'] = resy
     activity['srs'] = crs
-    activity['nodata'] = nodata
-    activity['quality_nodata'] = quality_nodata
-    activity['bucket_name'] = services.bucket_name
+    activity['nodata'] = int(nodata)
+    activity['quality_nodata'] = int(quality_nodata)
     activity['quality_band'] = quality_band
     activity['functions'] = functions
     activity['force'] = force
@@ -781,7 +781,7 @@ def next_blend(services, mergeactivity):
     blendactivity = {}
     blendactivity['action'] = 'blend'
     for key in ['datasets', 'satellite', 'bands', 'quicklook', 'srs', 'functions', 'bands_ids',
-                'tileid', 'start', 'end', 'dirname', 'nodata', 'bucket_name', 'quality_band',
+                'tileid', 'start', 'end', 'dirname', 'nodata', 'bucket_name', 'quality_band', 'quality_nodata',
                 'internal_bands', 'force', 'version', 'datacube', 'irregular_datacube', 'mask',
                 'bands_expressions', 'indexes_only_regular_cube', 'empty_file', 'landsat_harmonization']:
         blendactivity[key] = mergeactivity.get(key, '')
@@ -1009,6 +1009,8 @@ def blend(self, activity):
                 efficacy = float(scene['efficacy'])
                 resolution = 10
                 mask_tuples.append((100. * efficacy / resolution, key))
+
+            mask_tuples = sorted(mask_tuples, reverse=True)
 
         provenance_merge_map = dict()
         build_provenance = activity.get('internal_band') == PROVENANCE_NAME
