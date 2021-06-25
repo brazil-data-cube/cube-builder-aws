@@ -468,7 +468,8 @@ class CubeController:
 
 
     def start_harmonization_process(self, params):
-        _ = prepare_harm(self, params['scenes'], params['bucket_dst'], params['bucket_angles'])
+        _ = prepare_harm(self, params['scenes'], params['bucket_dst'], 
+                         params['bucket_angles'], params['satellite'])
 
         return dict(
             message='Harmonization processing started with succesfully'
@@ -534,10 +535,17 @@ class CubeController:
 
         bands_list = []
         bands_ids_list = {}
+        quality_nodata = 0
+        nodata = 0
         for band in bands:
             if band.name.upper() not in [i['common_name'].upper() for i in indexes]:
                 bands_list.append(band.name)
                 bands_ids_list[band.id] = band.name
+                if band.name == quality_band:
+                    quality_nodata = band.nodata
+                else:
+                    nodata = band.nodata
+
             elif band._metadata and band._metadata.get('expression') and band._metadata['expression'].get('value'):
                 meta = deepcopy(band._metadata)
                 meta['data_type'] = band.data_type
@@ -564,7 +572,7 @@ class CubeController:
         formatted_version = format_version(cube_infos.version)
         not_started = prepare_merge(self, cube_infos.name, cube_infos_irregular.name, collections, satellite,
             bands_list, bands_ids_list, bands_ql_list, float(bands[0].resolution_x), 
-            float(bands[0].resolution_y), int(bands[0].nodata), crs, quality_band, functions, formatted_version, 
+            float(bands[0].resolution_y), crs, nodata, quality_nodata, quality_band, functions, formatted_version, 
             params.get('force', False), mask, bands_expressions=bands_expressions, 
             indexes_only_regular_cube=params.get('indexes_only_regular_cube'), 
             landsat_harmonization=landsat_harmonization)
