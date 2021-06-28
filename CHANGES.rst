@@ -9,6 +9,17 @@
 Changes
 =======
 
+Version 0.8.0 (2021-06-29)
+--------------------------
+
+- Allow creating grid with others SRID
+- generate file with full nodata when not scenes in tile/step (`#141 <https://github.com/brazil-data-cube/cube-builder-aws/issues/141>`_) 
+- Add support to hamonization between landsat collections, using (`sensor-harm <https://github.com/brazil-data-cube/sensor-harm>`_) package
+- Update get_qa_statistics function to use with landsat Collection 2 (qa_pixel band with bitwise)
+- Accept nodata value parameter
+- Create datasource band
+
+
 Version 0.6.0 (2021-04-23)
 --------------------------
 
