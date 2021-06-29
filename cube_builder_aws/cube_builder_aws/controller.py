@@ -26,7 +26,7 @@ from werkzeug.exceptions import BadRequest, NotFound
 
 from .config import ITEM_PREFIX
 from .constants import (CLEAR_OBSERVATION_ATTRIBUTES, CLEAR_OBSERVATION_NAME,
-                        COG_MIME_TYPE, DATASOURCE_ATTRIBUTES,
+                        COG_MIME_TYPE, DATASOURCE_ATTRIBUTES, DATASOURCE_NAME,
                         PROVENANCE_ATTRIBUTES, PROVENANCE_NAME,
                         SRID_ALBERS_EQUAL_AREA, TOTAL_OBSERVATION_ATTRIBUTES,
                         TOTAL_OBSERVATION_NAME)
@@ -533,6 +533,7 @@ class CubeController:
 
         bands_expressions = dict()
 
+        internal_bands = [CLEAR_OBSERVATION_NAME, TOTAL_OBSERVATION_NAME, PROVENANCE_NAME, DATASOURCE_NAME]
         bands_list = []
         bands_ids_list = {}
         quality_nodata = 0
@@ -543,7 +544,7 @@ class CubeController:
                 bands_ids_list[band.id] = band.name
                 if band.name == quality_band:
                     quality_nodata = band.nodata
-                else:
+                elif band.name not in internal_bands:
                     nodata = band.nodata
 
             elif band._metadata and band._metadata.get('expression') and band._metadata['expression'].get('value'):

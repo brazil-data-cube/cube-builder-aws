@@ -616,7 +616,7 @@ def merge_warped(self, activity):
             new_url = url
             if landsat_harmonization:
                 if not is_quality_band:
-                    key_path = new_url.replace(HARMONIZATION['landsat']['bucket_src'], '')
+                    key_path = new_url.replace(f'{HARMONIZATION["landsat"]["bucket_src"]}/', '')
                     if services.s3_file_exists(bucket_name=landsat_harmonization['bucket_dst'], key=key_path, request_payer=True):
                         bucket_src = HARMONIZATION['landsat']['bucket_src'].replace('s3://', '')
                         new_url = new_url.replace(bucket_src, landsat_harmonization['bucket_dst'])
