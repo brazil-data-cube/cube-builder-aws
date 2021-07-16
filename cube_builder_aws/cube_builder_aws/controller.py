@@ -32,7 +32,8 @@ from .constants import (CLEAR_OBSERVATION_ATTRIBUTES, CLEAR_OBSERVATION_NAME,
                         TOTAL_OBSERVATION_NAME)
 from .forms import CollectionForm
 from .maestro import (blend, harmonization, merge_warped, orchestrate,
-                      posblend, prepare_harm, prepare_search, publish, search, solo)
+                      posblend, prepare_harm, prepare_search, publish, search,
+                      solo)
 from .services import CubeServices
 from .utils.image import validate_merges
 from .utils.processing import (format_version, get_cube_parts, get_date,
