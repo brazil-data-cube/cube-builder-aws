@@ -32,7 +32,8 @@ from .constants import (CLEAR_OBSERVATION_ATTRIBUTES, CLEAR_OBSERVATION_NAME,
                         TOTAL_OBSERVATION_NAME)
 from .forms import CollectionForm
 from .maestro import (blend, harmonization, merge_warped, orchestrate,
-                      posblend, prepare_harm, prepare_merge, publish, solo)
+                      posblend, prepare_harm, prepare_search, publish, search,
+                      solo)
 from .services import CubeServices
 from .utils.image import validate_merges
 from .utils.processing import (format_version, get_cube_parts, get_date,
@@ -58,6 +59,12 @@ class CubeController:
         # dispatch HARMONIZATION
         elif params['action'] == 'harmonization':
             harmonization(self, params)
+
+        # dispatch SEARCH
+        elif params['action'] == 'search':
+            self.services = CubeServices(params['bucket_name'], params['stac_list'])
+
+            search(self, params)
 
         # dispatch MERGE
         elif params['action'] == 'merge':
@@ -571,7 +578,7 @@ class CubeController:
         # prepare merge
         crs = cube_infos.grs.crs
         formatted_version = format_version(cube_infos.version)
-        not_started = prepare_merge(self, cube_infos.name, cube_infos_irregular.name, collections, satellite,
+        not_started = prepare_search(self, cube_infos.name, cube_infos_irregular.name, collections, satellite,
             bands_list, bands_ids_list, bands_ql_list, float(bands[0].resolution_x), 
             float(bands[0].resolution_y), crs, nodata, quality_nodata, quality_band, functions, formatted_version, 
             params.get('force', False), mask, bands_expressions=bands_expressions, 

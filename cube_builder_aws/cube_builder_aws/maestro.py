@@ -126,7 +126,7 @@ def orchestrate(cube_irregular_infos, temporal_schema, tiles, start_date, end_da
 def get_key_to_controltable(activity):
     activitiesControlTableKey = activity['dynamoKey']
     
-    if activity['action'] != 'publish':
+    if activity['action'] != 'search' and activity['action'] != 'publish':
         activitiesControlTableKey = activitiesControlTableKey.replace(activity['band'], '')
 
     if activity['action'] == 'merge':
@@ -272,17 +272,17 @@ def harmonization(self, activity):
 
 
 ###############################
-# MERGE
+# SEARCH
 ###############################
-def prepare_merge(self, datacube, irregular_datacube, datasets, satellite, bands, bands_ids, 
+def prepare_search(self, datacube, irregular_datacube, datasets, satellite, bands, bands_ids, 
                   quicklook, resx, resy, crs, nodata, quality_nodata, quality_band, functions, version,
                   force=False, mask=None, bands_expressions=dict(), indexes_only_regular_cube=False,
                   landsat_harmonization=None):
     services = self.services
 
-    # Build the basics of the merge activity
+    # Build the basics of the search activity
     activity = {}
-    activity['action'] = 'merge'
+    activity['action'] = 'search'
     activity['bucket_name'] = services.bucket_name
     activity['datacube'] = datacube
     activity['irregular_datacube'] = irregular_datacube
@@ -315,7 +315,7 @@ def prepare_merge(self, datacube, irregular_datacube, datasets, satellite, bands
         del stac_cp['instance']
         activity['stac_list'].append(stac_cp)
 
-    logger.info('prepare merge - Score {} items'.format(self.score['items']))
+    logger.info('prepare search - Score {} items'.format(self.score['items']))
 
     scenes_not_started = []
 
@@ -334,16 +334,18 @@ def prepare_merge(self, datacube, irregular_datacube, datasets, satellite, bands
 
         # For all periods
         for periodkey in self.score['items'][tile_name]['periods']:
-            activity['start'] = self.score['items'][tile_name]['periods'][periodkey]['composite_start']
-            activity['end'] = self.score['items'][tile_name]['periods'][periodkey]['composite_end']
-            activity['dirname'] = self.score['items'][tile_name]['periods'][periodkey]['dirname']
-            activity['shape'] = self.score['items'][tile_name]['periods'][periodkey].get('shape')
+            period = self.score['items'][tile_name]['periods'][periodkey]
+            activity['start'] = period['composite_start']
+            activity['end'] = period['composite_end']
+            activity['dirname'] = period['dirname']
+            activity['shape'] = period.get('shape')
 
             # convert to string
             activity['start'] = activity['start'].strftime('%Y-%m-%d')
             activity['end'] = activity['end'].strftime('%Y-%m-%d')
-
+            
             # When force is True, we must rebuild the merge
+            search_control_key = encode_key(activity, ['action', 'irregular_datacube', 'tileid', 'start', 'end'])
             publish_control_key = 'publish{}{}'.format(activity['datacube'], encode_key(activity, ['tileid', 'start', 'end']))
             if not force:
                 response = services.get_activity_item({'id': publish_control_key, 'sk': 'ALLBANDS' })
@@ -351,113 +353,160 @@ def prepare_merge(self, datacube, irregular_datacube, datasets, satellite, bands
                     scenes_not_started.append(f'{activity["tileid"]}_{activity["start"]}_{activity["end"]}')
                     continue
             else:
-                merge_control_key = encode_key(activity, ['action', 'irregular_datacube', 'tileid', 'start', 'end'])
+                merge_control_key = 'merge{}'.format(encode_key(activity, ['irregular_datacube', 'tileid', 'start', 'end']))
                 blend_control_key = 'blend{}{}'.format(activity['datacube'], encode_key(activity, ['tileid', 'start', 'end']))
                 posblend_control_key = 'posblend{}{}'.format(activity['datacube'], encode_key(activity, ['tileid', 'start', 'end']))
+                self.services.remove_control_by_key(search_control_key)
                 self.services.remove_control_by_key(merge_control_key)
                 self.services.remove_control_by_key(blend_control_key)
                 self.services.remove_control_by_key(posblend_control_key)
                 self.services.remove_control_by_key(publish_control_key)
 
-            self.score['items'][tile_name]['periods'][periodkey]['scenes'] = services.search_STAC(activity)
-
-            # Evaluate the number of dates, the number of scenes for each date and
-            # the total amount merges that will be done
-            number_of_datasets_dates = 0
-            if len(self.score['items'][tile_name]['periods'][periodkey]['scenes'].keys()):
-                first_band = list(self.score['items'][tile_name]['periods'][periodkey]['scenes'].keys())[0]
-                activity['list_dates'] = []
-                for dataset in self.score['items'][tile_name]['periods'][periodkey]['scenes'][first_band].keys():
-                    for date in self.score['items'][tile_name]['periods'][periodkey]['scenes'][first_band][dataset].keys():
-                        activity['list_dates'].append(date)
-                        number_of_datasets_dates += 1
-
-            if number_of_datasets_dates == 0:
-                first_collection = activity['stac_list'][0]['collection']
-                first_date = activity['start']
-                number_of_datasets_dates = 1
-                activity['list_dates'] = [first_date]
-                for band in activity['bands']:
-                    self.score['items'][tile_name]['periods'][periodkey]['scenes'][band] = {}
-                    self.score['items'][tile_name]['periods'][periodkey]['scenes'][band][first_collection] = {}
-                    params = dict(
-                        band = band,
-                        original_band_name = band,
-                        date = first_date,
-                        link = '',
-                        sceneid = '',
-                        empty_file = True
-                    )
-                    if landsat_harmonization:
-                        params['platform'] = 'LANDSAT_5'
-
-                    self.score['items'][tile_name]['periods'][periodkey]['scenes'][band][first_collection][first_date] = [params]
-            
-            activity['instancesToBeDone'] = number_of_datasets_dates
-            activity['totalInstancesToBeDone'] = number_of_datasets_dates * len(activity['bands'])
-
             # Reset mycount in activitiesControlTable
-            activities_control_table_key = encode_key(activity, ['action','irregular_datacube','tileid','start','end'])
-            services.put_control_table(activities_control_table_key, 0, activity['totalInstancesToBeDone'], 
-                                        datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
-
-            # Build each merge activity
-            # For all bands
-            for band in self.score['items'][tile_name]['periods'][periodkey]['scenes']:
-                activity['band'] = band
-
-                # For all datasets
-                for dataset in self.score['items'][tile_name]['periods'][periodkey]['scenes'][band]:
-                    activity['dataset'] = dataset
-
-                    # For all dates
-                    for date in self.score['items'][tile_name]['periods'][periodkey]['scenes'][band][dataset]:
-                        activity['date'] = date[0:10]
-                        activity['links'] = []
-
-                        # Create the dynamoKey for the activity in DynamoDB
-                        activity['dynamoKey'] = encode_key(activity, ['action','irregular_datacube','tileid','date','band'])
-
-                        # Get all scenes that were acquired in the same date
-                        activity['original_band_name'] = dict()
-                        activity['platforms'] = dict()
-                        for scene in self.score['items'][tile_name]['periods'][periodkey]['scenes'][band][dataset][date]:
-                            activity['links'].append(scene['link'])
-                            activity['empty_file'] = scene.get('empty_file', False)
-                            activity['original_band_name'][scene['link']] = scene['original_band_name']
-                            if landsat_harmonization:
-                                activity['platforms'][scene['link']] = scene['platform']
-                            if 'source_nodata' in scene:
-                                activity['source_nodata'] = scene['source_nodata']
-
-                        # Continue filling the activity
-                        activity['ARDfile'] = activity['dirname']+'{}/{}_{}_{}_{}_{}.tif'.format(activity['date'],
-                            activity['irregular_datacube'], version, activity['tileid'], activity['date'], band)
-                        activity['sk'] = activity['date']
-                        activity['mylaunch'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
-                        # Check if we have already done and no need to do it again
-                        response = services.get_activity_item({'id': activity['dynamoKey'], 'sk': activity['sk'] })
-                        if 'Item' in response:
-                            if not force and response['Item']['mystatus'] == 'DONE' \
-                                    and services.s3_file_exists(key=activity['ARDfile']):
-                                next_step(services, activity)
-                                continue
-                            else:
-                                services.remove_activity_by_key(activity['dynamoKey'], activity['sk'])
-
-                        # Re-schedule a merge-warped
-                        activity['mystatus'] = 'NOTDONE'
-                        activity['mystart'] = 'SSSS-SS-SS'
-                        activity['myend'] = 'EEEE-EE-EE'
-                        activity['efficacy'] = '0'
-                        activity['cloudratio'] = '100'
-
-                        # Send to queue to activate merge lambda
-                        services.put_item_kinesis(activity)
-                        services.send_to_sqs(activity)
+            services.put_control_table(search_control_key, 0, 1, datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+            
+            activity['dynamoKey'] = search_control_key
+            activity['sk'] = 'SEARCH'
+            activity['mylaunch'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            activity['mystatus'] = 'NOTDONE'
+            activity['mystart'] = 'SSSS-SS-SS'
+            activity['myend'] = 'EEEE-EE-EE'
+            activity['efficacy'] = '0'
+            activity['cloudratio'] = '100'
+            activity['instancesToBeDone'] = 1
+            activity['totalInstancesToBeDone'] = 1
+            
+            # Send to queue to activate search lambda
+            services.put_item_kinesis(activity)
+            services.send_to_sqs(activity)
 
     return scenes_not_started
+
+def search(self, activity):
+    services = self.services
+
+    activity_merge = deepcopy(activity)
+
+    activity['mystart'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    try:
+        scenes = services.search_STAC(activity_merge)
+
+        # Evaluate the number of dates, the number of scenes for each date and
+        # the total amount merges that will be done
+        number_of_datasets_dates = 0
+        if len(scenes.keys()):
+            first_band = list(scenes.keys())[0]
+            activity_merge['list_dates'] = []
+            for dataset in scenes[first_band].keys():
+                for date in scenes[first_band][dataset].keys():
+                    activity_merge['list_dates'].append(date)
+                    number_of_datasets_dates += 1
+
+        if number_of_datasets_dates == 0:
+            first_collection = activity_merge['stac_list'][0]['collection']
+            first_date = activity_merge['start']
+            number_of_datasets_dates = 1
+            activity_merge['list_dates'] = [first_date]
+            for band in activity_merge['bands']:
+                scenes[band] = {}
+                scenes[band][first_collection] = {}
+                params = dict(
+                    band = band,
+                    original_band_name = band,
+                    date = first_date,
+                    link = '',
+                    sceneid = '',
+                    empty_file = True
+                )
+                if activity_merge['landsat_harmonization']:
+                    params['platform'] = 'LANDSAT_5'
+
+                scenes[band][first_collection][first_date] = [params]
+        
+        activity_merge['instancesToBeDone'] = number_of_datasets_dates
+        activity_merge['totalInstancesToBeDone'] = number_of_datasets_dates * len(activity_merge['bands'])
+
+        activity_merge['action'] = 'merge'
+
+        # Reset mycount in activitiesControlTable
+        activities_control_table_key = encode_key(activity_merge, ['action','irregular_datacube','tileid','start','end'])
+        services.put_control_table(activities_control_table_key, 0, activity_merge['totalInstancesToBeDone'], 
+                                    datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+
+        # Build each merge activity
+        # For all bands
+        for band in scenes:
+            activity_merge['band'] = band
+
+            # For all datasets
+            for dataset in scenes[band]:
+                activity_merge['dataset'] = dataset
+
+                # For all dates
+                for date in scenes[band][dataset]:
+                    activity_merge['date'] = date[0:10]
+                    activity_merge['links'] = []
+
+                    # Create the dynamoKey for the activity in DynamoDB
+                    activity_merge['dynamoKey'] = encode_key(activity_merge, ['action','irregular_datacube','tileid','date','band'])
+
+                    # Get all scenes that were acquired in the same date
+                    activity_merge['original_band_name'] = dict()
+                    activity_merge['platforms'] = dict()
+                    for scene in scenes[band][dataset][date]:
+                        activity_merge['links'].append(scene['link'])
+                        activity_merge['empty_file'] = scene.get('empty_file', False)
+                        activity_merge['original_band_name'][scene['link']] = scene['original_band_name']
+                        if activity_merge['landsat_harmonization']:
+                            activity_merge['platforms'][scene['link']] = scene['platform']
+                        if 'source_nodata' in scene:
+                            activity_merge['source_nodata'] = scene['source_nodata']
+
+                    # Continue filling the activity
+                    activity_merge['ARDfile'] = activity_merge['dirname']+'{}/{}_{}_{}_{}_{}.tif'.format(activity_merge['date'],
+                        activity_merge['irregular_datacube'], activity_merge['version'], activity_merge['tileid'], activity_merge['date'], band)
+                    activity_merge['sk'] = activity_merge['date']
+                    activity_merge['mylaunch'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+                    # Check if we have already done and no need to do it again
+                    response = services.get_activity_item({'id': activity_merge['dynamoKey'], 'sk': activity_merge['sk'] })
+                    if 'Item' in response:
+                        if not activity.get('force') and response['Item']['mystatus'] == 'DONE' \
+                                and services.s3_file_exists(key=activity_merge['ARDfile']):
+                            # next_step(services, activity)
+                            continue
+                        else:
+                            services.remove_activity_by_key(activity_merge['dynamoKey'], activity_merge['sk'])
+
+                    # Re-schedule a merge-warped
+                    activity_merge['mylaunch'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    activity_merge['mystatus'] = 'NOTDONE'
+                    activity_merge['mystart'] = 'SSSS-SS-SS'
+                    activity_merge['myend'] = 'EEEE-EE-EE'
+                    activity_merge['efficacy'] = '0'
+                    activity_merge['cloudratio'] = '100'
+
+                    # Send to queue to activate merge lambda
+                    services.put_item_kinesis(activity_merge)
+                    services.send_to_sqs(activity_merge)
+
+        # Update entry in DynamoDB
+        activity['myend'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        activity['mystatus'] = 'DONE'
+        services.put_item_kinesis(activity)
+
+    except Exception as e:
+        # Update entry in DynamoDB
+        activity['mystatus'] = 'ERROR'
+        activity['errors'] = dict(
+            step='search',
+            message=str(e)
+        )
+        activity['myend'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        services.put_item_kinesis(activity)
+
+        logger.error(str(e), exc_info=True)
 
 def merge_warped(self, activity):
     logger.info('==> start MERGE')
