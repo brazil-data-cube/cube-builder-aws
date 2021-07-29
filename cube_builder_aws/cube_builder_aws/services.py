@@ -91,10 +91,10 @@ class CubeServices:
             FilterExpression=Key('datacube_id').eq(datacube_id)
         )
 
-    def get_cube_meta(self, cube,):
-        filters = Key('data_cube').eq(cube) & Key('id').begins_with('merge')
+    def get_cube_meta(self, key_filter, cube_id):
+        filters = Key(key_filter).eq(cube_id)
 
-        return self.tables['act'].scan(
+        return self.tables['process'].scan(
             FilterExpression=filters,
         )
 
@@ -231,6 +231,14 @@ class CubeServices:
             ExpressionAttributeNames=ExpressionAttributeNames,
             ExpressionAttributeValues=ExpressionAttributeValues,
             ReturnValues=ReturnValues
+        )
+
+    def update_cube_metadata(self, item_id, values):
+        return self.tables['process'].update_item(
+            Key = {'id': item_id},
+            UpdateExpression = "SET infos = :parameters",
+            ExpressionAttributeValues = {':parameters': values},
+            ReturnValues = "ALL_NEW"
         )
 
     def get_control_activities(self, data_cube):

@@ -6,4 +6,4 @@
 # under the terms of the MIT License; see LICENSE file for more details.
 #
 
-__version__ = '0.8.0'
+__version__ = '0.8.1'

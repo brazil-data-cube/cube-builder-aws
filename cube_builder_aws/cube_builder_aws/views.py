@@ -11,7 +11,8 @@ from flask import Blueprint, jsonify, request
 from .controller import CubeController
 from .forms import (CubeItemsForm, CubeStatusForm, DataCubeForm,
                     DataCubeHarmonizationForm, DataCubeMetadataForm,
-                    DataCubeProcessForm, GridRefSysForm, PeriodForm)
+                    DataCubeParametersForm, DataCubeProcessForm,
+                    GridRefSysForm, PeriodForm)
 from .version import __version__
 
 controller = CubeController()
@@ -98,6 +99,27 @@ def update_cube_matadata(cube_id):
     data = form.load(args)
 
     message, status = CubeController.update(cube_id, data)
+
+    return jsonify(message), status
+
+
+@bp.route('/cubes/<cube_id>/parameters', methods=['PUT'])
+def update_cube_parameters(cube_id):
+    """Define PUT handler for datacube parameters Updation.
+    Expects a JSON that matches with ``DataCubeParametersForm``.
+    """
+    form = DataCubeParametersForm()
+
+    args = request.get_json()
+
+    errors = form.validate(args)
+
+    if errors:
+        return errors, 400
+
+    data = form.load(args)
+
+    message, status = controller.update_parameters(cube_id, data)
 
     return jsonify(message), status
 
@@ -190,7 +212,7 @@ def start():
 
     data = form.load(args)
 
-    controller = CubeController(bucket=args['bucket'])
+    controller = CubeController()
     message, status = controller.start_process(data)
 
     return jsonify(message), status
