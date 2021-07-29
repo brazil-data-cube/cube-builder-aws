@@ -8,10 +8,11 @@
 
 """Define Cube Builder AWS forms used to validate both data input and data serialization."""
 
-from bdc_catalog.models import Collection, GridRefSys, db
+from bdc_catalog.models import Band, Collection, GridRefSys, db
 from marshmallow import Schema, fields, pre_load
 from marshmallow.validate import OneOf, Regexp, ValidationError
-from marshmallow_sqlalchemy.schema import ModelSchema
+from marshmallow_sqlalchemy import auto_field
+from marshmallow_sqlalchemy.schema import ModelSchema, SQLAlchemyAutoSchema
 from rasterio.dtypes import dtype_ranges
 
 
@@ -24,6 +25,19 @@ class CollectionForm(ModelSchema):
         model = Collection
         sqla_session = db.session
         exclude = ('extent', )
+
+
+class BandForm(SQLAlchemyAutoSchema):
+    """Represent the BDC-Catalog Band model."""
+
+    collection_id = auto_field()
+
+    class Meta:
+        """Internal meta information of form interface."""
+
+        model = Band
+        sqla_session = db.session
+        exclude = []
 
 
 class GridRefSysForm(ModelSchema):
@@ -114,6 +128,7 @@ class DataCubeForm(Schema):
     description = fields.String(required=True, allow_none=False)
     version = fields.Integer(required=True, allow_none=False, default=1)
     title = fields.String(required=True, allow_none=False)
+    bucket = fields.String(required=True, allow_none=False)
     # Set cubes as public by default.
     public = fields.Boolean(required=False, allow_none=False, default=True)
     # Is Data cube generated from Combined Collections?
@@ -165,12 +180,22 @@ class DataCubeForm(Schema):
 
 
 class DataCubeMetadataForm(Schema):
-    """Define parser for datacube updation."""
+    """Define parser for datacube metadata updation."""
 
     metadata = fields.Dict(required=False, allow_none=True)
     description = fields.String(required=False, allow_none=False)
     title = fields.String(required=False, allow_none=False)
     public = fields.Boolean(required=False, allow_none=False, default=True)
+    bands = fields.Nested(BandForm, required=False, many=True)
+
+
+class DataCubeParametersForm(Schema):
+    """Define parser for datacube parameters updation."""
+
+    bucket = fields.String(required=False, allow_none=False)
+    mask = fields.Nested(CustomMaskDefinition)
+    stac_list = fields.List(fields.Nested(StacDefinitionForm))
+    landsat_harmonization = fields.Nested(LandsatHarmonization)
     
 
 class DataCubeProcessForm(Schema):
@@ -179,7 +204,7 @@ class DataCubeProcessForm(Schema):
     datacube = fields.String(required=True, allow_none=False)
     datacube_version = fields.Integer(required=True, allow_none=False)
     stac_list = fields.List(fields.Nested(StacDefinitionForm))
-    bucket = fields.String(required=True, allow_none=False)
+    bucket = fields.String(required=False, allow_none=False)
     tiles = fields.List(fields.String, required=True, allow_none=False)
     start_date = fields.Date()
     end_date = fields.Date()
