@@ -15,15 +15,14 @@ from boto3.dynamodb.conditions import Attr, Key
 from botocore.errorfactory import ClientError
 from stac import STAC
 
-from .config import (AWS_KEY_ID, AWS_SECRET_KEY, DBNAME_TB_CONTROL,
-                     DBNAME_TB_HARM, DBNAME_TB_PROCESS, DYNAMO_TB_ACTIVITY,
-                     KINESIS_NAME, LAMBDA_FUNCTION_NAME, QUEUE_NAME)
+from .config import (AWS_KEY_ID, AWS_SECRET_KEY, KINESIS_NAME,
+                     LAMBDA_FUNCTION_NAME, QUEUE_NAME, TABLE_NAME)
 
 
 class CubeServices:
     
     def __init__(self, bucket=None, stac_list=[]):
-        # session = boto3.Session(profile_name='default')
+        # session = boto3.Session(profile_name='beto')
         self.session = session = boto3.Session(
             aws_access_key_id=AWS_KEY_ID, 
             aws_secret_access_key=AWS_SECRET_KEY)
@@ -40,12 +39,13 @@ class CubeServices:
 
         # ---------------------------
         # create / get DynamoDB tables
+        self.tables = {}
         self.get_dynamo_tables()
 
         # ---------------------------
         # create / get the SQS 
-        self.QueueUrl = {}
-        self.get_queue_url()
+        self.queues = {}
+        self.get_queues_url()
 
         # ---------------------------
         # init STAC instance
@@ -63,133 +63,43 @@ class CubeServices:
     ## ----------------------
     # DYNAMO DB
     def get_dynamo_tables(self):
-        # Create the cubeBuilderActivities table in DynamoDB to store all activities
-        self.activitiesTable = self.dynamoDBResource.Table(DYNAMO_TB_ACTIVITY)
-        table_exists = False
-        try:
-        	self.activitiesTable.creation_date_time
-        	table_exists = True
-        except:
-        	table_exists = False
-
-        if not table_exists:
-        	self.activitiesTable = self.dynamoDBResource.create_table(
-        		TableName=DYNAMO_TB_ACTIVITY,
-        		KeySchema=[
-        			{'AttributeName': 'id', 'KeyType': 'HASH' },
-        			{'AttributeName': 'sk', 'KeyType': 'RANGE'}
-        		],
-        		AttributeDefinitions=[
-        			{'AttributeName': 'id','AttributeType': 'S'},
-        			{'AttributeName': 'sk','AttributeType': 'S'},
-        		],
-        		BillingMode='PAY_PER_REQUEST',
-        	)
-            # Wait until the table exists.
-        	self.dynamoDBResource.meta.client.get_waiter('table_exists').wait(TableName=DYNAMO_TB_ACTIVITY)
-
-        # Create the cubeBuilderActivitiesControl table in DynamoDB to manage activities completion
-        self.activitiesControlTable = self.dynamoDBResource.Table(DBNAME_TB_CONTROL)
-        table_exists = False
-        try:
-        	self.activitiesControlTable.creation_date_time
-        	table_exists = True
-        except:
-        	table_exists = False
-
-        if not table_exists:
-        	self.activitiesControlTable = self.dynamoDBResource.create_table(
-        		TableName=DBNAME_TB_CONTROL,
-        		KeySchema=[
-        			{'AttributeName': 'id', 'KeyType': 'HASH' },
-        		],
-        		AttributeDefinitions=[
-        			{'AttributeName': 'id','AttributeType': 'S'},
-        		],
-        		BillingMode='PAY_PER_REQUEST',
-        	)
-            # Wait until the table exists.
-        	self.dynamoDBResource.meta.client.get_waiter('table_exists').wait(TableName=DBNAME_TB_CONTROL)
-
-        # Create the cubeBuilderProcess table in DynamoDB to manage process/cubes started
-        self.processTable = self.dynamoDBResource.Table(DBNAME_TB_PROCESS)
-        table_exists = False
-        try:
-        	self.processTable.creation_date_time
-        	table_exists = True
-        except:
-        	table_exists = False
-
-        if not table_exists:
-        	self.processTable = self.dynamoDBResource.create_table(
-        		TableName=DBNAME_TB_PROCESS,
-        		KeySchema=[
-        			{'AttributeName': 'id', 'KeyType': 'HASH' },
-        		],
-        		AttributeDefinitions=[
-        			{'AttributeName': 'id','AttributeType': 'S'},
-        		],
-        		ProvisionedThroughput={
-        			'ReadCapacityUnits': 2,
-        			'WriteCapacityUnits': 2
-        		}
-        	)
-            # Wait until the table exists.
-        	self.dynamoDBResource.meta.client.get_waiter('table_exists').wait(TableName=DBNAME_TB_PROCESS)
-
-
-        # Create the cubeBuilderActivitiesHarmonization table in DynamoDB to manage activities completion
-        self.harmTable = self.dynamoDBResource.Table(DBNAME_TB_HARM)
-        table_exists = False
-        try:
-        	self.harmTable.creation_date_time
-        	table_exists = True
-        except:
-        	table_exists = False
-
-        if not table_exists:
-        	self.harmTable = self.dynamoDBResource.create_table(
-        		TableName=DBNAME_TB_HARM,
-        		KeySchema=[
-        			{'AttributeName': 'id', 'KeyType': 'HASH' },
-        		],
-        		AttributeDefinitions=[
-        			{'AttributeName': 'id','AttributeType': 'S'},
-        		],
-        		BillingMode='PAY_PER_REQUEST',
-        	)
-            # Wait until the table exists.
-        	self.dynamoDBResource.meta.client.get_waiter('table_exists').wait(TableName=DBNAME_TB_HARM)
+        for table in ['harmonization', 'process', 'act', 'actControl']:
+            table_name = '{}-{}'.format(TABLE_NAME, table)
+            self.tables[table] = self.dynamoDBResource.Table(table_name)
+            try:
+                self.tables[table].creation_date_time
+            except:
+                raise Exception(f'Dynamo Table {table_name} not exists!')
 
     def get_activities_by_key(self, dinamo_key):
-        return self.activitiesTable.query(
+        return self.tables['act'].query(
             KeyConditionExpression=Key('id').eq(dinamo_key)
         )
 
     def get_activity_item(self, query):
-        return self.activitiesTable.get_item( 
+        return self.tables['act'].get_item( 
             Key=query
         )
 
     def get_process_by_id(self, process_id):
-        return self.processTable.query(
+        return self.tables['process'].query(
             KeyConditionExpression=Key('id').eq(process_id)
         )
 
     def get_process_by_datacube(self, datacube_id):
-        return self.processTable.scan(
+        return self.tables['process'].scan(
             FilterExpression=Key('datacube_id').eq(datacube_id)
         )
 
-    def get_cube_meta(self, cube,):
-        filters = Key('data_cube').eq(cube) & Key('id').begins_with('merge')
+    def get_cube_meta(self, key_filter, cube_id):
+        filters = Key(key_filter).eq(cube_id)
 
-        return self.activitiesTable.scan(
+        return self.tables['process'].scan(
             FilterExpression=filters,
         )
 
     def get_all_items(self, filters):
-        response = self.activitiesTable.scan(
+        response = self.tables['act'].scan(
             FilterExpression=filters,
             Limit=100000000
         )
@@ -197,7 +107,7 @@ class CubeServices:
         items = response['Items']
 
         while 'LastEvaluatedKey' in response:
-            response = self.activitiesTable.scan(
+            response = self.tables['act'].scan(
                 FilterExpression=filters,
                 ExclusiveStartKey=response['LastEvaluatedKey']
             )
@@ -228,7 +138,7 @@ class CubeServices:
         return self.get_all_items(expression)
 
     def put_activity(self, activity):
-        self.activitiesTable.put_item(
+        self.tables['act'].put_item(
             Item={
                 'id': activity['dynamoKey'],
                 'sk': activity['sk'],
@@ -251,9 +161,8 @@ class CubeServices:
         )
         return True
 
-
     def put_harmonization_activity(self, activity):
-        self.harmTable.put_item(
+        self.tables['harmonization'].put_item(
             Item={
                 'id': activity['dynamoKey'],
                 'mystatus': activity['mystatus'],
@@ -265,7 +174,7 @@ class CubeServices:
         return True
 
     def put_process_table(self, key, datacube_id, i_datacube_id, infos):
-        self.processTable.put_item(
+        self.tables['process'].put_item(
             Item = {
                 'id': key,
                 'datacube_id': datacube_id,
@@ -276,7 +185,7 @@ class CubeServices:
         return True
 
     def put_control_table(self, key, value, value_total, date):
-        self.activitiesControlTable.put_item(
+        self.tables['actControl'].put_item(
             Item = {
                 'id': key,
                 'mycount': value,
@@ -290,7 +199,7 @@ class CubeServices:
 
     def remove_control_by_key(self, key: str):
         try:
-            self.activitiesControlTable.delete_item(
+            self.tables['actControl'].delete_item(
                 Key=dict(id=key)
             )
             return True
@@ -299,7 +208,7 @@ class CubeServices:
 
     def remove_process_by_key(self, key: str):
         try:
-            self.processTable.delete_item(
+            self.tables['process'].delete_item(
                 Key=dict(id=key)
             )
             return True
@@ -308,7 +217,7 @@ class CubeServices:
 
     def remove_activity_by_key(self, key: str, sk: str):
         try:
-            self.activitiesTable.delete_item(
+            self.tables['act'].delete_item(
                 Key=dict(id=key, sk=sk)
             )
             return True
@@ -316,7 +225,7 @@ class CubeServices:
             return False
 
     def update_control_table(self, Key, UpdateExpression, ExpressionAttributeNames, ExpressionAttributeValues, ReturnValues):
-        return self.activitiesControlTable.update_item(
+        return self.tables['actControl'].update_item(
             Key=Key,
             UpdateExpression=UpdateExpression,
             ExpressionAttributeNames=ExpressionAttributeNames,
@@ -324,17 +233,24 @@ class CubeServices:
             ReturnValues=ReturnValues
         )
 
+    def update_cube_metadata(self, item_id, values):
+        return self.tables['process'].update_item(
+            Key = {'id': item_id},
+            UpdateExpression = "SET infos = :parameters",
+            ExpressionAttributeValues = {':parameters': values},
+            ReturnValues = "ALL_NEW"
+        )
+
     def get_control_activities(self, data_cube):
         expression = Attr('id').contains(data_cube)
-        response = self.activitiesControlTable.scan(
+        response = self.tables['actControl'].scan(
             FilterExpression=expression,
             Limit=1000000
         )
 
         items = response['Items']
-
         while 'LastEvaluatedKey' in response:
-            response = self.activitiesControlTable.scan(
+            response = self.tables['actControl'].scan(
                 FilterExpression=expression,
                 ExclusiveStartKey=response['LastEvaluatedKey']
             )
@@ -344,59 +260,21 @@ class CubeServices:
 
     ## ----------------------
     # SQS
-    def get_queue_url(self):
-        for action in ['harmonization', 'merge', 'blend', 'posblend', 'publish']:
-            queue = '{}-{}'.format(QUEUE_NAME, action)
-            if self.QueueUrl.get(action, None) is not None:
-                continue
-            response = self.SQSclient.list_queues()
-            q_exists = False
-            if 'QueueUrls' in response:
-                for qurl in response['QueueUrls']:
-                    if qurl.find(queue) != -1:
-                        q_exists = True
-                        self.QueueUrl[action] = qurl
-            if not q_exists:
-                self.create_queue(True, action)
+    def get_queues_url(self):
+        list_queues = self.SQSclient.list_queues().get('QueueUrls', [])
+        queues_name = [queue.split('/')[-1] for queue in list_queues]
+
+        for action in ['harmonization', 'search', 'merge', 'blend', 'posblend', 'publish']:
+            queue_name = f'{QUEUE_NAME}-{action}'
+            if not self.queues.get(action) and not queue_name in queues_name:
+                raise Exception(f'SQS Queue {queue_name} not exists!')
+            self.queues[action] = [queue for queue in list_queues if queue.split('/')[-1] == queue_name][0]
+
         return True
 
-    def create_queue(self, create_mapping = False, action = ''):
-        """
-        As the influx of messages to a queue increases, AWS Lambda automatically scales up 
-        polling activity until the number of concurrent function executions reaches 1000, 
-        the account concurrency limit, or the (optional) function concurrency limit, 
-        whichever is lower. 
-        Amazon Simple Queue Service supports an initial burst of 5 concurrent function invocations 
-        and increases concurrency by 60 concurrent invocations per minute.
-
-        So, for example, 
-        1000 messages arrives at the queue at once, only 5 will be processed in the first minute.
-        65 lambdas will run concurrently in the second minute... so on
-		"""
-        # Create a SQS for this experiment
-        queue = '{}-{}'.format(QUEUE_NAME, action)
-        response = self.SQSclient.create_queue(
-            QueueName=queue,
-            Attributes={'VisibilityTimeout': '500'}
-        )
-        self.QueueUrl[action] = response['QueueUrl']
-        # Get attributes
-        attributes = self.SQSclient.get_queue_attributes(QueueUrl=self.QueueUrl[action], AttributeNames=['All',])
-        QueueArn = attributes['Attributes']['QueueArn']
-
-        # Create Source Mapping to Maestro from queue
-        if create_mapping:
-            response = self.LAMBDAclient.create_event_source_mapping(
-                EventSourceArn=QueueArn,
-                FunctionName=LAMBDA_FUNCTION_NAME,
-                Enabled=True,
-                BatchSize=1
-            )
-
     def send_to_sqs(self, activity):
-        if self.get_queue_url():
-            action = activity['action']
-            self.SQSclient.send_message(QueueUrl=self.QueueUrl[action], MessageBody=json.dumps(activity))
+        action = activity['action']
+        self.SQSclient.send_message(QueueUrl=self.queues[action], MessageBody=json.dumps(activity))
 
     
     ## ----------------------
@@ -416,6 +294,84 @@ class CubeServices:
     		PartitionKey='dsKinesis'
 		)
         return True
+
+
+    ## ----------------------
+    # S3
+    def create_bucket(self, name, requester_pay=True):
+        try:
+            # Create a bucket with public access
+            response = self.S3client.create_bucket(
+                ACL='public-read',
+                Bucket=name
+            )
+            if requester_pay:
+                response = self.S3client.put_bucket_request_payment(
+                    Bucket=name,
+                    RequestPaymentConfiguration={
+                        'Payer': 'Requester'
+                    }
+                )
+            assert response['ResponseMetadata']['HTTPStatusCode'] == 200
+            return True
+        except ClientError:
+            return False
+        return True
+
+    def s3_file_exists(self, bucket_name=None, key='', request_payer=False):
+        try:
+            if not bucket_name:
+                bucket_name = self.bucket_name
+            if request_payer:
+                return self.S3client.head_object(Bucket=bucket_name, Key=key, RequestPayer='requester')
+            else:
+                return self.S3client.head_object(Bucket=bucket_name, Key=key)
+        except ClientError:
+            return False
+
+    def get_object(self, key, bucket_name=None):
+        return self.S3client.get_object(Bucket=bucket_name, Key=key)
+
+    def delete_file_S3(self, bucket_name=None, key=''):
+        try:
+            if not bucket_name:
+                bucket_name = self.bucket_name
+            self.S3client.delete_object(Bucket=bucket_name, Key=key)
+        except ClientError:
+            return False
+        return True
+
+    def save_file_S3(self, bucket_name=None, key='', activity={}):
+        if not bucket_name:
+            bucket_name = self.bucket_name
+        return self.S3client.put_object(
+            Bucket=bucket_name,
+            Key=key,
+            Body=(bytes(json.dumps(activity).encode('UTF-8')))
+        )
+
+    def upload_file_S3(self, memfile, key, args, bucket_name=None):
+        if not bucket_name:
+            bucket_name = self.bucket_name
+        return self.S3client.upload_file(
+            memfile, 
+            Bucket=bucket_name,
+            Key=key,
+            ExtraArgs=args
+        )
+
+    def upload_fileobj_S3(self, memfile, key, args, bucket_name=None):
+        if not bucket_name:
+            bucket_name = self.bucket_name
+        return self.S3client.upload_fileobj(
+            memfile, 
+            Bucket=bucket_name,
+            Key=key,
+            ExtraArgs=args
+        )
+
+    def list_repositories(self):
+        return [bucket['Name'] for bucket in self.S3client.list_buckets()['Buckets']]
 
 
     ## ----------------------
@@ -541,79 +497,3 @@ class CubeServices:
 
         return scenes
     
-    ## ----------------------
-    # S3
-    def create_bucket(self, name, requester_pay=True):
-        try:
-            # Create a bucket with public access
-            response = self.S3client.create_bucket(
-                ACL='public-read',
-                Bucket=name
-            )
-            if requester_pay:
-                response = self.S3client.put_bucket_request_payment(
-                    Bucket=name,
-                    RequestPaymentConfiguration={
-                        'Payer': 'Requester'
-                    }
-                )
-            assert response['ResponseMetadata']['HTTPStatusCode'] == 200
-            return True
-        except ClientError:
-            return False
-        return True
-
-    def s3_file_exists(self, bucket_name=None, key='', request_payer=False):
-        try:
-            if not bucket_name:
-                bucket_name = self.bucket_name
-            if request_payer:
-                return self.S3client.head_object(Bucket=bucket_name, Key=key, RequestPayer='requester')
-            else:
-                return self.S3client.head_object(Bucket=bucket_name, Key=key)
-        except ClientError:
-            return False
-
-    def get_object(self, key, bucket_name=None):
-        return self.S3client.get_object(Bucket=bucket_name, Key=key)
-
-    def delete_file_S3(self, bucket_name=None, key=''):
-        try:
-            if not bucket_name:
-                bucket_name = self.bucket_name
-            self.S3client.delete_object(Bucket=bucket_name, Key=key)
-        except ClientError:
-            return False
-        return True
-
-    def save_file_S3(self, bucket_name=None, key='', activity={}):
-        if not bucket_name:
-            bucket_name = self.bucket_name
-        return self.S3client.put_object(
-            Bucket=bucket_name,
-            Key=key,
-            Body=(bytes(json.dumps(activity).encode('UTF-8')))
-        )
-
-    def upload_file_S3(self, memfile, key, args, bucket_name=None):
-        if not bucket_name:
-            bucket_name = self.bucket_name
-        return self.S3client.upload_file(
-            memfile, 
-            Bucket=bucket_name,
-            Key=key,
-            ExtraArgs=args
-        )
-
-    def upload_fileobj_S3(self, memfile, key, args, bucket_name=None):
-        if not bucket_name:
-            bucket_name = self.bucket_name
-        return self.S3client.upload_fileobj(
-            memfile, 
-            Bucket=bucket_name,
-            Key=key,
-            ExtraArgs=args
-        )
-
-    def list_repositories(self):
-        return [bucket['Name'] for bucket in self.S3client.list_buckets()['Buckets']]

@@ -32,7 +32,8 @@ from .constants import (CLEAR_OBSERVATION_ATTRIBUTES, CLEAR_OBSERVATION_NAME,
                         TOTAL_OBSERVATION_NAME)
 from .forms import CollectionForm
 from .maestro import (blend, harmonization, merge_warped, orchestrate,
-                      posblend, prepare_harm, prepare_merge, publish, solo)
+                      posblend, prepare_harm, prepare_search, publish, search,
+                      solo)
 from .services import CubeServices
 from .utils.image import validate_merges
 from .utils.processing import (format_version, get_cube_parts, get_date,
@@ -58,6 +59,12 @@ class CubeController:
         # dispatch HARMONIZATION
         elif params['action'] == 'harmonization':
             harmonization(self, params)
+
+        # dispatch SEARCH
+        elif params['action'] == 'search':
+            self.services = CubeServices(params['bucket_name'], params['stac_list'])
+
+            search(self, params)
 
         # dispatch MERGE
         elif params['action'] == 'merge':
@@ -361,15 +368,51 @@ class CubeController:
         with db.session.begin_nested():
             cube = cls.get_cube_or_404(cube_id=cube_id)
 
-            cube.title = params['title']
-            cube._metadata=params['metadata']
-            cube.description=params['description']
-            cube.is_public=params['public']
+            cube.title = params.get('title') or cube.title
+            cube._metadata = params.get('metadata') or cube._metadata
+            cube.description = params.get('description') or cube.description
+            cube.is_public = params.get('public') or cube.is_public
+
+            if params.get('bands'):
+                band_map = {b.id: b for b in cube.bands}
+                for band_meta in params['bands']:
+                    if band_meta.get('id') not in band_map or band_meta.get('collection_id') != cube.id:
+                        abort(400, f'Band "{band_meta.get("id")}" does not belongs to cube "{cube.name}-{cube.version}"')
+
+                    band_ctx = band_map[band_meta['id']]
+                    for prop, value in band_meta.items():
+                        setattr(band_ctx, prop, value)
             
         db.session.commit()
 
         return dict(
             message='Updated cube!'
+        ), 200
+
+    
+    def update_parameters(self, cube_id: int, params):
+        """Update data cube parameters.
+        """
+        cube = self.get_cube_or_404(cube_id=cube_id)
+
+        key_filter = 'irregular_datacube_id' if cube.composite_function.alias == 'IDT' else 'datacube_id'
+
+        item = self.services.get_cube_meta(key_filter=key_filter, cube_id=cube.id)
+
+        if item is None or len(item['Items']) == 0:
+            raise BadRequest('There is no data cube activity')
+
+        activity = item['Items'][0]
+        for param in params.keys():
+            if param == 'bucket':
+                activity['infos'][param] = params[param]
+            else:
+                activity['infos']['parameters'][param] = params[param]
+
+        _ = self.services.update_cube_metadata(item_id=activity['id'], values=activity['infos'])
+
+        return dict(
+            message='Updated cube parameters!'
         ), 200
 
 
@@ -392,7 +435,7 @@ class CubeController:
         errors = int(sum([a['errors'] for a in activities]))
         not_done = count - done
         
-        if not_done > 0:
+        if not_done >= 0:
             return dict(
                 finished = False,
                 done = done,
@@ -506,8 +549,9 @@ class CubeController:
         landsat_harmonization = process_params['parameters'].get('landsat_harmonization', {})
         if not landsat_harmonization.get('apply', False):
             landsat_harmonization = None
-
-        self.services = CubeServices(bucket=self.services.bucket_name, stac_list=stac_list)
+        
+        bucket_name = params['bucket'] if params.get('bucket') else process_params['bucket']
+        self.services = CubeServices(bucket=bucket_name, stac_list=stac_list)
 
         collections = [stac['collection'] for stac in stac_list]
 
@@ -571,7 +615,7 @@ class CubeController:
         # prepare merge
         crs = cube_infos.grs.crs
         formatted_version = format_version(cube_infos.version)
-        not_started = prepare_merge(self, cube_infos.name, cube_infos_irregular.name, collections, satellite,
+        not_started = prepare_search(self, cube_infos.name, cube_infos_irregular.name, collections, satellite,
             bands_list, bands_ids_list, bands_ql_list, float(bands[0].resolution_x), 
             float(bands[0].resolution_y), crs, nodata, quality_nodata, quality_band, functions, formatted_version, 
             params.get('force', False), mask, bands_expressions=bands_expressions, 
@@ -751,7 +795,7 @@ class CubeController:
             activities = self.services.get_control_activities(cube_name)
             count = int(sum([a['tobe_done'] for a in activities if 'tobe_done' in a]))
             done = int(sum([a['mycount'] for a in activities]))
-            errors = int(sum([a['erros'] for a in activities]))
+            errors = int(sum([a['errors'] for a in activities]))
             not_done = count - done - errors
             
             cube_dict['status'] = 'Error' if errors > 0 else 'Pending' if not_done > 0 else 'Finished'
@@ -924,20 +968,18 @@ class CubeController:
         """
         cube = self.get_cube_or_404(int(cube_id))
 
-        identity_cube = '_'.join(cube.name.split('_')[:2])
+        key_filter = 'irregular_datacube_id' if cube.composite_function.alias == 'IDT' else 'datacube_id'
 
-        item = self.services.get_cube_meta(identity_cube)
+        item = self.services.get_cube_meta(key_filter=key_filter, cube_id=cube.id)
 
         if item is None or len(item['Items']) == 0:
             raise BadRequest('There is no data cube activity')
 
-        activity = json.loads(item['Items'][0]['activity'])
+        infos = item['Items'][0]['infos']
 
         return dict(
-            stac_list=activity['stac_list'],
-            indexes_only_regular_cube=activity['indexes_only_regular_cube'],
-            bucket=activity['bucket_name'],
-            satellite=activity['satellite'],
+            stac_list=infos['parameters']['stac_list'],
+            bucket=infos['bucket']
         ), 200
 
     # def estimate_cost(self, satellite, resolution, grid, start_date, last_date,

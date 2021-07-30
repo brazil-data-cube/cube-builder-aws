@@ -9,6 +9,14 @@
 Changes
 =======
 
+Version 0.8.1 (2021-07-29)
+--------------------------
+
+- Refactoring code and implement search step in parallel (`#147 <https://github.com/brazil-data-cube/cube-builder-aws/issues/147>`_)
+- Add route to update cube bands metadata
+- Removed function `ModelSchema` (marshmallow_sqlalchemy)
+
+
 Version 0.8.0 (2021-06-29)
 --------------------------
 

@@ -34,10 +34,7 @@ provider:
     LAMBDA_FUNCTION_NAME: ${self:service}-${self:provider.stage}-app
     QUEUE_NAME: ${self:service}-${self:provider.stage}-queue
     KINESIS_NAME: ${self:service}-${self:provider.stage}-kinesis
-    DYNAMO_TB_ACTIVITY: ${self:service}-${self:provider.stage}-act
-    DBNAME_TB_CONTROL: ${self:service}-${self:provider.stage}-actControl
-    DBNAME_TB_PROCESS: ${self:service}-${self:provider.stage}-process
-    DBNAME_TB_HARM: ${self:service}-${self:provider.stage}-harmonization
+    TABLE_NAME: ${self:service}-${self:provider.stage}
     KEY_ID: ${env:KEY_ID}
     SECRET_KEY: ${env:SECRET_KEY}
     SQLALCHEMY_DATABASE_URI: ${env:SQLALCHEMY_DATABASE_URI}
@@ -61,6 +58,9 @@ provider:
         - sqs:GetQueueUrl
         - sqs:ListQueues
       Resource:
+        - Fn::GetAtt:
+          - cubeBuilderQueueSearch
+          - Arn
         - Fn::GetAtt:
           - cubeBuilderQueueHarmonization
           - Arn
@@ -86,6 +86,36 @@ provider:
       Resource:
         - Fn::GetAtt:
           - cubeBuilderKinesis
+          - Arn
+
+    - Effect: "Allow"
+      Action:
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:DescribeTable
+        - dynamodb:UpdateTable
+        - dynamodb:Scan
+        - dynamodb:DescribeStream
+        - dynamodb:GetRecords
+        - dynamodb:GetShardIterator
+        - dynamodb:DescribeTimeToLive
+        - dynamodb:UpdateTimeToLive
+        - dynamodb:DescribeLimits
+      Resource:
+        - Fn::GetAtt:
+          - cubeBuilderProcess
+          - Arn
+        - Fn::GetAtt:
+          - cubeBuilderActivityTable
+          - Arn
+        - Fn::GetAtt:
+          - cubeBuilderActivitiesControl
+          - Arn
+        - Fn::GetAtt:
+          - cubeBuilderActivitiesHarmonization
           - Arn
 
 package:
@@ -132,6 +162,18 @@ functions:
               - X-Api-Key
               - X-Amz-Security-Token
               - X-Amz-User-Agent
+
+  app_search: 
+    handler: app.continue_process
+    timeout: 720
+    memorySize: 512
+    events:
+      - sqs:
+          batchSize: 1
+          arn:
+            Fn::GetAtt:
+              - cubeBuilderQueueSearch
+              - Arn
 
   app_harmonization: 
     handler: app.continue_process
@@ -202,6 +244,13 @@ functions:
 
 resources:
   Resources:
+    # SQS
+    cubeBuilderQueueSearch:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:service}-${self:provider.stage}-queue-search
+        VisibilityTimeout: 720
+
     cubeBuilderQueueHarmonization:
       Type: AWS::SQS::Queue
       Properties:
@@ -232,8 +281,64 @@ resources:
         QueueName: ${self:service}-${self:provider.stage}-queue-publish
         VisibilityTimeout: 720
 
+    # KINESIS
     cubeBuilderKinesis:
       Type: AWS::Kinesis::Stream
       Properties:
         Name: ${self:service}-${self:provider.stage}-kinesis
         ShardCount: 1
+    
+    # DYNAMO DB - tables
+    cubeBuilderProcess:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:service}-${self:provider.stage}-process
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+    cubeBuilderActivityTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:service}-${self:provider.stage}-act
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: sk
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+          - AttributeName: sk
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+
+    cubeBuilderActivitiesControl:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:service}-${self:provider.stage}-actControl
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+
+    cubeBuilderActivitiesHarmonization:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:service}-${self:provider.stage}-harmonization
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
