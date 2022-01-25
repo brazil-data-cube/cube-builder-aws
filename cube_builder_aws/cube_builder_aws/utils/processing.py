@@ -506,7 +506,7 @@ def create_index(services, index, bands_expressions, bands, bucket_name, index_f
 
 ############################
 def format_version(version, prefix='v'):
-    return f'{prefix}{version:03d}'
+    return f'{prefix}{version}'
 
 
 def multihash_checksum_sha256(services, bucket_name, entry) -> str:
@@ -655,3 +655,23 @@ def download_raster_aws(services, path, dst_path, requester_pays=False):
                 dataset.write(arr, 1)
 
     return dst_path
+
+
+def get_item_name(cube_name: str, version: str, tile: str, date: str) -> str:
+    return f'{cube_name}_{version}_{tile}_{date}'.upper()
+
+
+def get_cube_path(cube_name: str, version: str, tile: str, date: str) -> str:
+    cube_date = format_date_path(date)
+    horizontal = tile[:3]
+    vertical = tile[-3:]
+    return f'{cube_name.lower()}/{version}/{horizontal}/{vertical}/{cube_date}'
+
+
+def format_date_path(date: str) -> str:
+    cube_date = datetime.datetime.strptime(date, '%Y-%m-%d')
+    year = cube_date.strftime("%Y")
+    month = cube_date.strftime("%m")
+    day = cube_date.strftime("%d")
+
+    return f'{year}/{month}/{day}'
