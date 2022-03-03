@@ -377,7 +377,7 @@ class CubeController:
                 band_map = {b.id: b for b in cube.bands}
                 for band_meta in params['bands']:
                     if band_meta.get('id') not in band_map or band_meta.get('collection_id') != cube.id:
-                        abort(400, f'Band "{band_meta.get("id")}" does not belongs to cube "{cube.name}-{cube.version}"')
+                        BadRequest(f'Band "{band_meta.get("id")}" does not belongs to cube "{cube.name}-{cube.version}"')
 
                     band_ctx = band_map[band_meta['id']]
                     for prop, value in band_meta.items():

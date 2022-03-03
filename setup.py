@@ -36,6 +36,9 @@ tests_require = [
 extras_require = {
     'docs': docs_require,
     'tests': tests_require,
+    'harmonization': [
+        'sensor-harm @ git+git://github.com/brazil-data-cube/sensor-harm@v0.6.0#egg=sensor-harm'
+    ]
 }
 
 extras_require['all'] = [ req for exts, reqs in extras_require.items() for req in reqs ]
@@ -57,10 +60,9 @@ install_requires = [
     'numpngw==0.0.8',
     'rasterio>=1.1.2,<2',
     'requests>=2.23.0',
-    'rio-cogeo==1.1.10',
+    'rio-cogeo==3.0.2',
     'shapely==1.7.0',
     'stac.py==0.9.0.post5',
-    'sensor-harm @ git+git://github.com/brazil-data-cube/sensor-harm@v0.6.0#egg=sensor-harm',
     'cloudpathlib[s3]==0.4.0',
 ]
 

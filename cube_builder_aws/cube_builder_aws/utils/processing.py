@@ -28,7 +28,6 @@ from numpngw import write_png
 from rasterio.io import MemoryFile
 from rio_cogeo.cogeo import cog_translate
 from rio_cogeo.profiles import cog_profiles
-from sensor_harm.landsat import landsat_harmonize
 
 from ..logger import logger
 from .interpreter import execute
@@ -602,6 +601,8 @@ def apply_landsat_harmonization(services, url, band, angle_bucket_dir=None, qual
     Returns:
         str: full path result images.
     """
+    from sensor_harm.landsat import landsat_harmonize
+
     try:
         scene_id = Path(url).stem.replace(f'_{band}', '')
 

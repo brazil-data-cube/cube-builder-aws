@@ -1447,6 +1447,17 @@ def next_posblend(services, blendactivity):
     quantity_scenes = 1 if indexes_only_regular_cube else (len(posblendactivity['scenes'].keys()) + 1)
     posblendactivity['totalInstancesToBeDone'] = len(posblendactivity['bands_expressions'].keys()) * quantity_scenes
 
+    # Get information from blended bands and get efficacy/cloud only for quality band
+    response_blends = services.get_activities_by_key(blend_dynamo_key)
+    blend_items = response_blends['Items']
+
+    efficacy, cloud_cover = '0', '100'
+    for blend_activity in blend_items:
+        if blend_activity['sk'] == posblendactivity['quality_band']:
+            efficacy = blend_activity['efficacy']
+            cloud_cover = blend_activity['cloudratio']
+            break
+
     # Reset mycount in activitiesControlTable
     if posblendactivity['action'] not in posblendactivity['dynamoKey']:
         posblendactivity['dynamoKey'] = blend_dynamo_key.replace('blend', posblendactivity['action'])
@@ -1501,8 +1512,8 @@ def next_posblend(services, blendactivity):
             posblendactivity['mystatus'] = 'NOTDONE'
             posblendactivity['mystart'] = 'SSSS-SS-SS'
             posblendactivity['myend'] = 'EEEE-EE-EE'
-            posblendactivity['efficacy'] = '0'
-            posblendactivity['cloudratio'] = '100'
+            posblendactivity['efficacy'] = efficacy
+            posblendactivity['cloudratio'] = cloud_cover
             posblendactivity['mylaunch'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
             response = services.get_activity_item({'id': posblendactivity['dynamoKey'], 'sk': posblendactivity['sk']})
@@ -1635,6 +1646,11 @@ def next_publish(services, posblendactivity):
         band = item['sk']
         if band not in publishactivity['bands']: continue
 
+        # For quality bands, get only the cloud cover statistics
+        if band == publishactivity['quality_band']:
+            publishactivity['efficacy'] = activity['efficacy']
+            publishactivity['cloudratio'] = activity['cloudratio']
+
         # Get ARD files
         for date_ref in activity['scenes']:
             scene = activity['scenes'][date_ref]
@@ -1694,8 +1710,7 @@ def next_publish(services, posblendactivity):
     publishactivity['mylaunch'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     publishactivity['mystart'] = 'SSSS-SS-SS'
     publishactivity['myend'] = 'EEEE-EE-EE'
-    publishactivity['efficacy'] = '0'
-    publishactivity['cloudratio'] = '100'
+
     publishactivity['instancesToBeDone'] = len(publishactivity['bands']) - 1
     publishactivity['totalInstancesToBeDone'] = 1
 
