@@ -492,7 +492,6 @@ def create_index(services, index, bands_expressions, bands, bucket_name, index_f
         expr = f'{index} = {band_expression}'
         result = execute(expr, context=machine_context)
         raster_block = result[index]
-        raster_block[raster_block == numpy.ma.masked] = profile['nodata']
         # Persist the expected band data type to cast value safely.
         # TODO: Should we use consider band min_value/max_value?
         raster_block[raster_block < data_type_min_value] = data_type_min_value
@@ -561,7 +560,7 @@ def create_asset_definition(services, bucket_name: str, href: str, mime_type: st
 
                 _geom = shapely.geometry.mapping(shapely.geometry.box(*data_set.bounds))
                 geom_shape = shapely.geometry.shape(rasterio.warp.transform_geom(data_set.crs, 'EPSG:4326', _geom))
-                geom = from_shape(geom_shape, srid=4326)
+                geom = from_shape(geom_shape, srid=4326, extended=True)
 
                 # data = data_set.read(1, masked=True, out_dtype=numpy.uint8)
                 # data[data == numpy.ma.masked] = 0
