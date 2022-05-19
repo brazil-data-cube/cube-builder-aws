@@ -48,7 +48,6 @@ class CubeController:
 
         self.services = CubeServices(bucket)
 
-
     def continue_process_stream(self, params_list):
         params = params_list[0]
         if 'channel' in params and params['channel'] == 'kinesis':
@@ -87,7 +86,6 @@ class CubeController:
             }),
         }
 
-
     @staticmethod
     def get_cube_or_404(cube_id=None, cube_full_name: str = '-'):
         """Try to retrieve a data cube on database and raise 404 when not found."""
@@ -102,7 +100,6 @@ class CubeController:
                 Collection.version == cube_version
             ).first_or_404()
 
-
     @staticmethod
     def get_grid_by_name(grid_name: str):
         """Try to get a grid, otherwise raises 404."""
@@ -110,7 +107,6 @@ class CubeController:
         if not grid:
             raise NotFound(f'Grid {grid_name} not found.')
         return grid
-
 
     @staticmethod
     def get_mime_type(name: str):
@@ -120,7 +116,6 @@ class CubeController:
             raise NotFound(f'Mime Type {name} not found.')
         return mime_type
 
-
     @staticmethod
     def get_resolution_unit(symbol: str):
         """Try to get a resolution, otherwise raises 404."""
@@ -128,7 +123,6 @@ class CubeController:
         if not resolution_unit:
             raise NotFound(f'Resolution Unit {symbol} not found.')
         return resolution_unit
-
 
     @staticmethod
     def _validate_band_metadata(metadata: dict, band_map: dict) -> dict:
@@ -141,7 +135,6 @@ class CubeController:
 
         return metadata
 
-    
     @classmethod
     def get_or_create_band(cls, cube, name, common_name, min_value, max_value,
                            nodata, data_type, resolution_x, resolution_y, scale,
@@ -175,8 +168,7 @@ class CubeController:
 
         return band
 
-
-    def _create_cube_definition(self, cube_id: str, params: dict) -> dict:
+    def _create_cube_definition(self, cube_id: str, params: dict, function: str) -> dict:
         """Create a data cube definition.
         Basically, the definition consists in `Collection` and `Band` attributes.
         Note:
@@ -187,12 +179,6 @@ class CubeController:
         Returns:
             A serialized data cube information.
         """
-        cube_parts = get_cube_parts(cube_id)
-
-        function = cube_parts.composite_function
-
-        cube_id = cube_parts.datacube
-
         cube = Collection.query().filter(Collection.name == cube_id, Collection.version == params['version']).first()
 
         grs = GridRefSys.query().filter(GridRefSys.name == params['grs']).first()
@@ -245,8 +231,8 @@ class CubeController:
                     name=name,
                     common_name=band['common_name'],
                     collection=cube,
-                    min_value=0,
-                    max_value=10000 if is_not_cloud else 4,
+                    min_value=-10000 if band.get('metadata') else 0,
+                    max_value=10000,
                     nodata=band['nodata'],
                     scale=0.0001 if is_not_cloud else 1,
                     data_type=data_type,
@@ -280,18 +266,18 @@ class CubeController:
         # Create default Cube Bands
         if function != 'IDT':
             _ = self.get_or_create_band(cube.id, **CLEAR_OBSERVATION_ATTRIBUTES, resolution_unit_id=resolution_meter.id,
-                                       resolution_x=params['resolution'], resolution_y=params['resolution'])
+                                        resolution_x=params['resolution'], resolution_y=params['resolution'])
             _ = self.get_or_create_band(cube.id, **TOTAL_OBSERVATION_ATTRIBUTES, resolution_unit_id=resolution_meter.id,
-                                       resolution_x=params['resolution'], resolution_y=params['resolution'])
+                                        resolution_x=params['resolution'], resolution_y=params['resolution'])
 
-            if function == 'STK':
+            if function in ('STK', 'LCF'):
                 _ = self.get_or_create_band(cube.id, **PROVENANCE_ATTRIBUTES, resolution_unit_id=resolution_meter.id,
-                                           resolution_x=params['resolution'], resolution_y=params['resolution'])
+                                            resolution_x=params['resolution'], resolution_y=params['resolution'])
 
         landsat_harm = params['parameters'].get('landsat_harmonization')
         if landsat_harm and landsat_harm.get('datasets') and function != 'MED':
             _ = self.get_or_create_band(cube.id, **DATASOURCE_ATTRIBUTES, resolution_unit_id=resolution_meter.id,
-                                       resolution_x=params['resolution'], resolution_y=params['resolution'])
+                                        resolution_x=params['resolution'], resolution_y=params['resolution'])
 
         return CollectionForm().dump(cube)
 
@@ -303,10 +289,7 @@ class CubeController:
         Returns:
              Tuple with serialized cube and HTTP Status code, respectively.
         """
-        cube_name = '{}_{}'.format(
-            params['datacube'],
-            int(params['resolution'])
-        )
+        cube_name = params['datacube']
 
         params['bands'].extend(params['indexes'])
 
@@ -315,7 +298,7 @@ class CubeController:
 
         with db.session.begin_nested():
             # Create data cube Identity
-            cube = self._create_cube_definition(cube_name, params)
+            cube = self._create_cube_definition(cube_name, params, 'IDT')
             irregular_datacube = cube
 
             cube_serialized = [cube]
@@ -325,10 +308,10 @@ class CubeController:
                 unit = params['temporal_composition']['unit'][0].upper()
                 temporal_str = f'{step}{unit}'
 
-                cube_name_composite = f'{cube_name}_{temporal_str}_{params["composite_function"]}'
+                cube_name_composite = f'{cube_name}-{temporal_str}'
 
                 # Create data cube with temporal composition
-                cube_composite = self._create_cube_definition(cube_name_composite, params)
+                cube_composite = self._create_cube_definition(cube_name_composite, params, params['composite_function'])
                 cube_serialized.append(cube_composite)
                 datacube = cube_composite
 
@@ -352,7 +335,6 @@ class CubeController:
         
         return cube_serialized, 201
 
-    
     @classmethod
     def update(cls, cube_id: int, params):
         """Update data cube definition.
@@ -376,14 +358,13 @@ class CubeController:
                     band_ctx = band_map[band_meta['id']]
                     for prop, value in band_meta.items():
                         setattr(band_ctx, prop, value)
-            
+
         db.session.commit()
 
         return dict(
             message='Updated cube!'
         ), 200
 
-    
     def update_parameters(self, cube_id: int, params):
         """Update data cube parameters.
         """
@@ -409,19 +390,13 @@ class CubeController:
             message='Updated cube parameters!'
         ), 200
 
-
     def get_cube_status(self, cube_name):
         cube = self.get_cube_or_404(cube_full_name=cube_name)
-        irregular_cube = cube
 
         # split and format datacube NAME
         datacube = cube.name
-        parts_cube_name = get_cube_parts(datacube)
-        irregular_datacube = '_'.join(parts_cube_name[:2])
-        is_regular = cube.composite_function.alias != 'IDT'
 
-        if not is_regular:
-            irregular_datacube += '_'
+        irregular_datacube = datacube.split('_')[0]
 
         activities = self.services.get_control_activities(irregular_datacube)
         count = int(sum([a['tobe_done'] for a in activities if 'tobe_done' in a]))
@@ -431,10 +406,10 @@ class CubeController:
         
         if not_done >= 0:
             return dict(
-                finished = False,
-                done = done,
-                error = errors,
-                not_done = not_done
+                finished=False,
+                done=done,
+                error=errors,
+                not_done=not_done
             ), 200
 
         # TIME
@@ -488,21 +463,20 @@ class CubeController:
             ).count()
 
             return dict(
-                finished = True,
-                start_date = str(start_date),
-                last_date = str(end_date),
-                done = done,
-                duration = time_str,
-                collection_item = quantity_coll_items
+                finished=True,
+                start_date=str(start_date),
+                last_date=str(end_date),
+                done=done,
+                duration=time_str,
+                collection_item=quantity_coll_items
             ), 200
 
         return dict(
-            finished = False,
-            done = 0,
-            not_done = 0,
-            error = 0
+            finished=False,
+            done=0,
+            not_done=0,
+            error=0
         ), 200
-
 
     def start_harmonization_process(self, params):
         _ = prepare_harm(self, params['scenes'], params['bucket_dst'], 
@@ -511,7 +485,6 @@ class CubeController:
         return dict(
             message='Harmonization processing started with succesfully'
         ), 200
-
 
     def start_process(self, params):
         response = {}
@@ -719,7 +692,7 @@ class CubeController:
             done = int(sum([a['mycount'] for a in activities]))
             errors = int(sum([a['errors'] for a in activities]))
             not_done = count - done - errors
-            
+
             cube_dict['status'] = 'Error' if errors > 0 else 'Pending' if not_done > 0 else 'Finished'
 
             cube_dict['timeline'] = [t['time_inst'] for t in cube_dict['timeline']]

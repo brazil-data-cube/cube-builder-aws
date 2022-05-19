@@ -1367,7 +1367,7 @@ def blend(self, activity):
                 services.upload_file_S3(clear_ob_file, key_clearob, {'ACL': 'public-read'}, bucket_name=bucket_name)
             os.remove(clear_ob_file)
 
-        if 'STK' in activity['functions']:
+        if 'STK' in activity['functions'] or 'LCF' in activity['functions']:
             # Upload the PROVENANCE dataset
             if build_provenance:
                 provenance_profile = profile.copy()
@@ -1398,7 +1398,7 @@ def blend(self, activity):
                     services, total_observation_profile, total_ob_key, stack_total_observation, bucket_name)
 
         # Create and upload the STACK dataset
-        if 'STK' in activity['functions']:
+        if 'STK' in activity['functions'] or 'LCF' in activity['functions']:
             if not activity.get('internal_band'):
                 create_cog_in_s3(
                     services, profile, activity['STKfile'], stack_raster, bucket_name,

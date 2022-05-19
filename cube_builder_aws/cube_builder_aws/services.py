@@ -235,10 +235,10 @@ class CubeServices:
 
     def update_cube_metadata(self, item_id, values):
         return self.tables['process'].update_item(
-            Key = {'id': item_id},
-            UpdateExpression = "SET infos = :parameters",
-            ExpressionAttributeValues = {':parameters': values},
-            ReturnValues = "ALL_NEW"
+            Key={'id': item_id},
+            UpdateExpression="SET infos = :parameters",
+            ExpressionAttributeValues={':parameters': values},
+            ReturnValues="ALL_NEW"
         )
 
     def get_control_activities(self, data_cube):

@@ -37,8 +37,8 @@ def load_data():
 
         _, _ = get_or_create_model(
             CompositeFunction,
-            defaults=dict(name='Stack', alias='STK', description='Best pixel'),
-            alias='STK'
+            defaults=dict(name='Least CC First', alias='LCF', description='Least Cloud Cover First'),
+            alias='LCF'
         )
 
         _, _ = get_or_create_model(
