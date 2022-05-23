@@ -415,7 +415,7 @@ def create_cog_in_s3(services, profile, path, raster, bucket_name, nodata=None, 
                     in_memory=True,
                     quiet=True
                 )
-
+        logger.info(f'Uploading {str(dst_file)} to {bucket_name}://{str(path)}')
         services.upload_fileobj_S3(dst_file, path, {'ACL': 'public-read'}, bucket_name=bucket_name)
     return True
 

@@ -270,7 +270,7 @@ class CubeController:
             _ = self.get_or_create_band(cube.id, **TOTAL_OBSERVATION_ATTRIBUTES, resolution_unit_id=resolution_meter.id,
                                         resolution_x=params['resolution'], resolution_y=params['resolution'])
 
-            if function in ('STK', 'LCF'):
+            if function == 'LCF':
                 _ = self.get_or_create_band(cube.id, **PROVENANCE_ATTRIBUTES, resolution_unit_id=resolution_meter.id,
                                             resolution_x=params['resolution'], resolution_y=params['resolution'])
 

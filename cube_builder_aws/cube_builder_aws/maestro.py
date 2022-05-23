@@ -644,9 +644,10 @@ def merge_warped(self, activity):
 
             source_nodata = source_nodata if activity.get('source_nodata') else activity_mask['nodata']
 
-            raster = numpy.zeros((numlin, numcol,), dtype=numpy.uint16)
-            raster_merge = numpy.full((numlin, numcol,), dtype=numpy.uint16, fill_value=source_nodata)
-            raster_mask = numpy.ones((numlin, numcol,), dtype=numpy.uint16)
+            # TODO: Pass data type from activity
+            raster = numpy.zeros((numlin, numcol,), dtype=numpy.uint8)
+            raster_merge = numpy.full((numlin, numcol,), dtype=numpy.uint8, fill_value=source_nodata)
+            raster_mask = numpy.ones((numlin, numcol,), dtype=numpy.uint8)
             
             if build_provenance:
                 raster_provenance = numpy.full((numlin, numcol,), dtype=numpy.uint8, fill_value=DATASOURCE_ATTRIBUTES['nodata'])
@@ -984,7 +985,8 @@ def fill_blend(services, mergeactivity, blendactivity, internal_band=False):
 
     if band != blendactivity['quality_band']:
         for function in blendactivity['functions']:
-            if func == 'IDT': continue
+            if func == 'IDT':
+                continue
 
             # TODO: How to rename Data cubes with same temporal composition but with different functions?
             #      S2-16D => Sentinel-2 STK, S2-16D => Sentinel-2 MED ? (or S2-16D-MED)
@@ -996,7 +998,7 @@ def fill_blend(services, mergeactivity, blendactivity, internal_band=False):
             )
     else:
         # quality band generate only STK composite
-        blendactivity['{}file'.format('STK')] = os.path.join(
+        blendactivity['{}file'.format('LCF')] = os.path.join(
             get_cube_path(blendactivity['datacube'], blendactivity['version'], blendactivity['tileid'],
                           blendactivity['start']),
             f'{item_name}_{band}.tif'
@@ -1367,13 +1369,13 @@ def blend(self, activity):
                 services.upload_file_S3(clear_ob_file, key_clearob, {'ACL': 'public-read'}, bucket_name=bucket_name)
             os.remove(clear_ob_file)
 
-        if 'STK' in activity['functions'] or 'LCF' in activity['functions']:
+        if 'LCF' in activity['functions']:
             # Upload the PROVENANCE dataset
             if build_provenance:
                 provenance_profile = profile.copy()
                 provenance_profile.pop('nodata',  -1)
                 provenance_profile['dtype'] = PROVENANCE_ATTRIBUTES['data_type']
-                provenance_key = activity['STKfile'].replace(f'_{band}.tif', f'_{PROVENANCE_NAME}.tif')
+                provenance_key = activity['LCFfile'].replace(f'_{band}.tif', f'_{PROVENANCE_NAME}.tif')
                 create_cog_in_s3(
                     services, provenance_profile, provenance_key, provenance_array, bucket_name)
 
@@ -1382,7 +1384,7 @@ def blend(self, activity):
                 datasource_dataset.close()
                 datasource_dataset = None
 
-                datasource_key = activity['STKfile'].replace(f'_{band}.tif', f'_{DATASOURCE_NAME}.tif')
+                datasource_key = activity['LCFfile'].replace(f'_{band}.tif', f'_{DATASOURCE_NAME}.tif')
                 services.upload_file_S3(datasource_file, datasource_key, {'ACL': 'public-read'}, bucket_name=bucket_name)
                 os.remove(datasource_file)
 
@@ -1398,10 +1400,10 @@ def blend(self, activity):
                     services, total_observation_profile, total_ob_key, stack_total_observation, bucket_name)
 
         # Create and upload the STACK dataset
-        if 'STK' in activity['functions'] or 'LCF' in activity['functions']:
+        if 'LCF' in activity['functions']:
             if not activity.get('internal_band'):
                 create_cog_in_s3(
-                    services, profile, activity['STKfile'], stack_raster, bucket_name,
+                    services, profile, activity['LCFfile'], stack_raster, bucket_name,
                     None if (band != activity['quality_band']) else nodata)
 
         stack_raster = None
