@@ -8,7 +8,7 @@
 
 """Define Cube Builder AWS forms used to validate both data input and data serialization."""
 
-from bdc_catalog.models import Band, Collection, GridRefSys, db
+from bdc_catalog.models import Band, Collection, GridRefSys, Timeline, db
 from marshmallow import Schema, fields, pre_load
 from marshmallow.validate import OneOf, Regexp, ValidationError
 from marshmallow_sqlalchemy import auto_field
@@ -16,8 +16,16 @@ from marshmallow_sqlalchemy.schema import SQLAlchemyAutoSchema
 from rasterio.dtypes import dtype_ranges
 
 
+class TimelineForm(SQLAlchemyAutoSchema):
+    """Form to represent the Timeline for any Collection registered on BDC."""
+    class Meta:
+        model = Timeline
+
+
 class CollectionForm(SQLAlchemyAutoSchema):
     """Form definition for Model Collection."""
+
+    timeline = fields.List(fields.Nested(TimelineForm(only=['time_inst'])), dump_only=True)
 
     class Meta:
         """Internal meta information of Form interface."""
@@ -49,8 +57,8 @@ class GridRefSysForm(SQLAlchemyAutoSchema):
     meridian = fields.Integer(required=True, load_only=True)
     degreesx = fields.Float(required=True, load_only=True)
     degreesy = fields.Float(required=True, load_only=True)
-    bbox = fields.String(required=True, load_only=True)
-    srid = fields.Integer(required=False, load_only=True)
+    bbox = fields.List(fields.Float, required=True, load_only=True)
+    srid = fields.Integer(required=True, load_only=True)
 
     class Meta:
         """Internal meta information of form interface."""

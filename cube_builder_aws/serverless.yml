@@ -132,7 +132,7 @@ package:
 
 functions:
   app:
-    handler: wsgi.handler
+    handler: wsgi_handler.handler
     timeout: 900
     memorySize: 512
     events:
@@ -227,6 +227,7 @@ functions:
     handler: app.continue_process
     timeout: 720
     memorySize: 1024
+    reservedConcurrency: 10
     events:
       - sqs:
           batchSize: 1

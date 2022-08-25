@@ -24,6 +24,7 @@ from rasterio.io import MemoryFile
 from rasterio.transform import Affine
 from rasterio.warp import Resampling, reproject
 
+from .utils.processing import get_item_name, get_cube_path, format_date_path
 from .constants import (APPLICATION_ID, CLEAR_OBSERVATION_ATTRIBUTES,
                         CLEAR_OBSERVATION_NAME, COG_MIME_TYPE,
                         DATASOURCE_ATTRIBUTES, DATASOURCE_NAME, HARMONIZATION,
@@ -104,8 +105,15 @@ def orchestrate(cube_irregular_infos, temporal_schema, tiles, start_date, end_da
             items[tile_name]['periods'] = items[tile_name].get('periods', {})
 
             period = f'{interval_start}_{interval_end}'
+            horizontal = tile_name[:3]
+            vertical = tile_name[-3:]
 
-            item_id = f'{cube_irregular_infos.name}_{formatted_version}_{tile_name}_{period}'
+            relative_cube_path = os.path.join(cube_irregular_infos.name,
+                                              formatted_version,
+                                              horizontal,
+                                              vertical)
+
+            item_id = f'{cube_irregular_infos.name}_{formatted_version.upper()}_{tile_name}_{interval_start.strftime("%Y%m%d")}'
             if item_id not in items_id:
                 items_id.append(item_id)
                 items[tile_name]['periods'][period] = {
@@ -115,7 +123,7 @@ def orchestrate(cube_irregular_infos, temporal_schema, tiles, start_date, end_da
                     'id': item_id,
                     'composite_start': interval_start,
                     'composite_end': interval_end,
-                    'dirname': f'{os.path.join(prefix, cube_irregular_infos.name, formatted_version, tile_name)}/'
+                    'dirname': f'{os.path.join(prefix, relative_cube_path)}/'.lower()
                 }
                 if shape:
                     items[tile_name]['periods'][period]['shape'] = shape
@@ -464,8 +472,16 @@ def search(self, activity):
                             activity_merge['source_nodata'] = scene['source_nodata']
 
                     # Continue filling the activity
-                    activity_merge['ARDfile'] = activity_merge['dirname']+'{}/{}_{}_{}_{}_{}.tif'.format(activity_merge['date'],
-                        activity_merge['irregular_datacube'], activity_merge['version'], activity_merge['tileid'], activity_merge['date'], band)
+                    merge_date_obj = datetime.strptime(activity_merge['date'], '%Y-%m-%d')
+                    item_name = get_item_name(activity_merge['irregular_datacube'], activity_merge['version'],
+                                              activity_merge['tileid'], merge_date_obj.strftime('%Y%m%d'))
+                    activity_merge['ARDfile'] = os.path.join(
+                        activity_merge['dirname'],
+                        merge_date_obj.strftime('%Y'),
+                        merge_date_obj.strftime('%m'),
+                        merge_date_obj.strftime('%d'),
+                        f'{item_name}_{band}.tif'
+                    )
                     activity_merge['sk'] = activity_merge['date']
                     activity_merge['mylaunch'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
@@ -628,9 +644,10 @@ def merge_warped(self, activity):
 
             source_nodata = source_nodata if activity.get('source_nodata') else activity_mask['nodata']
 
-            raster = numpy.zeros((numlin, numcol,), dtype=numpy.uint16)
-            raster_merge = numpy.full((numlin, numcol,), dtype=numpy.uint16, fill_value=source_nodata)
-            raster_mask = numpy.ones((numlin, numcol,), dtype=numpy.uint16)
+            # TODO: Pass data type from activity
+            raster = numpy.zeros((numlin, numcol,), dtype=numpy.uint8)
+            raster_merge = numpy.full((numlin, numcol,), dtype=numpy.uint8, fill_value=source_nodata)
+            raster_mask = numpy.ones((numlin, numcol,), dtype=numpy.uint8)
             
             if build_provenance:
                 raster_provenance = numpy.full((numlin, numcol,), dtype=numpy.uint8, fill_value=DATASOURCE_ATTRIBUTES['nodata'])
@@ -956,22 +973,38 @@ def fill_blend(services, mergeactivity, blendactivity, internal_band=False):
 
         if 'ARDfiles' not in blendactivity['scenes'][date_ref]:
             blendactivity['scenes'][date_ref]['ARDfiles'] = {}
+
+        # TODO: Identify why only basename is passed. It should use absolute bucket file.
         basename = os.path.basename(activity['ARDfile'])
         blendactivity['scenes'][date_ref]['ARDfiles'][band] = basename
 
     blendactivity['instancesToBeDone'] += len(items)
+
+    datacube_start_period = datetime.strptime(blendactivity['start'], '%Y-%m-%d').strftime('%Y%m%d')
+    item_name = get_item_name(blendactivity['datacube'], blendactivity['version'], blendactivity['tileid'], datacube_start_period)
+
     if band != blendactivity['quality_band']:
         for function in blendactivity['functions']:
-            if func == 'IDT': continue
-            cube_id = '{}_{}'.format('_'.join(blendactivity['datacube'].split('_')[:-1]), function)
-            blendactivity['{}file'.format(function)] = '{0}/{5}/{1}/{2}_{3}/{0}_{5}_{1}_{2}_{3}_{4}.tif'.format(
-                cube_id, blendactivity['tileid'], blendactivity['start'], blendactivity['end'], band, cube_version)
+            if func == 'IDT':
+                continue
+
+            # TODO: How to rename Data cubes with same temporal composition but with different functions?
+            #      S2-16D => Sentinel-2 STK, S2-16D => Sentinel-2 MED ? (or S2-16D-MED)
+            item_name = get_item_name(blendactivity['datacube'], blendactivity['version'], blendactivity['tileid'], datacube_start_period)
+
+            blendactivity['{}file'.format(function)] = os.path.join(
+                get_cube_path(blendactivity['datacube'], blendactivity['version'], blendactivity['tileid'], blendactivity['start']),
+                f'{item_name}_{band}.tif'
+            )
     else:
         # quality band generate only STK composite
-        cube_id = '{}_{}'.format('_'.join(blendactivity['datacube'].split('_')[:-1]), 'STK')
-        blendactivity['{}file'.format('STK')] = '{0}/{5}/{1}/{2}_{3}/{0}_{5}_{1}_{2}_{3}_{4}.tif'.format(
-            cube_id, blendactivity['tileid'], blendactivity['start'], blendactivity['end'], band, cube_version)
+        blendactivity['{}file'.format('LCF')] = os.path.join(
+            get_cube_path(blendactivity['datacube'], blendactivity['version'], blendactivity['tileid'],
+                          blendactivity['start']),
+            f'{item_name}_{band}.tif'
+        )
     return True
+
 
 def blend(self, activity):
     logger.info('==> start BLEND')
@@ -1019,7 +1052,7 @@ def blend(self, activity):
         keys = list(activity['scenes'].keys())
         filename = os.path.join(
             prefix + activity['dirname'],
-            activity['scenes'][keys[0]]['date'],
+            format_date_path(activity['scenes'][keys[0]]['date']),
             activity['scenes'][keys[0]]['ARDfiles'][band])
 
         tilelist = None
@@ -1082,7 +1115,7 @@ def blend(self, activity):
             # MASK -> Quality
             filename = os.path.join(
                 prefix + activity['dirname'],
-                scene['date'],
+                format_date_path(scene['date']),
                 scene['ARDfiles'][activity['quality_band']])
 
             try:
@@ -1108,7 +1141,7 @@ def blend(self, activity):
             # BANDS
             filename = os.path.join(
                 prefix + activity['dirname'],
-                scene['date'],
+                format_date_path(scene['date']),
                 scene['ARDfiles'][band])
             try:
                 bandlist.append(rasterio.open(filename))
@@ -1336,13 +1369,13 @@ def blend(self, activity):
                 services.upload_file_S3(clear_ob_file, key_clearob, {'ACL': 'public-read'}, bucket_name=bucket_name)
             os.remove(clear_ob_file)
 
-        if 'STK' in activity['functions']:
+        if 'LCF' in activity['functions']:
             # Upload the PROVENANCE dataset
             if build_provenance:
                 provenance_profile = profile.copy()
                 provenance_profile.pop('nodata',  -1)
                 provenance_profile['dtype'] = PROVENANCE_ATTRIBUTES['data_type']
-                provenance_key = activity['STKfile'].replace(f'_{band}.tif', f'_{PROVENANCE_NAME}.tif')
+                provenance_key = activity['LCFfile'].replace(f'_{band}.tif', f'_{PROVENANCE_NAME}.tif')
                 create_cog_in_s3(
                     services, provenance_profile, provenance_key, provenance_array, bucket_name)
 
@@ -1351,7 +1384,7 @@ def blend(self, activity):
                 datasource_dataset.close()
                 datasource_dataset = None
 
-                datasource_key = activity['STKfile'].replace(f'_{band}.tif', f'_{DATASOURCE_NAME}.tif')
+                datasource_key = activity['LCFfile'].replace(f'_{band}.tif', f'_{DATASOURCE_NAME}.tif')
                 services.upload_file_S3(datasource_file, datasource_key, {'ACL': 'public-read'}, bucket_name=bucket_name)
                 os.remove(datasource_file)
 
@@ -1367,10 +1400,10 @@ def blend(self, activity):
                     services, total_observation_profile, total_ob_key, stack_total_observation, bucket_name)
 
         # Create and upload the STACK dataset
-        if 'STK' in activity['functions']:
+        if 'LCF' in activity['functions']:
             if not activity.get('internal_band'):
                 create_cog_in_s3(
-                    services, profile, activity['STKfile'], stack_raster, bucket_name,
+                    services, profile, activity['LCFfile'], stack_raster, bucket_name,
                     None if (band != activity['quality_band']) else nodata)
 
         stack_raster = None
@@ -1416,6 +1449,17 @@ def next_posblend(services, blendactivity):
     quantity_scenes = 1 if indexes_only_regular_cube else (len(posblendactivity['scenes'].keys()) + 1)
     posblendactivity['totalInstancesToBeDone'] = len(posblendactivity['bands_expressions'].keys()) * quantity_scenes
 
+    # Get information from blended bands and get efficacy/cloud only for quality band
+    response_blends = services.get_activities_by_key(blend_dynamo_key)
+    blend_items = response_blends['Items']
+
+    efficacy, cloud_cover = '0', '100'
+    for blend_activity in blend_items:
+        if blend_activity['sk'] == posblendactivity['quality_band']:
+            efficacy = blend_activity['efficacy']
+            cloud_cover = blend_activity['cloudratio']
+            break
+
     # Reset mycount in activitiesControlTable
     if posblendactivity['action'] not in posblendactivity['dynamoKey']:
         posblendactivity['dynamoKey'] = blend_dynamo_key.replace('blend', posblendactivity['action'])
@@ -1450,7 +1494,10 @@ def next_posblend(services, blendactivity):
 
                         date = scene['date']
                         posblendactivity['indexesToBe'][i_name][func][date] = posblendactivity['indexesToBe'][i_name][func].get(date, {})
-                        path_band = '{}{}/{}'.format(activity['dirname'], date, scene['ARDfiles'][band_name])
+
+                        date_path = format_date_path(date)
+
+                        path_band = '{}{}/{}'.format(activity['dirname'], date_path, scene['ARDfiles'][band_name])
                         posblendactivity['indexesToBe'][i_name][func][date][band_name] = path_band
 
                 else:
@@ -1467,8 +1514,8 @@ def next_posblend(services, blendactivity):
             posblendactivity['mystatus'] = 'NOTDONE'
             posblendactivity['mystart'] = 'SSSS-SS-SS'
             posblendactivity['myend'] = 'EEEE-EE-EE'
-            posblendactivity['efficacy'] = '0'
-            posblendactivity['cloudratio'] = '100'
+            posblendactivity['efficacy'] = efficacy
+            posblendactivity['cloudratio'] = cloud_cover
             posblendactivity['mylaunch'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
             response = services.get_activity_item({'id': posblendactivity['dynamoKey'], 'sk': posblendactivity['sk']})
@@ -1601,6 +1648,11 @@ def next_publish(services, posblendactivity):
         band = item['sk']
         if band not in publishactivity['bands']: continue
 
+        # For quality bands, get only the cloud cover statistics
+        if band == publishactivity['quality_band']:
+            publishactivity['efficacy'] = activity['efficacy']
+            publishactivity['cloudratio'] = activity['cloudratio']
+
         # Get ARD files
         for date_ref in activity['scenes']:
             scene = activity['scenes'][date_ref]
@@ -1660,8 +1712,7 @@ def next_publish(services, posblendactivity):
     publishactivity['mylaunch'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     publishactivity['mystart'] = 'SSSS-SS-SS'
     publishactivity['myend'] = 'EEEE-EE-EE'
-    publishactivity['efficacy'] = '0'
-    publishactivity['cloudratio'] = '100'
+
     publishactivity['instancesToBeDone'] = len(publishactivity['bands']) - 1
     publishactivity['totalInstancesToBeDone'] = 1
 
@@ -1706,13 +1757,14 @@ def publish(self, activity):
             cube_name = activity['datacube']
             cube = Collection.query().filter(
                 Collection.name == cube_name,
-                Collection.version == int(activity['version'][-3:])
+                Collection.version == int(activity['version'].replace('v', ''))
             ).first()
             if not cube:
                 raise Exception(f'cube {cube_name} - {activity["version"]} not found!')
 
-            general_scene_id = '{}_{}_{}_{}_{}'.format(
-                cube_name, activity['version'], activity['tileid'], activity['start'], activity['end'])
+            cube_date = datetime.strptime(activity['start'], '%Y-%m-%d').strftime('%Y%m%d')
+            general_scene_id = '{}_{}_{}_{}'.format(
+                cube_name, activity['version'].upper(), activity['tileid'], cube_date)
 
             srid = cube.grs.geom_table.columns.geom.type.srid
 
@@ -1726,9 +1778,12 @@ def publish(self, activity):
             if png_name is None:
                 raise Exception(f'publish - Error generateQLook for {general_scene_id}')
 
-            dirname_ql = activity['dirname'].replace(f'{identity_cube}/', f'{cube_name}/')
-            range_date = f'{activity["start"]}_{activity["end"]}'
-            s3_pngname = os.path.join(dirname_ql, range_date, png_file_name)
+            dirname_ql = activity['dirname'].replace(f'{identity_cube.lower()}/', f'{cube_name.lower()}/')
+            cube_date_path = format_date_path(activity["start"])
+            s3_pngname = os.path.join(dirname_ql, cube_date_path, png_file_name)
+
+            print(f'Saving QL in s3://{bucket_name}/{s3_pngname}', flush=True)
+
             services.upload_file_S3(png_name, s3_pngname, {'ACL': 'public-read'}, bucket_name=bucket_name)
             os.remove(png_name)
 
@@ -1803,18 +1858,20 @@ def publish(self, activity):
                 cube_name = activity['irregular_datacube']
                 cube = Collection.query().filter(
                     Collection.name == cube_name,
-                    Collection.version == int(activity['version'][-3:])
+                    Collection.version == int(activity['version'].replace('v', ''))
                 ).first()
                 if not cube:
                     raise Exception(f'cube {cube_name} - {activity["version"]} not found!')
 
+                merge_cube_date = datetime.strptime(str(scene['date'])[0:10], '%Y-%m-%d').strftime('%Y%m%d')
                 general_scene_id = '{}_{}_{}_{}'.format(
-                    cube_name, activity['version'], activity['tileid'], str(scene['date'])[0:10])
+                    cube_name.upper(), activity['version'].upper(), activity['tileid'], merge_cube_date)
 
                 # Generate quicklook
                 qlfiles = []
+                merge_cube_date_path = format_date_path(str(scene['date'])[0:10])
                 for band in qlbands:
-                    filename = os.path.join(prefix + activity['dirname'], str(scene['date'])[0:10], scene['ARDfiles'][band])
+                    filename = os.path.join(prefix + activity['dirname'], merge_cube_date_path, scene['ARDfiles'][band])
                     qlfiles.append(filename)
 
                 png_name = generateQLook(general_scene_id, qlfiles)
@@ -1822,8 +1879,10 @@ def publish(self, activity):
                 if png_name is None:
                     raise Exception(f'publish - Error generateQLook for {general_scene_id}')
 
-                date = str(scene['date'])[0:10]
-                s3_pngname = os.path.join(activity['dirname'], date, png_file_name)
+                s3_pngname = os.path.join(activity['dirname'], merge_cube_date_path, png_file_name)
+
+                print(f'Saving QL in s3://{bucket_name}/{s3_pngname}', flush=True)
+
                 services.upload_file_S3(png_name, s3_pngname, {'ACL': 'public-read'}, bucket_name=bucket_name)
                 os.remove(png_name)
 
@@ -1869,12 +1928,12 @@ def publish(self, activity):
                         if not band_model:
                             raise Exception(f'band {band} not found!')
                         
-                        relative_path = os.path.join(activity['dirname'], str(scene['date'])[0:10], scene['ARDfiles'][band])
+                        relative_path = os.path.join(activity['dirname'], merge_cube_date_path, scene['ARDfiles'][band])
                         full_path = f'{bucket_name}/{relative_path}'
                         assets[band_model.name], item.geom, item.min_convex_hull = create_asset_definition(
                             services, bucket_name,
                             relative_path, COG_MIME_TYPE, ['data'],
-                            full_path, is_raster=True
+                            full_path, is_raster=True, compute=False
                         )
                     
                     item.assets = assets

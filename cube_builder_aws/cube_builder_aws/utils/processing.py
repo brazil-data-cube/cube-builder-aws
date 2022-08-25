@@ -28,7 +28,6 @@ from numpngw import write_png
 from rasterio.io import MemoryFile
 from rio_cogeo.cogeo import cog_translate
 from rio_cogeo.profiles import cog_profiles
-from sensor_harm.landsat import landsat_harmonize
 
 from ..logger import logger
 from .interpreter import execute
@@ -416,7 +415,7 @@ def create_cog_in_s3(services, profile, path, raster, bucket_name, nodata=None, 
                     in_memory=True,
                     quiet=True
                 )
-
+        logger.info(f'Uploading {str(dst_file)} to {bucket_name}://{str(path)}')
         services.upload_fileobj_S3(dst_file, path, {'ACL': 'public-read'}, bucket_name=bucket_name)
     return True
 
@@ -493,7 +492,6 @@ def create_index(services, index, bands_expressions, bands, bucket_name, index_f
         expr = f'{index} = {band_expression}'
         result = execute(expr, context=machine_context)
         raster_block = result[index]
-        raster_block[raster_block == numpy.ma.masked] = profile['nodata']
         # Persist the expected band data type to cast value safely.
         # TODO: Should we use consider band min_value/max_value?
         raster_block[raster_block < data_type_min_value] = data_type_min_value
@@ -506,7 +504,7 @@ def create_index(services, index, bands_expressions, bands, bucket_name, index_f
 
 ############################
 def format_version(version, prefix='v'):
-    return f'{prefix}{version:03d}'
+    return f'{prefix}{version}'
 
 
 def multihash_checksum_sha256(services, bucket_name, entry) -> str:
@@ -517,7 +515,7 @@ def multihash_checksum_sha256(services, bucket_name, entry) -> str:
 
 ############################
 def create_asset_definition(services, bucket_name: str, href: str, mime_type: str, role: List[str], absolute_path: str,
-                            created=None, is_raster=False):
+                            created=None, is_raster=False, compute=True):
     """Create a valid asset definition for collections.
     TODO: Generate the asset for `Item` field with all bands
     Args:
@@ -544,11 +542,12 @@ def create_asset_definition(services, bucket_name: str, href: str, mime_type: st
             'href': absolute_path,
             'type': mime_type,
             'bdc:size': size,
-            'checksum:multihash': multihash_checksum_sha256(services=services, bucket_name=bucket_name, entry=href),
             'roles': role,
             'created': created,
             'updated': _now_str
         }
+        if compute:
+            asset['checksum:multihash'] = multihash_checksum_sha256(services=services, bucket_name=bucket_name, entry=href)
 
         geom = None
         min_convex_hull = None
@@ -560,9 +559,10 @@ def create_asset_definition(services, bucket_name: str, href: str, mime_type: st
                     y=data_set.shape[0],
                 )
 
-                _geom = shapely.geometry.mapping(shapely.geometry.box(*data_set.bounds))
-                geom_shape = shapely.geometry.shape(rasterio.warp.transform_geom(data_set.crs, 'EPSG:4326', _geom))
-                geom = from_shape(geom_shape, srid=4326)
+                if compute:
+                    _geom = shapely.geometry.mapping(shapely.geometry.box(*data_set.bounds))
+                    geom_shape = shapely.geometry.shape(rasterio.warp.transform_geom(data_set.crs, 'EPSG:4326', _geom))
+                    geom = from_shape(geom_shape, srid=4326, extended=True)
 
                 # data = data_set.read(1, masked=True, out_dtype=numpy.uint8)
                 # data[data == numpy.ma.masked] = 0
@@ -602,6 +602,8 @@ def apply_landsat_harmonization(services, url, band, angle_bucket_dir=None, qual
     Returns:
         str: full path result images.
     """
+    from sensor_harm.landsat import landsat_harmonize
+
     try:
         scene_id = Path(url).stem.replace(f'_{band}', '')
 
@@ -655,3 +657,23 @@ def download_raster_aws(services, path, dst_path, requester_pays=False):
                 dataset.write(arr, 1)
 
     return dst_path
+
+
+def get_item_name(cube_name: str, version: str, tile: str, date: str) -> str:
+    return f'{cube_name}_{version}_{tile}_{date}'.upper()
+
+
+def get_cube_path(cube_name: str, version: str, tile: str, date: str) -> str:
+    cube_date = format_date_path(date)
+    horizontal = tile[:3]
+    vertical = tile[-3:]
+    return f'{cube_name.lower()}/{version}/{horizontal}/{vertical}/{cube_date}'
+
+
+def format_date_path(date: str) -> str:
+    cube_date = datetime.datetime.strptime(date, '%Y-%m-%d')
+    year = cube_date.strftime("%Y")
+    month = cube_date.strftime("%m")
+    day = cube_date.strftime("%d")
+
+    return f'{year}/{month}/{day}'

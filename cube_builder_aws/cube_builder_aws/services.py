@@ -235,10 +235,10 @@ class CubeServices:
 
     def update_cube_metadata(self, item_id, values):
         return self.tables['process'].update_item(
-            Key = {'id': item_id},
-            UpdateExpression = "SET infos = :parameters",
-            ExpressionAttributeValues = {':parameters': values},
-            ReturnValues = "ALL_NEW"
+            Key={'id': item_id},
+            UpdateExpression="SET infos = :parameters",
+            ExpressionAttributeValues={':parameters': values},
+            ReturnValues="ALL_NEW"
         )
 
     def get_control_activities(self, data_cube):
@@ -453,7 +453,7 @@ class CubeServices:
         # Get DATACUBE params
         bands = activity['bands']
         bbox_feature = activity['geom']
-        time = '{}/{}'.format(activity['start'], activity['end'])
+        time = '{}T00:00:00/{}T23:59:59'.format(activity['start'], activity['end'])
 
         scenes = {}
         collection_ref = ''

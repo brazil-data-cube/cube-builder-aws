@@ -10,7 +10,7 @@
 import json
 from copy import deepcopy
 from datetime import datetime
-from typing import Tuple, Union
+from typing import Tuple
 
 import sqlalchemy
 from bdc_catalog.models import (Band, BandSRC, Collection, CompositeFunction,
@@ -18,10 +18,7 @@ from bdc_catalog.models import (Band, BandSRC, Collection, CompositeFunction,
                                 ResolutionUnit, SpatialRefSys, Tile)
 from bdc_catalog.models.base_sql import db
 from geoalchemy2 import func
-from geoalchemy2.shape import from_shape
 from rasterio.crs import CRS
-from rasterio.warp import transform
-from shapely.geometry import Polygon
 from werkzeug.exceptions import BadRequest, NotFound
 
 from .config import ITEM_PREFIX
@@ -31,6 +28,7 @@ from .constants import (CLEAR_OBSERVATION_ATTRIBUTES, CLEAR_OBSERVATION_NAME,
                         SRID_ALBERS_EQUAL_AREA, TOTAL_OBSERVATION_ATTRIBUTES,
                         TOTAL_OBSERVATION_NAME)
 from .forms import CollectionForm
+from .grids import create_grids
 from .maestro import (blend, harmonization, merge_warped, orchestrate,
                       posblend, prepare_harm, prepare_search, publish, search,
                       solo)
@@ -49,7 +47,6 @@ class CubeController:
         self.score = {}
 
         self.services = CubeServices(bucket)
-
 
     def continue_process_stream(self, params_list):
         params = params_list[0]
@@ -89,7 +86,6 @@ class CubeController:
             }),
         }
 
-
     @staticmethod
     def get_cube_or_404(cube_id=None, cube_full_name: str = '-'):
         """Try to retrieve a data cube on database and raise 404 when not found."""
@@ -104,7 +100,6 @@ class CubeController:
                 Collection.version == cube_version
             ).first_or_404()
 
-
     @staticmethod
     def get_grid_by_name(grid_name: str):
         """Try to get a grid, otherwise raises 404."""
@@ -112,7 +107,6 @@ class CubeController:
         if not grid:
             raise NotFound(f'Grid {grid_name} not found.')
         return grid
-
 
     @staticmethod
     def get_mime_type(name: str):
@@ -122,7 +116,6 @@ class CubeController:
             raise NotFound(f'Mime Type {name} not found.')
         return mime_type
 
-
     @staticmethod
     def get_resolution_unit(symbol: str):
         """Try to get a resolution, otherwise raises 404."""
@@ -130,7 +123,6 @@ class CubeController:
         if not resolution_unit:
             raise NotFound(f'Resolution Unit {symbol} not found.')
         return resolution_unit
-
 
     @staticmethod
     def _validate_band_metadata(metadata: dict, band_map: dict) -> dict:
@@ -143,7 +135,6 @@ class CubeController:
 
         return metadata
 
-    
     @classmethod
     def get_or_create_band(cls, cube, name, common_name, min_value, max_value,
                            nodata, data_type, resolution_x, resolution_y, scale,
@@ -177,8 +168,7 @@ class CubeController:
 
         return band
 
-
-    def _create_cube_definition(self, cube_id: str, params: dict) -> dict:
+    def _create_cube_definition(self, cube_id: str, params: dict, function: str) -> dict:
         """Create a data cube definition.
         Basically, the definition consists in `Collection` and `Band` attributes.
         Note:
@@ -189,12 +179,6 @@ class CubeController:
         Returns:
             A serialized data cube information.
         """
-        cube_parts = get_cube_parts(cube_id)
-
-        function = cube_parts.composite_function
-
-        cube_id = cube_parts.datacube
-
         cube = Collection.query().filter(Collection.name == cube_id, Collection.version == params['version']).first()
 
         grs = GridRefSys.query().filter(GridRefSys.name == params['grs']).first()
@@ -240,19 +224,15 @@ class CubeController:
                 if name in default_bands:
                     continue
 
-                is_not_cloud = params['quality_band'] != band['name']
-
-                if band['name'] == params['quality_band']:
-                    data_type = 'uint8'
-                else:
-                    data_type = band['data_type']
+                is_not_cloud = params['quality_band'] != band['name'] if params.get('quality_band') is not None else False
+                data_type = band['data_type']
 
                 band_model = Band(
                     name=name,
                     common_name=band['common_name'],
                     collection=cube,
-                    min_value=0,
-                    max_value=10000 if is_not_cloud else 4,
+                    min_value=-10000 if band.get('metadata') else 0,
+                    max_value=10000,
                     nodata=band['nodata'],
                     scale=0.0001 if is_not_cloud else 1,
                     data_type=data_type,
@@ -286,18 +266,18 @@ class CubeController:
         # Create default Cube Bands
         if function != 'IDT':
             _ = self.get_or_create_band(cube.id, **CLEAR_OBSERVATION_ATTRIBUTES, resolution_unit_id=resolution_meter.id,
-                                       resolution_x=params['resolution'], resolution_y=params['resolution'])
+                                        resolution_x=params['resolution'], resolution_y=params['resolution'])
             _ = self.get_or_create_band(cube.id, **TOTAL_OBSERVATION_ATTRIBUTES, resolution_unit_id=resolution_meter.id,
-                                       resolution_x=params['resolution'], resolution_y=params['resolution'])
+                                        resolution_x=params['resolution'], resolution_y=params['resolution'])
 
-            if function == 'STK':
+            if function == 'LCF':
                 _ = self.get_or_create_band(cube.id, **PROVENANCE_ATTRIBUTES, resolution_unit_id=resolution_meter.id,
-                                           resolution_x=params['resolution'], resolution_y=params['resolution'])
+                                            resolution_x=params['resolution'], resolution_y=params['resolution'])
 
         landsat_harm = params['parameters'].get('landsat_harmonization')
         if landsat_harm and landsat_harm.get('datasets') and function != 'MED':
             _ = self.get_or_create_band(cube.id, **DATASOURCE_ATTRIBUTES, resolution_unit_id=resolution_meter.id,
-                                       resolution_x=params['resolution'], resolution_y=params['resolution'])
+                                        resolution_x=params['resolution'], resolution_y=params['resolution'])
 
         return CollectionForm().dump(cube)
 
@@ -309,10 +289,7 @@ class CubeController:
         Returns:
              Tuple with serialized cube and HTTP Status code, respectively.
         """
-        cube_name = '{}_{}'.format(
-            params['datacube'],
-            int(params['resolution'])
-        )
+        cube_name = params['datacube']
 
         params['bands'].extend(params['indexes'])
 
@@ -321,7 +298,7 @@ class CubeController:
 
         with db.session.begin_nested():
             # Create data cube Identity
-            cube = self._create_cube_definition(cube_name, params)
+            cube = self._create_cube_definition(cube_name, params, 'IDT')
             irregular_datacube = cube
 
             cube_serialized = [cube]
@@ -331,10 +308,10 @@ class CubeController:
                 unit = params['temporal_composition']['unit'][0].upper()
                 temporal_str = f'{step}{unit}'
 
-                cube_name_composite = f'{cube_name}_{temporal_str}_{params["composite_function"]}'
+                cube_name_composite = f'{cube_name}-{temporal_str}'
 
                 # Create data cube with temporal composition
-                cube_composite = self._create_cube_definition(cube_name_composite, params)
+                cube_composite = self._create_cube_definition(cube_name_composite, params, params['composite_function'])
                 cube_serialized.append(cube_composite)
                 datacube = cube_composite
 
@@ -358,7 +335,6 @@ class CubeController:
         
         return cube_serialized, 201
 
-    
     @classmethod
     def update(cls, cube_id: int, params):
         """Update data cube definition.
@@ -377,19 +353,18 @@ class CubeController:
                 band_map = {b.id: b for b in cube.bands}
                 for band_meta in params['bands']:
                     if band_meta.get('id') not in band_map or band_meta.get('collection_id') != cube.id:
-                        abort(400, f'Band "{band_meta.get("id")}" does not belongs to cube "{cube.name}-{cube.version}"')
+                        raise BadRequest(f'Band "{band_meta.get("id")}" does not belongs to cube "{cube.name}-{cube.version}"')
 
                     band_ctx = band_map[band_meta['id']]
                     for prop, value in band_meta.items():
                         setattr(band_ctx, prop, value)
-            
+
         db.session.commit()
 
         return dict(
             message='Updated cube!'
         ), 200
 
-    
     def update_parameters(self, cube_id: int, params):
         """Update data cube parameters.
         """
@@ -415,19 +390,13 @@ class CubeController:
             message='Updated cube parameters!'
         ), 200
 
-
     def get_cube_status(self, cube_name):
         cube = self.get_cube_or_404(cube_full_name=cube_name)
-        irregular_cube = cube
 
         # split and format datacube NAME
         datacube = cube.name
-        parts_cube_name = get_cube_parts(datacube)
-        irregular_datacube = '_'.join(parts_cube_name[:2])
-        is_regular = cube.composite_function.alias != 'IDT'
 
-        if not is_regular:
-            irregular_datacube += '_'
+        irregular_datacube = datacube.split('_')[0]
 
         activities = self.services.get_control_activities(irregular_datacube)
         count = int(sum([a['tobe_done'] for a in activities if 'tobe_done' in a]))
@@ -437,10 +406,10 @@ class CubeController:
         
         if not_done >= 0:
             return dict(
-                finished = False,
-                done = done,
-                error = errors,
-                not_done = not_done
+                finished=False,
+                done=done,
+                error=errors,
+                not_done=not_done
             ), 200
 
         # TIME
@@ -494,21 +463,20 @@ class CubeController:
             ).count()
 
             return dict(
-                finished = True,
-                start_date = str(start_date),
-                last_date = str(end_date),
-                done = done,
-                duration = time_str,
-                collection_item = quantity_coll_items
+                finished=True,
+                start_date=str(start_date),
+                last_date=str(end_date),
+                done=done,
+                duration=time_str,
+                collection_item=quantity_coll_items
             ), 200
 
         return dict(
-            finished = False,
-            done = 0,
-            not_done = 0,
-            error = 0
+            finished=False,
+            done=0,
+            not_done=0,
+            error=0
         ), 200
-
 
     def start_harmonization_process(self, params):
         _ = prepare_harm(self, params['scenes'], params['bucket_dst'], 
@@ -517,7 +485,6 @@ class CubeController:
         return dict(
             message='Harmonization processing started with succesfully'
         ), 200
-
 
     def start_process(self, params):
         response = {}
@@ -635,118 +602,31 @@ class CubeController:
     @classmethod
     def create_grs_schema(cls, name, description, projection, meridian, degreesx, degreesy, bbox, srid=SRID_ALBERS_EQUAL_AREA):
         """Create a Brazil Data Cube Grid Schema."""
-        bbox = bbox.split(',')
-        bbox_obj = {
-            "w": float(bbox[0]),
-            "n": float(bbox[1]),
-            "e": float(bbox[2]),
-            "s": float(bbox[3])
-        }
-        tile_srs_p4 = "+proj=longlat +ellps=GRS80 +no_defs"
-        if projection == 'aea':
-            tile_srs_p4 = "+proj=aea +lat_0=-12 +lon_0={} +lat_1=-2 +lat_2=-22 +x_0=5000000 +y_0=10000000 +ellps=GRS80 +units=m +no_defs".format(meridian)
-        elif projection == 'sinu':
-            tile_srs_p4 = "+proj=sinu +lon_0={} +x_0=0 +y_0=0 +a=6371007.181 +b=6371007.181 +units=m +no_defs".format(meridian)
-        else:
-            proj = SpatialRefSys.query.filter(SpatialRefSys.srid == srid).first_or_404(f'SRID {srid} not found.')
-            tile_srs_p4 = proj.proj4text
-            
-        # Number of tiles and base tile
-        num_tiles_x = int(360. / degreesx)
-        num_tiles_y = int(180. / degreesy)
-        h_base = num_tiles_x / 2
-        v_base = num_tiles_y / 2
-
-        # Tile size in meters (dx,dy) at center of system (argsmeridian,0.)
-        src_crs = '+proj=longlat +ellps=GRS80 +no_defs'
-        dst_crs = tile_srs_p4
-        xs = [(meridian - degreesx / 2), (meridian + degreesx / 2), meridian, meridian, 0.]
-        ys = [0., 0., -degreesy / 2, degreesy / 2, 0.]
-        out = transform(src_crs, dst_crs, xs, ys, zs=None)
-        x1 = out[0][0]
-        x2 = out[0][1]
-        y1 = out[1][2]
-        y2 = out[1][3]
-        dx = x2 - x1
-        dy = y2 - y1
-
-        # Coordinates of WRS center (0.,0.) - top left coordinate of (h_base,v_base)
-        x_center = out[0][4]
-        y_center = out[1][4]
-        # Border coordinates of WRS grid
-        x_min = x_center - dx * h_base
-        y_max = y_center + dy * v_base
-
-
-        # Upper Left is (xl,yu) Bottom Right is (xr,yb)
-        xs = [bbox_obj['w'], bbox_obj['e'], meridian, meridian]
-        ys = [0., 0., bbox_obj['n'], bbox_obj['s']]
-        out = transform(src_crs, dst_crs, xs, ys, zs=None)
-        xl = out[0][0]
-        xr = out[0][1]
-        yu = out[1][2]
-        yb = out[1][3]
-        h_min = int((xl - x_min) / dx)
-        h_max = int((xr - x_min) / dx)
-        v_min = int((y_max - yu) / dy)
-        v_max = int((y_max - yb) / dy)
-
-        tiles = []
-        features = []
-        src_crs = tile_srs_p4
-
-        for ix in range(h_min, h_max+1):
-            x1 = x_min + ix*dx
-            x2 = x1 + dx
-            for iy in range(v_min, v_max+1):
-                y1 = y_max - iy*dy
-                y2 = y1 - dy
-                # Evaluate the bounding box of tile in longlat
-                xs = [x1, x2, x2, x1]
-                ys = [y1, y1, y2, y2]
-                out = transform(src_crs, dst_crs, xs, ys, zs=None)
-
-                polygon = from_shape(
-                    Polygon(
-                        [
-                            (x1, y2),
-                            (x2, y2),
-                            (x2, y1),
-                            (x1, y1),
-                            (x1, y2)
-                        ]
-                    ), 
-                    srid=srid
-                )
-
-                # Insert tile
-                tile_name = '{0:03d}{1:03d}'.format(ix, iy)
-                tiles.append(dict(
-                    name=tile_name
-                ))
-                features.append(dict(
-                    tile=tile_name,
-                    geom=polygon
-                ))
-        
+        grid_mapping, proj4 = create_grids(names=[name], projection=projection, meridian=meridian,
+                                           degreesx=[degreesx], degreesy=[degreesy],
+                                           bbox=bbox, srid=srid)
+        grid = grid_mapping[name]
         with db.session.begin_nested():
-            crs = CRS.from_proj4(tile_srs_p4)
+            crs = CRS.from_proj4(proj4)
             data = dict(
                 auth_name='Albers Equal Area',
                 auth_srid=srid,
                 srid=srid,
                 srtext=crs.to_wkt(),
-                proj4text=tile_srs_p4
+                proj4text=proj4
             )
 
             spatial_index, _ = get_or_create_model(SpatialRefSys, defaults=data, srid=srid)
 
-            grs = GridRefSys.create_geometry_table(table_name=name, features=features, srid=srid)
+            grs = GridRefSys.create_geometry_table(table_name=name,
+                                                   features=grid['features'],
+                                                   srid=srid)
             grs.description = description
             db.session.add(grs)
-
-            [db.session.add(Tile(**tile, grs=grs)) for tile in tiles]
-        db.session.commit()        
+            for tile_obj in grid['tiles']:
+                tile = Tile(**tile_obj, grs=grs)
+                db.session.add(tile)
+        db.session.commit()
 
         return dict(
             message='Grid {} created with successfully'.format(name)
@@ -760,18 +640,33 @@ class CubeController:
         return [dict(**Serializer.serialize(schema), crs=schema.crs) for schema in schemas], 200
 
     @classmethod
-    def get_grs_schema(cls, grs_id):
+    def get_grs_schema(cls, grs_id, bbox: Tuple[float, float, float, float] = None, tiles=None):
         """Retrieves a Grid Schema definition with tiles associated."""
-        schema = GridRefSys.query().filter(GridRefSys.id == grs_id).first()
+        from .utils import get_srid_column
+
+        schema: GridRefSys = GridRefSys.query().filter(GridRefSys.id == grs_id).first()
 
         if schema is None:
             return 'GRS {} not found.'.format(grs_id), 404
 
         geom_table = schema.geom_table
+        srid_column = get_srid_column(geom_table.c, default_srid=4326)
+        where = []
+        if bbox is not None:
+            x_min, y_min, x_max, y_max = bbox
+            where.append(
+                func.ST_Intersects(
+                    func.ST_MakeEnvelope(x_min, y_min, x_max, y_max, 4326),
+                    func.ST_Transform(func.ST_SetSRID(geom_table.c.geom, srid_column), 4326)
+                )
+            )
+        if tiles:
+            where.append(geom_table.c.tile.in_(tiles))
+
         tiles = db.session.query(
             geom_table.c.tile,
             func.ST_AsGeoJSON(func.ST_Transform(geom_table.c.geom, 4326), 6, 3).cast(sqlalchemy.JSON).label('geom_wgs84')
-        ).all()
+        ).filter(*where).all()
 
         dump_grs = Serializer.serialize(schema)
         dump_grs['tiles'] = [dict(id=t.tile, geom_wgs84=t.geom_wgs84) for t in tiles]
@@ -797,7 +692,7 @@ class CubeController:
             done = int(sum([a['mycount'] for a in activities]))
             errors = int(sum([a['errors'] for a in activities]))
             not_done = count - done - errors
-            
+
             cube_dict['status'] = 'Error' if errors > 0 else 'Pending' if not_done > 0 else 'Finished'
 
             cube_dict['timeline'] = [t['time_inst'] for t in cube_dict['timeline']]

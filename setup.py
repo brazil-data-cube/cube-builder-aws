@@ -36,6 +36,9 @@ tests_require = [
 extras_require = {
     'docs': docs_require,
     'tests': tests_require,
+    'harmonization': [
+        'sensor-harm @ git+git://github.com/brazil-data-cube/sensor-harm@v0.6.0#egg=sensor-harm'
+    ]
 }
 
 extras_require['all'] = [ req for exts, reqs in extras_require.items() for req in reqs ]
@@ -46,21 +49,21 @@ install_requires = [
     'Werkzeug<2',
     'Click<8',
     'SQLAlchemy[postgresql_psycopg2binary]<1.4,>=1.3',
-    'bdc-catalog @ git+git://github.com/brazil-data-cube/bdc-catalog.git@v0.8.1#egg=bdc-catalog',
+    'bdc-catalog @ git+https://github.com/brazil-data-cube/bdc-catalog.git@v0.8.2#egg=bdc-catalog',
     'Flask>=1.1.1,<2',
     'Flask-SQLAlchemy==2.4.1',
     'psycopg2-binary==2.8.5',
     'boto3==1.14.49',
     'botocore==1.17.49',
     'marshmallow-sqlalchemy==0.25.0',
+    'MarkupSafe==2.0.1',
     'numpy==1.18.0',
     'numpngw==0.0.8',
-    'rasterio>=1.1.2,<2',
+    'rasterio==1.2.1',
     'requests>=2.23.0',
-    'rio-cogeo==1.1.10',
+    'rio-cogeo==3.0.2',
     'shapely==1.7.0',
     'stac.py==0.9.0.post5',
-    'sensor-harm @ git+git://github.com/brazil-data-cube/sensor-harm@v0.6.0#egg=sensor-harm',
     'cloudpathlib[s3]==0.4.0',
 ]
 
