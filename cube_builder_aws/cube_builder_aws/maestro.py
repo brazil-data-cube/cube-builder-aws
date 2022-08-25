@@ -1933,7 +1933,7 @@ def publish(self, activity):
                         assets[band_model.name], item.geom, item.min_convex_hull = create_asset_definition(
                             services, bucket_name,
                             relative_path, COG_MIME_TYPE, ['data'],
-                            full_path, is_raster=True
+                            full_path, is_raster=True, compute=False
                         )
                     
                     item.assets = assets

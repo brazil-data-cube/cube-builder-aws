@@ -453,7 +453,7 @@ class CubeServices:
         # Get DATACUBE params
         bands = activity['bands']
         bbox_feature = activity['geom']
-        time = '{}/{}'.format(activity['start'], activity['end'])
+        time = '{}T00:00:00/{}T23:59:59'.format(activity['start'], activity['end'])
 
         scenes = {}
         collection_ref = ''

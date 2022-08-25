@@ -515,7 +515,7 @@ def multihash_checksum_sha256(services, bucket_name, entry) -> str:
 
 ############################
 def create_asset_definition(services, bucket_name: str, href: str, mime_type: str, role: List[str], absolute_path: str,
-                            created=None, is_raster=False):
+                            created=None, is_raster=False, compute=True):
     """Create a valid asset definition for collections.
     TODO: Generate the asset for `Item` field with all bands
     Args:
@@ -542,11 +542,12 @@ def create_asset_definition(services, bucket_name: str, href: str, mime_type: st
             'href': absolute_path,
             'type': mime_type,
             'bdc:size': size,
-            'checksum:multihash': multihash_checksum_sha256(services=services, bucket_name=bucket_name, entry=href),
             'roles': role,
             'created': created,
             'updated': _now_str
         }
+        if compute:
+            asset['checksum:multihash'] = multihash_checksum_sha256(services=services, bucket_name=bucket_name, entry=href)
 
         geom = None
         min_convex_hull = None
@@ -558,9 +559,10 @@ def create_asset_definition(services, bucket_name: str, href: str, mime_type: st
                     y=data_set.shape[0],
                 )
 
-                _geom = shapely.geometry.mapping(shapely.geometry.box(*data_set.bounds))
-                geom_shape = shapely.geometry.shape(rasterio.warp.transform_geom(data_set.crs, 'EPSG:4326', _geom))
-                geom = from_shape(geom_shape, srid=4326, extended=True)
+                if compute:
+                    _geom = shapely.geometry.mapping(shapely.geometry.box(*data_set.bounds))
+                    geom_shape = shapely.geometry.shape(rasterio.warp.transform_geom(data_set.crs, 'EPSG:4326', _geom))
+                    geom = from_shape(geom_shape, srid=4326, extended=True)
 
                 # data = data_set.read(1, masked=True, out_dtype=numpy.uint8)
                 # data[data == numpy.ma.masked] = 0
