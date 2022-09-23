@@ -52,7 +52,7 @@ install_requires = [
     'bdc-catalog @ git+https://github.com/brazil-data-cube/bdc-catalog.git@v0.8.2#egg=bdc-catalog',
     'Flask>=1.1.1,<2',
     'Flask-SQLAlchemy==2.4.1',
-    'psycopg2-binary==2.8.5',
+    'psycopg2-binary>=2.8,<3',
     'boto3==1.14.49',
     'botocore==1.17.49',
     'marshmallow-sqlalchemy==0.25.0',
@@ -62,7 +62,7 @@ install_requires = [
     'rasterio==1.2.1',
     'requests>=2.23.0',
     'rio-cogeo==3.0.2',
-    'shapely==1.7.0',
+    'shapely>=1.7,<2',
     'stac.py==0.9.0.post5',
     'cloudpathlib[s3]==0.4.0',
 ]

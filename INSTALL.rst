@@ -32,6 +32,23 @@ The ``Cube Builder AWS`` depends essentially on:
 - `Rio-cogeo <https://pypi.org/project/rio-cogeo/>`_
 
 
+
+Compatibility
++++++++++++++
+
++------------------+-------------+
+| Cube-Builder-AWS | BDC-Catalog |
++==================+=============+
+| 0.8.2            | 0.8.2       |
++------------------+-------------+
+| 0.8.0 ~ 0.8.1    | 0.8.1       |
++------------------+-------------+
+| 0.6.x            | 0.8.1       |
++------------------+-------------+
+| 0.4.x            | 0.8.1       |
++------------------+-------------+
+
+
 Clone the software repository
 +++++++++++++++++++++++++++++
 
@@ -51,16 +68,16 @@ Go to the source code folder::
 
 Install in development mode::
 
-        $ pip3 install -e .[all]
+        $ pip3 install -e .[docs,tests]
 
 
 .. note::
 
     If you want to create a new *Python Virtual Environment*, please, follow this instruction:
 
-    *1.* Create a new virtual environment linked to Python 3.7::
+    *1.* Create a new virtual environment linked to Python 3.8::
 
-        python3.7 -m venv venv
+        python3.8 -m venv venv
 
 
     **2.** Activate the new environment::
@@ -94,39 +111,3 @@ You can open the above documentation in your favorite browser, as::
     firefox docs/sphinx/_build/html/index.html
 
 
-Prepare environment to deploy
-+++++++++++++++++++++++++++++
-
-Prepare your AWS account and HOST to deploy application.
-
-
-1) in AWS Console
------------------
-
-    - create AWS account
-
-    - Login with AWS account created
-
-    - create IAM user
-
-    - set full permissions (fullAccess) to IAM user created
-
-    - generate credentals to IAM user
-
-
-2) in your HOST (command line):
--------------------------------
-
-    - install *AWS CLI*
-
-    - configure credentials
-        -  e.g: aws configure --profile *iam-user-name*
-
-    - install *Node.js* (global)
-        - `Download Nodejs <https://nodejs.org/en/download/>`_
-
-    - install *serverless*
-
-        .. code-block:: shell
-
-            $ npm install -g serverless 
