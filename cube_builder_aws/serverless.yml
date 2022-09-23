@@ -227,7 +227,6 @@ functions:
     handler: app.continue_process
     timeout: 720
     memorySize: 1024
-    reservedConcurrency: 10
     events:
       - sqs:
           batchSize: 1

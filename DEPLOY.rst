@@ -1,9 +1,19 @@
 ..
-    This file is part of Python Module for Cube Builder AWS.
-    Copyright (C) 2019-2021 INPE.
+    This file is part of Cube Builder AWS.
+    Copyright (C) 2022 INPE.
 
-    Cube Builder AWS is free software; you can redistribute it and/or modify it
-    under the terms of the MIT License; see LICENSE file for more details.
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program. If not, see <https://www.gnu.org/licenses/gpl-3.0.html>.
 
 
 Deploy
@@ -20,7 +30,8 @@ and be familiar with Python module.
     For example, most of `GEO Earth datasets <https://aws.amazon.com/earth/>`_ like ``Sentinel-2``, ``Landsat-8`` are 
     stored in ``Oregon`` (``us-west-2``). In this tutorial, we are going to use ``us-west-2``.
 
-    If you generate any data cube that are in a different region of BDC services, you may face high cost charges in the billing.
+    If you generate data cubes on regions different from where the BDC services or dataset are,
+    you may face high cost charges in the billing.
 
 
 
@@ -30,7 +41,7 @@ Requirements
 ------------
 
 - `RDS PostgreSQL <https://aws.amazon.com/rds/postgresql/>`_: A minimal instance of PostgreSQL database with PostGIS support.
-  The ``instance_type`` depends essentially how many parallel processing ``Lambdas`` are running. For this example,
+  The ``instance_type`` depends essentially on how many parallel processing ``Lambdas`` are running. For this example,
   we can use the minimal instance ``db.t2.micro``. For a Brazil territory, considerer more robust instances like ``db.t2.large`` 
   which supports aroung ``600`` concurrent connections.
 
