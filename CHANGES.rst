@@ -19,6 +19,15 @@
 Changes
 =======
 
+
+Version 0.9.0 (2022-09-23)
+--------------------------
+
+- Change LICENSE to GPL v3
+- Improve docs setup
+- Mark repository as ``stable``
+
+
 Version 0.8.1 (2021-07-29)
 --------------------------
 
